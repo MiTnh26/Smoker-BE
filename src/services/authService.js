@@ -40,7 +40,7 @@ async function registerService(email, password, confirmPassword) {
   }
 
   const hashed = await bcrypt.hash(password, 10);
-  const created = await accountModel.createAccount({ email, hashedPassword: hashed, role: "user", status: "active" });
+  const created = await accountModel.createAccount({ email, hashedPassword: hashed, role: "customer", status: "active" });
   return { id: created.AccountId, email: created.Email };
 }
 
@@ -56,7 +56,7 @@ async function googleRegisterService({ email }) {
     await accountModel.createAccount({
       email,
       hashedPassword: hashed,
-      role: "user",
+      role: "customer",
       status: "active",
     });
 
@@ -98,7 +98,8 @@ async function loginService(email, password) {
 }
 async function googleLoginService({ email }) {
   if (!email) throw new Error("Thiếu email");
-  if (!isValidEmail(email) || !isGmailEmail(email)) throw new Error("Email không hợp lệ");
+  if (!isValidEmail(email) || !isGmailEmail(email))
+    throw new Error("Email không hợp lệ");
 
   const user = await accountModel.findAccountByEmail(email);
   if (!user) {
@@ -109,7 +110,11 @@ async function googleLoginService({ email }) {
 
   await accountModel.updateLastLogin(user.AccountId);
 
-  const token = signJwt({ id: user.AccountId, email: user.Email, role: user.Role });
+  const token = signJwt({
+    id: user.AccountId,
+    email: user.Email,
+    role: user.Role,
+  });
   const profileComplete = accountModel.hasProfileComplete(user);
   return { token, user: buildUserResponse(user), profileComplete };
 }

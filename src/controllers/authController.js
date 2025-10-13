@@ -50,52 +50,34 @@ console.log("authService object:", authService);
 async function googleOAuthLogin(req, res) {
   try {
     const { idToken } = req.body;
-    if (!idToken) return res.status(400).json({ message: "Thiếu Google ID token" });
+    if (!idToken)
+      return res.status(400).json({ message: "Thiếu Google ID token" });
 
-    // Xác thực token với Google
+    // ✅ Xác thực token Google và lấy email
     const ticket = await client.verifyIdToken({
       idToken,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
     const payload = ticket.getPayload();
     const email = payload.email;
-    const name = payload.name;
 
-    // Kiểm tra user trong DB
-    let user = await accountModel.findAccountByEmail(email);
-    let newUser = false;
-    if (!user) {
-      // Tạo user mới
-      user = await accountModel.createAccount({
-        email,
-        role: "user",
-        userName: name,
-      });
-      newUser = true;
-    }
+    // ✅ Gọi service login qua Google (phải có tài khoản mới được login)
+    const result = await authService.googleLoginService({ email });
 
-    // Tạo JWT
-    const token = jwt.sign(
-      { id: user.AccountId, email: user.Email, role: user.Role },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    res.json({
-      status: newUser ? "NEW_USER" : "EXISTING_USER",
-      message: newUser ? "Đăng ký/đăng nhập bằng Google thành công" : "Đăng nhập bằng Google thành công",
-      token,
-      user: {
-        id: user.AccountId,
-        email: user.Email,
-        userName: user.UserName,
-      },
+    return res.json({
+      message: "Đăng nhập Google thành công",
+      token: result.token,
+      needProfile: !result.profileComplete,
+      user: result.user,
     });
   } catch (err) {
     console.error("Google OAuth error:", err);
-    res.status(401).json({ message: "Xác thực Google thất bại" });
+    res
+      .status(err.code || 401)
+      .json({ message: err.message || "Xác thực Google thất bại" });
   }
 }
+
 
 
 
