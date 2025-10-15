@@ -54,8 +54,8 @@ async function updateAccountInfo(accountId, { userName, avatar, background, bio,
   const pool = await getPool();
   const request = pool.request().input("accountId", sql.UniqueIdentifier, accountId);
   request.input("userName", sql.NVarChar(100), userName || null);
-  request.input("avatar", sql.NVarChar(255), avatar || null);
-  request.input("background", sql.NVarChar(255), background || null);
+  request.input("avatar", sql.NVarChar(1000), avatar || null);
+  request.input("background", sql.NVarChar(1000), background || null);
   request.input("bio", sql.NVarChar(500), bio || null);
   request.input("address", sql.NVarChar(255), address || null);
   request.input("phone", sql.NVarChar(20), phone || null);

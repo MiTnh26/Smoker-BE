@@ -29,11 +29,16 @@ async function me(req, res) {
 async function updateProfile(req, res) {
   try {
     const userId = req.user.id;
-    const { userName, avatar, background, coverImage, bio, address, phone } = req.body || {};
+    const { userName, bio, address, phone } = req.body || {};
+
+    // Prefer Cloudinary URLs from multer; fallback to body string
+    const avatarUrl = (req.files && req.files.avatar && req.files.avatar[0] && req.files.avatar[0].path) || req.body?.avatar || null;
+    const backgroundUrl = (req.files && req.files.background && req.files.background[0] && req.files.background[0].path) || req.body?.background || null;
+
     const updated = await accountModel.updateAccountInfo(userId, {
       userName,
-      avatar,
-      background: background || coverImage || null,
+      avatar: avatarUrl,
+      background: backgroundUrl,
       bio,
       address,
       phone,
@@ -54,7 +59,8 @@ async function updateProfile(req, res) {
       })
     );
   } catch (e) {
-    return res.status(500).json(error("Lỗi máy chủ"));
+    console.error("updateProfile error:", e);
+    return res.status(500).json(error(e?.message || "Lỗi máy chủ"));
   }
 }
 

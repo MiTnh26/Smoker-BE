@@ -1,2 +1,3 @@
 const authService = require("./authService");
-module.exports = { authService };
+const businessService = require("./businessService");
+module.exports = { authService, businessService };
