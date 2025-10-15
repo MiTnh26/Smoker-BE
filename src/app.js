@@ -1,3 +1,4 @@
+require("dotenv").config(); 
 const express = require("express");
 const cors = require("cors");
 const { initSQLConnection } = require("./db/sqlserver");
@@ -8,7 +9,7 @@ const app = express();
 app.use(express.json());
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: process.env.FRONTEND_URL,
     credentials: true,
   })
 );
