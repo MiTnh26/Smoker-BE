@@ -121,4 +121,59 @@ async function googleLoginService({ email }) {
 
 
 
-module.exports = { registerService, googleRegisterService, loginService,googleLoginService };
+async function forgotPasswordService(email) {
+  if (!email) throw new Error("Email là bắt buộc");
+  if (!isValidEmail(email)) throw new Error("Email không hợp lệ");
+
+  const user = await accountModel.findAccountByEmail(email);
+  if (!user) throw new Error("Email không tồn tại trong hệ thống");
+
+  // Tạo mật khẩu mới ngẫu nhiên
+  const newPassword = generateRandomPassword(10);
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+  // Cập nhật mật khẩu mới
+  await accountModel.updatePassword(user.AccountId, hashedPassword);
+
+  // Gửi mail với mật khẩu mới
+  await sendMail({
+    to: email,
+    subject: "Smoker - Khôi phục mật khẩu",
+    html: `
+      <p>Bạn đã yêu cầu khôi phục mật khẩu.</p>
+      <p>Mật khẩu mới của bạn là: <b>${newPassword}</b></p>
+      <p>Vui lòng đăng nhập và đổi mật khẩu ngay sau khi nhận được mail này.</p>
+    `
+  });
+
+  return true;
+}
+
+async function changePasswordService(userId, currentPassword, newPassword) {
+  const user = await accountModel.findAccountById(userId);
+  if (!user) throw new Error("Người dùng không tồn tại");
+
+  // Kiểm tra mật khẩu hiện tại
+  const isMatch = await bcrypt.compare(currentPassword, user.Password);
+  if (!isMatch) throw new Error("Mật khẩu hiện tại không đúng");
+
+  // Validate mật khẩu mới
+  if (!isValidPassword(newPassword)) {
+    throw new Error("Mật khẩu mới không hợp lệ");
+  }
+
+  // Hash và cập nhật mật khẩu mới
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  await accountModel.updatePassword(userId, hashedPassword);
+
+  return true;
+}
+
+module.exports = { 
+  registerService, 
+  googleRegisterService, 
+  loginService,
+  googleLoginService,
+  forgotPasswordService,
+  changePasswordService
+};
