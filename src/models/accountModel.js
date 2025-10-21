@@ -19,7 +19,7 @@ async function getAccountById(accountId) {
     .request()
     .input("accountId", sql.UniqueIdentifier, accountId)
     .query(
-      `SELECT TOP 1 AccountId, Email, Role, UserName, Avatar, Background, Phone, Address, Bio, Status, LastLogin
+      `SELECT TOP 1 AccountId, Email, Password, Role, UserName, Avatar, Background, Phone, Address, Bio, Status, LastLogin
        FROM Accounts WHERE AccountId = @accountId`
     );
   return result.recordset[0] || null;
@@ -80,6 +80,23 @@ function hasProfileComplete(account) {
   return requiredFields.every((key) => account[key] && String(account[key]).trim() !== "");
 }
 
+async function updatePassword(accountId, hashedPassword) {
+  const pool = await getPool();
+  const result = await pool
+    .request()
+    .input("accountId", sql.UniqueIdentifier, accountId)
+    .input("password", sql.NVarChar(100), hashedPassword)
+    .query(
+      `UPDATE Accounts 
+       SET Password = @password 
+       WHERE AccountId = @accountId;
+       
+       SELECT TOP 1 AccountId, Email, Role, UserName, Avatar, Background, Phone, Address, Bio, Status, LastLogin
+       FROM Accounts WHERE AccountId = @accountId;`
+    );
+  return result.recordset[0] || null;
+}
+
 module.exports = {
   findAccountByEmail,
   getAccountById,
@@ -87,4 +104,5 @@ module.exports = {
   updateLastLogin,
   updateAccountInfo,
   hasProfileComplete,
+  updatePassword,
 };

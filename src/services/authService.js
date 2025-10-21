@@ -150,7 +150,15 @@ async function forgotPasswordService(email) {
 }
 
 async function changePasswordService(userId, currentPassword, newPassword) {
-  const user = await accountModel.findAccountById(userId);
+  console.log('Changing password for userId:', userId);
+  
+  if (!userId) {
+    throw new Error("Thiếu thông tin người dùng");
+  }
+
+  const user = await accountModel.getAccountById(userId);
+  console.log('Found user:', user);
+  
   if (!user) throw new Error("Người dùng không tồn tại");
 
   // Kiểm tra mật khẩu hiện tại
