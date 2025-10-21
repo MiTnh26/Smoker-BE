@@ -8,5 +8,7 @@ router.post("/login", authController.login);
 router.post("/google-oauth", authController.googleOAuthLogin);
 router.post("/forgot-password", authController.forgotPassword);
 router.post("/change-password", authController.changePassword);
+router.post("/facebook-oauth", authController.facebookOAuthLogin);
+router.post("/facebook-register", authController.facebookRegister);
 
 module.exports = router;

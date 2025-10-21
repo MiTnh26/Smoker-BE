@@ -112,11 +112,47 @@ async function changePassword(req, res) {
   }
 }
 
+async function facebookOAuthLogin(req, res) {
+  try {
+    const { accessToken } = req.body;
+    if (!accessToken) {
+      return res.status(400).json({ message: "Thiếu Facebook access token" });
+    }
+
+    const result = await authService.facebookLoginService(accessToken);
+    return res.json({
+      message: "Đăng nhập Facebook thành công",
+      token: result.token,
+      needProfile: !result.profileComplete,
+      user: result.user,
+    });
+  } catch (err) {
+    console.error("Facebook OAuth error:", err);
+    res
+      .status(err.code || 401)
+      .json({ message: err.message || "Xác thực Facebook thất bại" });
+  }
+}
+
+async function facebookRegister(req, res) {
+  try {
+    const { email } = req.body;
+    const data = await authService.facebookRegisterService({ email });
+    return res.status(201).json(data);
+  } catch (err) {
+    const status = err.code === 409 ? 409 : 400;
+    const message = err.message || "Đăng ký thất bại";
+    return res.status(status).json({ message });
+  }
+}
+
 module.exports = { 
   register, 
   googleRegister, 
   login, 
   googleOAuthLogin, 
   forgotPassword, 
-  changePassword 
+  changePassword,
+  facebookOAuthLogin,
+  facebookRegister
 };

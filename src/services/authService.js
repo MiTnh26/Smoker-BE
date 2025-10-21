@@ -169,11 +169,82 @@ async function changePasswordService(userId, currentPassword, newPassword) {
   return true;
 }
 
+async function facebookLoginService(accessToken) {
+  try {
+    // Gọi Facebook Graph API để lấy thông tin người dùng
+    const response = await fetch(`https://graph.facebook.com/me?fields=email&access_token=${accessToken}`);
+    const data = await response.json();
+    
+    if (!data.email) {
+      throw new Error("Không thể lấy email từ tài khoản Facebook");
+    }
+
+    const email = data.email;
+    const user = await accountModel.findAccountByEmail(email);
+    
+    if (!user) {
+      const err = new Error("Tài khoản chưa tồn tại. Vui lòng đăng ký trước.");
+      err.code = 404;
+      throw err;
+    }
+
+    await accountModel.updateLastLogin(user.AccountId);
+
+    const token = signJwt({
+      id: user.AccountId,
+      email: user.Email,
+      role: user.Role,
+    });
+    
+    const profileComplete = accountModel.hasProfileComplete(user);
+    return { token, user: buildUserResponse(user), profileComplete };
+  } catch (error) {
+    console.error("Facebook login error:", error);
+    throw error;
+  }
+}
+
+async function facebookRegisterService({ email }) {
+  if (!email) throw new Error("Thiếu email");
+  if (!isValidEmail(email)) throw new Error("Email không hợp lệ");
+
+  let user = await accountModel.findAccountByEmail(email);
+  if (!user) {
+    const randomPass = generateRandomPassword(10);
+    const hashed = await bcrypt.hash(randomPass, 10);
+    await accountModel.createAccount({
+      email,
+      hashedPassword: hashed,
+      role: "customer",
+      status: "active",
+    });
+
+    try {
+      await sendMail({
+        to: email,
+        subject: "Tài khoản Smoker - Xác thực Facebook",
+        html: `<p>Bạn đã xác thực Facebook thành công.</p>
+               <p>Mật khẩu tạm thời của bạn: <b>${randomPass}</b></p>
+               <p>Vui lòng dùng mật khẩu này để đăng nhập thủ công lần đầu.</p>`,
+      });
+    } catch (e) {
+      console.error("Mail send failed:", e);
+      throw new Error("Không gửi được mail, vui lòng thử lại");
+    }
+
+    return { status: "NEW_USER", message: "Hệ thống đã gửi mật khẩu random về email" };
+  }
+
+  return { status: "EXISTING_USER", message: "Tài khoản đã tồn tại, vui lòng đăng nhập" };
+}
+
 module.exports = { 
   registerService, 
   googleRegisterService, 
   loginService,
   googleLoginService,
   forgotPasswordService,
-  changePasswordService
+  changePasswordService,
+  facebookLoginService,
+  facebookRegisterService
 };
