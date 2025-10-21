@@ -78,7 +78,45 @@ async function googleOAuthLogin(req, res) {
   }
 }
 
+async function forgotPassword(req, res) {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: "Email là bắt buộc" });
+    }
 
+    const result = await authService.forgotPasswordService(email);
+    return res.json({ message: "Đã gửi email khôi phục mật khẩu" });
+  } catch (err) {
+    return res.status(400).json({ message: err.message || "Khôi phục mật khẩu thất bại" });
+  }
+}
 
+async function changePassword(req, res) {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+    const userId = req.user.id; // Lấy từ token auth middleware
 
-module.exports = { register, googleRegister, login, googleOAuthLogin };
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({ message: "Thiếu thông tin bắt buộc" });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Mật khẩu mới không khớp" });
+    }
+
+    await authService.changePasswordService(userId, currentPassword, newPassword);
+    return res.json({ message: "Đổi mật khẩu thành công" });
+  } catch (err) {
+    return res.status(400).json({ message: err.message || "Đổi mật khẩu thất bại" });
+  }
+}
+
+module.exports = { 
+  register, 
+  googleRegister, 
+  login, 
+  googleOAuthLogin, 
+  forgotPassword, 
+  changePassword 
+};
