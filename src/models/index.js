@@ -1,2 +1,5 @@
 const accountModel = require("./accountModel");
-module.exports = { accountModel };
+const businessAccountModel = require("./businessAccountModel");
+const entityAccountModel = require("./entityAccountModel");
+
+module.exports = { accountModel, businessAccountModel,entityAccountModel };
