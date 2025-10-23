@@ -78,7 +78,7 @@ async function googleRegisterService({ email }) {
     if (created?.AccountId) {
       await createEntityAccount("Account", created.AccountId, created.AccountId);
     }
-    
+
 
     console.log("Random password for", email, ":", randomPass);
 
@@ -171,14 +171,14 @@ async function forgotPasswordService(email) {
 
 async function changePasswordService(userId, currentPassword, newPassword) {
   console.log('Changing password for userId:', userId);
-  
+
   if (!userId) {
     throw new Error("Thiếu thông tin người dùng");
   }
 
   const user = await accountModel.getAccountById(userId);
   console.log('Found user:', user);
-  
+
   if (!user) throw new Error("Người dùng không tồn tại");
 
   // Kiểm tra mật khẩu hiện tại
@@ -202,14 +202,14 @@ async function facebookLoginService(accessToken) {
     // Gọi Facebook Graph API để lấy thông tin người dùng
     const response = await fetch(`https://graph.facebook.com/me?fields=email&access_token=${accessToken}`);
     const data = await response.json();
-    
+
     if (!data.email) {
       throw new Error("Không thể lấy email từ tài khoản Facebook");
     }
 
     const email = data.email;
     const user = await accountModel.findAccountByEmail(email);
-    
+
     if (!user) {
       const err = new Error("Tài khoản chưa tồn tại. Vui lòng đăng ký trước.");
       err.code = 404;
@@ -223,7 +223,7 @@ async function facebookLoginService(accessToken) {
       email: user.Email,
       role: user.Role,
     });
-    
+
     const profileComplete = accountModel.hasProfileComplete(user);
     return { token, user: buildUserResponse(user), profileComplete };
   } catch (error) {
@@ -266,9 +266,9 @@ async function facebookRegisterService({ email }) {
   return { status: "EXISTING_USER", message: "Tài khoản đã tồn tại, vui lòng đăng nhập" };
 }
 
-module.exports = { 
-  registerService, 
-  googleRegisterService, 
+module.exports = {
+  registerService,
+  googleRegisterService,
   loginService,
   googleLoginService,
   forgotPasswordService,
@@ -276,6 +276,7 @@ module.exports = {
   facebookLoginService,
   facebookRegisterService
 };
-module.exports = { registerService, googleRegisterService, loginService, googleLoginService, 
+module.exports = {
+  registerService, googleRegisterService, loginService, googleLoginService,
   forgotPasswordService, changePasswordService, facebookLoginService, facebookRegisterService
- };
+};
