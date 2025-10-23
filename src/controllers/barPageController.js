@@ -99,10 +99,15 @@ const { createEntityAccount } = require("../models/entityAccountModel");
   exports.getBarPageById = async (req, res) => {
     try {
       const { barPageId } = req.params;
-      if (!barPageId)
+      console.log("📥 [getBarPageById] Received barPageId:", barPageId);
+      if (!barPageId){
+          console.error("❌ [getBarPageById] Thiếu barPageId trong req.params");
         return res.status(400).json({ status: "error", message: "Thiếu barPageId" });
+      }
+      
   
       const barPage = await getBarPageById(barPageId);
+       console.log("✅ [getBarPageById] Query result:", barPage);
       if (!barPage)
         return res.status(404).json({ status: "error", message: "Không tìm thấy BarPage" });
   

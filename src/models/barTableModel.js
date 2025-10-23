@@ -1,18 +1,30 @@
 const { getPool, sql } = require("../db/sqlserver");
 
-// Lấy tất cả bàn theo BarId
+// Lấy tất cả bàn theo BarId kèm thông tin loại bàn
 async function getBarTablesByBarId(barId) {
   const pool = await getPool();
   const result = await pool.request()
     .input("BarId", sql.UniqueIdentifier, barId)
     .query(`
-      SELECT BarTableId, BarId, TableApplyId, TableName, DepositPrice, Status, TableClassificationId
-      FROM BarTables
-      WHERE BarId = @BarId
-      ORDER BY TableName
+      SELECT 
+        bt.BarTableId,
+        bt.BarId,
+        bt.TableApplyId,
+        bt.TableName,
+        bt.DepositPrice,
+        bt.Status,
+        bt.TableClassificationId,
+        tc.TableTypeName,
+        tc.Color
+      FROM BarTables bt
+      LEFT JOIN TableClassifications tc
+        ON bt.TableClassificationId = tc.TableClassificationId
+      WHERE bt.BarId = @BarId
+      ORDER BY bt.TableName
     `);
   return result.recordset;
 }
+
 
 // Lấy bàn theo Id
 async function getBarTableById(barTableId) {

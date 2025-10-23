@@ -4,4 +4,5 @@ const businessRoutes = require("./businessRoutes");
 const barPageRoutes = require("./barPageRoutes");
 const barTableRoutes = require("./barTableRoutes");
 const tableClassificationRoutes = require("./tableClassificationRoutes");
-module.exports = { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes };
+const eventRoutes = require("./eventRoutes");
+module.exports = { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes };
