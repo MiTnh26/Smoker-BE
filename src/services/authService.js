@@ -1,4 +1,3 @@
-
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { accountModel } = require("../models");
@@ -6,7 +5,10 @@ const { createEntityAccount } = require("../models/entityAccountModel");
 const { isValidEmail, isValidPassword, isGmailEmail } = require("../utils/validator");
 const { generateRandomPassword } = require("../utils/password");
 const { sendMail } = require("../utils/mailer");
-const sql = require("mssql");
+
+// Biến toàn cục lưu OTP theo email
+const otpMap = new Map(); // key: email, value: { otp, expires }
+// const sql = require("mssql");
 
 function signJwt(payload) {
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -148,21 +150,19 @@ async function forgotPasswordService(email) {
   const user = await accountModel.findAccountByEmail(email);
   if (!user) throw new Error("Email không tồn tại trong hệ thống");
 
-  // Tạo mật khẩu mới ngẫu nhiên
-  const newPassword = generateRandomPassword(10);
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  // Tạo OTP ngẫu nhiên 6 số
+  const otp = Math.floor(100000 + Math.random() * 900000);
+  const expires = Date.now() + 5 * 60 * 1000; // 5 phút
+  otpMap.set(email, { otp, expires });
 
-  // Cập nhật mật khẩu mới
-  await accountModel.updatePassword(user.AccountId, hashedPassword);
-
-  // Gửi mail với mật khẩu mới
+  // Gửi mail với OTP
   await sendMail({
     to: email,
-    subject: "Smoker - Khôi phục mật khẩu",
+    subject: "Smoker - Mã xác thực OTP quên mật khẩu",
     html: `
       <p>Bạn đã yêu cầu khôi phục mật khẩu.</p>
-      <p>Mật khẩu mới của bạn là: <b>${newPassword}</b></p>
-      <p>Vui lòng đăng nhập và đổi mật khẩu ngay sau khi nhận được mail này.</p>
+      <p>Mã OTP của bạn là: <b>${otp}</b></p>
+      <p>OTP có hiệu lực trong 5 phút. Vui lòng nhập OTP để xác minh và đổi mật khẩu.</p>
     `
   });
 
@@ -266,6 +266,32 @@ async function facebookRegisterService({ email }) {
   return { status: "EXISTING_USER", message: "Tài khoản đã tồn tại, vui lòng đăng nhập" };
 }
 
+async function verifyOtpService(email, otpInput) {
+  if (!email || !otpInput) throw new Error("Thiếu thông tin xác thực");
+  const data = otpMap.get(email);
+  if (!data) throw new Error("OTP không tồn tại hoặc đã hết hạn");
+  if (Date.now() > data.expires) {
+    otpMap.delete(email);
+    throw new Error("OTP đã hết hạn");
+  }
+  if (String(data.otp) !== String(otpInput)) throw new Error("OTP không đúng");
+  
+  otpMap.delete(email);
+ 
+  return true;
+}
+
+async function resetPasswordService(email, newPassword, confirmPassword) {
+  if (!email || !newPassword || !confirmPassword) throw new Error("Thiếu thông tin bắt buộc");
+  if (newPassword !== confirmPassword) throw new Error("Mật khẩu mới không khớp");
+  if (!isValidPassword(newPassword)) throw new Error("Mật khẩu mới không hợp lệ");
+  const user = await accountModel.findAccountByEmail(email);
+  if (!user) throw new Error("Email không tồn tại trong hệ thống");
+
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  await accountModel.updatePassword(user.AccountId, hashedPassword);
+  return true;
+}
 module.exports = {
   registerService,
   googleRegisterService,
@@ -274,9 +300,7 @@ module.exports = {
   forgotPasswordService,
   changePasswordService,
   facebookLoginService,
-  facebookRegisterService
-};
-module.exports = {
-  registerService, googleRegisterService, loginService, googleLoginService,
-  forgotPasswordService, changePasswordService, facebookLoginService, facebookRegisterService
+  facebookRegisterService,
+  verifyOtpService,
+  resetPasswordService
 };

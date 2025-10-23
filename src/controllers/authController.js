@@ -1,4 +1,3 @@
-
 const authService = require("../services/authService");
 const { OAuth2Client } = require("google-auth-library");
 const jwt = require("jsonwebtoken");
@@ -45,7 +44,7 @@ async function login(req, res) {
     return res.status(401).json({ message: err.message || "Đăng nhập thất bại" });
   }
 }
-console.log("authService object:", authService); 
+console.log("authService object:", authService);
 
 async function googleOAuthLogin(req, res) {
   try {
@@ -146,13 +145,37 @@ async function facebookRegister(req, res) {
   }
 }
 
-module.exports = { 
-  register, 
-  googleRegister, 
-  login, 
-  googleOAuthLogin, 
-  forgotPassword, 
+async function verifyOtp(req, res) {
+  try {
+    const { email, otp } = req.body;
+    await authService.verifyOtpService(email, otp);
+    return res.json({ message: "Xác thực OTP thành công" });
+  } catch (err) {
+    return res.status(400).json({ message: err.message || "Xác thực OTP thất bại" });
+  }
+}
+
+
+async function resetPassword(req, res) {
+  try {
+    const { email, newPassword, confirmPassword } = req.body;
+    await authService.resetPasswordService(email, newPassword, confirmPassword);
+    return res.json({ message: "Đổi mật khẩu thành công" });
+  } catch (err) {
+    return res.status(400).json({ message: err.message || "Đổi mật khẩu thất bại" });
+  }
+}
+
+
+module.exports = {
+  register,
+  googleRegister,
+  login,
+  googleOAuthLogin,
+  forgotPassword,
   changePassword,
   facebookOAuthLogin,
-  facebookRegister
+  facebookRegister,
+  verifyOtp,
+  resetPassword
 };
