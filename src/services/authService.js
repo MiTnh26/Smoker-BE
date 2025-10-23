@@ -276,4 +276,6 @@ module.exports = {
   facebookLoginService,
   facebookRegisterService
 };
-module.exports = { registerService, googleRegisterService, loginService, googleLoginService };
+module.exports = { registerService, googleRegisterService, loginService, googleLoginService, 
+  forgotPasswordService, changePasswordService, facebookLoginService, facebookRegisterService
+ };
