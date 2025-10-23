@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { initSQLConnection } = require("./db/sqlserver");
-const { authRoutes, userRoutes, businessRoutes } = require("./routes");
+const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes } = require("./routes");
 
 const app = express();
 
@@ -18,10 +18,13 @@ app.use(
 initSQLConnection();
 
 // Routes
+app.use("/api/bar", barPageRoutes);
+app.use("/api/table-classification", tableClassificationRoutes);
+app.use("/api/bar-table", barTableRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/business", businessRoutes);
-
+app.use("/api/events",eventRoutes)
 app.get("/", (req, res) => {
   res.json({ message: "Welcome to Smoker API 🚬" });
 });
