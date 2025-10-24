@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { initSQLConnection } = require("./db/sqlserver");
-const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes } = require("./routes");
+const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes, comboRoutes, voucherRoutes,voucherApplyRoutes } = require("./routes");
 
 const app = express();
 
@@ -18,6 +18,9 @@ app.use(
 initSQLConnection();
 
 // Routes
+app.use("/api/voucher-apply", voucherApplyRoutes);
+app.use("/api/voucher", voucherRoutes);
+app.use("/api/combo", comboRoutes);
 app.use("/api/bar", barPageRoutes);
 app.use("/api/table-classification", tableClassificationRoutes);
 app.use("/api/bar-table", barTableRoutes);

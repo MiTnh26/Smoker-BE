@@ -71,7 +71,7 @@ const {
       return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
     }
   };
-  
+ 
   // Cập nhật loại bàn
   exports.updateTableClassification = async (req, res) => {
     try {
@@ -103,4 +103,7 @@ const {
       return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
     }
   };
+
+
+
   
