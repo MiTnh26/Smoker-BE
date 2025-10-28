@@ -2,4 +2,15 @@ const authRoutes = require("./authRoutes");
 const userRoutes = require("./userRoutes");
 const businessRoutes = require("./businessRoutes");
 const postRoutes = require("./postRoutes");
-module.exports = { authRoutes, userRoutes, businessRoutes, postRoutes };
+
+const barPageRoutes = require("./barPageRoutes");
+const barTableRoutes = require("./barTableRoutes");
+const tableClassificationRoutes = require("./tableClassificationRoutes");
+const eventRoutes = require("./eventRoutes");
+const voucherRoutes = require("./voucherRoutes");
+const comboRoutes = require("./comboRoutes");
+const voucherApplyRoutes = require("./voucherApplyRoutes");
+
+
+
+module.exports = { authRoutes, userRoutes, businessRoutes, postRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes,voucherRoutes,comboRoutes,voucherApplyRoutes,comboRoutes };

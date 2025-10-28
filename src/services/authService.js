@@ -2,9 +2,11 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { accountModel } = require("../models");
+const { createEntityAccount } = require("../models/entityAccountModel");
 const { isValidEmail, isValidPassword, isGmailEmail } = require("../utils/validator");
 const { generateRandomPassword } = require("../utils/password");
 const { sendMail } = require("../utils/mailer");
+const sql = require("mssql");
 
 function signJwt(payload) {
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -26,9 +28,12 @@ function buildUserResponse(user) {
   };
 }
 
+
+
+
 // Register bình thường
 async function registerService(email, password, confirmPassword) {
-  if (!isValidEmail(email) || !isGmailEmail(email)) throw new Error("Email phải là Gmail hợp lệ");
+  if (!isValidEmail(email)) throw new Error("Email phải là Gmail hợp lệ");
   if (!isValidPassword(password)) throw new Error("Mật khẩu không hợp lệ");
   if (password !== confirmPassword) throw new Error("Xác nhận mật khẩu không khớp");
 
@@ -38,27 +43,42 @@ async function registerService(email, password, confirmPassword) {
     err.code = 409;
     throw err;
   }
-
   const hashed = await bcrypt.hash(password, 10);
   const created = await accountModel.createAccount({ email, hashedPassword: hashed, role: "customer", status: "active" });
+  // EntityAccounts sau khi tạo tài khoản
+  if (created?.AccountId) {
+    await createEntityAccount("Account", created.AccountId, created.AccountId);
+  }
+
+
   return { id: created.AccountId, email: created.Email };
 }
+
+
+
+
+
 
 // Google register (random password + mail)
 async function googleRegisterService({ email }) {
   if (!email) throw new Error("Thiếu email");
-  if (!isValidEmail(email) || !isGmailEmail(email)) throw new Error("Email không hợp lệ");
+  if (!isValidEmail(email)) throw new Error("Email không hợp lệ");
 
   let user = await accountModel.findAccountByEmail(email);
   if (!user) {
     const randomPass = generateRandomPassword(10);
     const hashed = await bcrypt.hash(randomPass, 10);
-    await accountModel.createAccount({
+    // ✅ Tạo account mới
+    const created = await accountModel.createAccount({
       email,
       hashedPassword: hashed,
       role: "customer",
       status: "active",
     });
+    if (created?.AccountId) {
+      await createEntityAccount("Account", created.AccountId, created.AccountId);
+    }
+    
 
     console.log("Random password for", email, ":", randomPass);
 
@@ -98,7 +118,7 @@ async function loginService(email, password) {
 }
 async function googleLoginService({ email }) {
   if (!email) throw new Error("Thiếu email");
-  if (!isValidEmail(email) || !isGmailEmail(email))
+  if (!isValidEmail(email))
     throw new Error("Email không hợp lệ");
 
   const user = await accountModel.findAccountByEmail(email);
@@ -121,4 +141,4 @@ async function googleLoginService({ email }) {
 
 
 
-module.exports = { registerService, googleRegisterService, loginService,googleLoginService };
+module.exports = { registerService, googleRegisterService, loginService, googleLoginService };
