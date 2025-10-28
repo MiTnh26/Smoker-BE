@@ -4,8 +4,8 @@ class PostController {
   // Tạo post mới
   async createPost(req, res) {
     try {
-      const { title, content, images } = req.body;
-      const authorId = req.user?.id; // Từ middleware auth
+  const { title, content, images, expiredAt, type } = req.body;
+      const authorId = req.user?.id || 1; // Từ middleware auth
 
       if (!authorId) {
         return res.status(401).json({
@@ -18,7 +18,9 @@ class PostController {
         title,
         content,
         accountId: authorId, // Map authorId to accountId for schema
-        images: images || {}
+        images: typeof images === "string" ? images : "",
+        expiredAt: expiredAt ? new Date(expiredAt) : null,
+        type: type || "post"
       };
 
       const result = await postService.createPost(postData);

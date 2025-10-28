@@ -1,4 +1,3 @@
-
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { accountModel } = require("../models");
@@ -6,7 +5,10 @@ const { createEntityAccount } = require("../models/entityAccountModel");
 const { isValidEmail, isValidPassword, isGmailEmail } = require("../utils/validator");
 const { generateRandomPassword } = require("../utils/password");
 const { sendMail } = require("../utils/mailer");
-const sql = require("mssql");
+
+// Biến toàn cục lưu OTP theo email
+const otpMap = new Map(); // key: email, value: { otp, expires }
+// const sql = require("mssql");
 
 function signJwt(payload) {
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -78,7 +80,7 @@ async function googleRegisterService({ email }) {
     if (created?.AccountId) {
       await createEntityAccount("Account", created.AccountId, created.AccountId);
     }
-    
+
 
     console.log("Random password for", email, ":", randomPass);
 
@@ -141,4 +143,164 @@ async function googleLoginService({ email }) {
 
 
 
-module.exports = { registerService, googleRegisterService, loginService, googleLoginService };
+async function forgotPasswordService(email) {
+  if (!email) throw new Error("Email là bắt buộc");
+  if (!isValidEmail(email)) throw new Error("Email không hợp lệ");
+
+  const user = await accountModel.findAccountByEmail(email);
+  if (!user) throw new Error("Email không tồn tại trong hệ thống");
+
+  // Tạo OTP ngẫu nhiên 6 số
+  const otp = Math.floor(100000 + Math.random() * 900000);
+  const expires = Date.now() + 5 * 60 * 1000; // 5 phút
+  otpMap.set(email, { otp, expires });
+
+  // Gửi mail với OTP
+  await sendMail({
+    to: email,
+    subject: "Smoker - Mã xác thực OTP quên mật khẩu",
+    html: `
+      <p>Bạn đã yêu cầu khôi phục mật khẩu.</p>
+      <p>Mã OTP của bạn là: <b>${otp}</b></p>
+      <p>OTP có hiệu lực trong 5 phút. Vui lòng nhập OTP để xác minh và đổi mật khẩu.</p>
+    `
+  });
+
+  return true;
+}
+
+async function changePasswordService(userId, currentPassword, newPassword) {
+  console.log('Changing password for userId:', userId);
+
+  if (!userId) {
+    throw new Error("Thiếu thông tin người dùng");
+  }
+
+  const user = await accountModel.getAccountById(userId);
+  console.log('Found user:', user);
+
+  if (!user) throw new Error("Người dùng không tồn tại");
+
+  // Kiểm tra mật khẩu hiện tại
+  const isMatch = await bcrypt.compare(currentPassword, user.Password);
+  if (!isMatch) throw new Error("Mật khẩu hiện tại không đúng");
+
+  // Validate mật khẩu mới
+  if (!isValidPassword(newPassword)) {
+    throw new Error("Mật khẩu mới không hợp lệ");
+  }
+
+  // Hash và cập nhật mật khẩu mới
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  await accountModel.updatePassword(userId, hashedPassword);
+
+  return true;
+}
+
+async function facebookLoginService(accessToken) {
+  try {
+    // Gọi Facebook Graph API để lấy thông tin người dùng
+    const response = await fetch(`https://graph.facebook.com/me?fields=email&access_token=${accessToken}`);
+    const data = await response.json();
+
+    if (!data.email) {
+      throw new Error("Không thể lấy email từ tài khoản Facebook");
+    }
+
+    const email = data.email;
+    const user = await accountModel.findAccountByEmail(email);
+
+    if (!user) {
+      const err = new Error("Tài khoản chưa tồn tại. Vui lòng đăng ký trước.");
+      err.code = 404;
+      throw err;
+    }
+
+    await accountModel.updateLastLogin(user.AccountId);
+
+    const token = signJwt({
+      id: user.AccountId,
+      email: user.Email,
+      role: user.Role,
+    });
+
+    const profileComplete = accountModel.hasProfileComplete(user);
+    return { token, user: buildUserResponse(user), profileComplete };
+  } catch (error) {
+    console.error("Facebook login error:", error);
+    throw error;
+  }
+}
+
+async function facebookRegisterService({ email }) {
+  if (!email) throw new Error("Thiếu email");
+  if (!isValidEmail(email)) throw new Error("Email không hợp lệ");
+
+  let user = await accountModel.findAccountByEmail(email);
+  if (!user) {
+    const randomPass = generateRandomPassword(10);
+    const hashed = await bcrypt.hash(randomPass, 10);
+    await accountModel.createAccount({
+      email,
+      hashedPassword: hashed,
+      role: "customer",
+      status: "active",
+    });
+
+    try {
+      await sendMail({
+        to: email,
+        subject: "Tài khoản Smoker - Xác thực Facebook",
+        html: `<p>Bạn đã xác thực Facebook thành công.</p>
+               <p>Mật khẩu tạm thời của bạn: <b>${randomPass}</b></p>
+               <p>Vui lòng dùng mật khẩu này để đăng nhập thủ công lần đầu.</p>`,
+      });
+    } catch (e) {
+      console.error("Mail send failed:", e);
+      throw new Error("Không gửi được mail, vui lòng thử lại");
+    }
+
+    return { status: "NEW_USER", message: "Hệ thống đã gửi mật khẩu random về email" };
+  }
+
+  return { status: "EXISTING_USER", message: "Tài khoản đã tồn tại, vui lòng đăng nhập" };
+}
+
+async function verifyOtpService(email, otpInput) {
+  if (!email || !otpInput) throw new Error("Thiếu thông tin xác thực");
+  const data = otpMap.get(email);
+  if (!data) throw new Error("OTP không tồn tại hoặc đã hết hạn");
+  if (Date.now() > data.expires) {
+    otpMap.delete(email);
+    throw new Error("OTP đã hết hạn");
+  }
+  if (String(data.otp) !== String(otpInput)) throw new Error("OTP không đúng");
+  
+  otpMap.delete(email);
+ 
+  return true;
+}
+
+async function resetPasswordService(email, newPassword, confirmPassword) {
+  if (!email || !newPassword || !confirmPassword) throw new Error("Thiếu thông tin bắt buộc");
+  if (newPassword !== confirmPassword) throw new Error("Mật khẩu mới không khớp");
+  if (!isValidPassword(newPassword)) throw new Error("Mật khẩu mới không hợp lệ");
+  const user = await accountModel.findAccountByEmail(email);
+  if (!user) throw new Error("Email không tồn tại trong hệ thống");
+
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  await accountModel.updatePassword(user.AccountId, hashedPassword);
+  return true;
+}
+module.exports = {
+  registerService,
+  googleRegisterService,
+  loginService,
+  googleLoginService,
+  forgotPasswordService,
+  changePasswordService,
+  facebookLoginService,
+  facebookRegisterService,
+  verifyOtpService,
+  resetPasswordService
+};
