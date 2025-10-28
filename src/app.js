@@ -4,8 +4,8 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const { initSQLConnection } = require("./db/sqlserver");
 const connectDB = require("./db/mongodb");
-const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes, postRoutes } = require("./routes");
-const storyRoutes = require("./routes/storyRoutes");
+const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes,postRoutes,storyRoutes, comboRoutes, voucherRoutes,voucherApplyRoutes } = require("./routes");
+
 
 const app = express();
 
@@ -22,6 +22,9 @@ connectDB();
 initSQLConnection();
 
 // Routes
+app.use("/api/voucher-apply", voucherApplyRoutes);
+app.use("/api/voucher", voucherRoutes);
+app.use("/api/combo", comboRoutes);
 app.use("/api/bar", barPageRoutes);
 app.use("/api/table-classification", tableClassificationRoutes);
 app.use("/api/bar-table", barTableRoutes);
@@ -32,6 +35,7 @@ app.use("/api/events",eventRoutes)
 app.use("/api/posts", postRoutes);
 app.use("/api/stories", storyRoutes);
 
+app.use("/api/events",eventRoutes)
 app.get("/", (req, res) => {
   res.json({ 
     message: "Welcome to Smoker API 🚬",
