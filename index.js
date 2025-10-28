@@ -12,16 +12,16 @@ app.use(
   })
 );
 //Ket noi voi mongodb
-const mongoose = require("mongoose");
-mongoose
-  .connect(`${process.env.URL}${process.env.DBNAME}`)
-  .then(() => console.log("Connecting to mongodb using mongoose"))
-  .catch((err) => console.log(`Connect fail:${err}`));
+// const mongoose = require("mongoose");
+// mongoose
+//   .connect(`${process.env.URL}${process.env.DBNAME}`)
+//   .then(() => console.log("Connecting to mongodb using mongoose"))
+//   .catch((err) => console.log(`Connect fail:${err}`));
 
 // //Cho server Khoi dong
 
-const port = process.env.PORT;
-const host = process.env.HOSTNAME;
-app.listen(port, host, () => {
-  console.log(`server is running at http://${host}:${port}`);
+const port = process.env.PORT || 9999;
+app.listen(port, () => {
+  console.log(`✅ Server is running at http://localhost:${port}`);
 });
+
