@@ -3,7 +3,9 @@ const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 const { initSQLConnection } = require("./db/sqlserver");
-const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes } = require("./routes");
+const connectDB = require("./db/mongodb");
+const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes, postRoutes } = require("./routes");
+const storyRoutes = require("./routes/storyRoutes");
 
 const app = express();
 
@@ -14,21 +16,10 @@ app.use(
     credentials: true,
   })
 );
-
+// Khởi tạo kết nối MongoDB
+connectDB();
 // Khởi tạo kết nối SQL Server
 initSQLConnection();
-
-// Khởi tạo kết nối MongoDB
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/Smoker";
-
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log("✅ MongoDB connected successfully");
-  })
-  .catch((error) => {
-    console.error("❌ MongoDB connection error:", error);
-    process.exit(1);
-  });
 
 // Routes
 app.use("/api/bar", barPageRoutes);
@@ -39,6 +30,7 @@ app.use("/api/user", userRoutes);
 app.use("/api/business", businessRoutes);
 app.use("/api/events",eventRoutes)
 app.use("/api/posts", postRoutes);
+app.use("/api/stories", storyRoutes);
 
 app.get("/", (req, res) => {
   res.json({ 
