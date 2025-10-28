@@ -132,9 +132,8 @@ const postSchema = new mongoose.Schema(
       required: true,
     },
     images: {
-      type: Map,
-      of: imageSchema,
-      default: new Map(),
+      type: String,
+      default: "",
     },
     type: {
       type: String,
