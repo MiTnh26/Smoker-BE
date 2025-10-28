@@ -123,6 +123,10 @@ const postSchema = new mongoose.Schema(
       type: String, // Lưu ID từ SQL Server dưới dạng string
       required: true,
     },
+    barId: {
+      type: String, // ID của bar (nếu là bài của bar)
+      default: null,
+    },
     content: {
       type: String,
       required: true,
@@ -131,6 +135,15 @@ const postSchema = new mongoose.Schema(
       type: Map,
       of: imageSchema,
       default: new Map(),
+    },
+    type: {
+      type: String,
+      enum: ["post", "story"], // post: news feed, story: story
+      default: "post",
+    },
+    expiredAt: {
+      type: Date, // chỉ dùng cho story
+      default: null,
     },
   },
   {
