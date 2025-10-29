@@ -1,3 +1,4 @@
 const authService = require("./authService");
 const businessService = require("./businessService");
-module.exports = { authService, businessService };
+const postService = require("./postService");
+module.exports = { authService, businessService, postService };
