@@ -10,20 +10,17 @@ const eventRoutes = require("./eventRoutes");
 const voucherRoutes = require("./voucherRoutes");
 const comboRoutes = require("./comboRoutes");
 const voucherApplyRoutes = require("./voucherApplyRoutes");
-
-
-
-module.exports = { authRoutes, userRoutes, businessRoutes, postRoutes, storyRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes,voucherRoutes,comboRoutes,voucherApplyRoutes,comboRoutes };
-// New routes
 const musicRoutes = require("./musicRoutes");
 const messageRoutes = require("./messageRoutes");
 const notificationRoutes = require("./notificationRoutes");
+
 
 module.exports = { 
   authRoutes, 
   userRoutes, 
   businessRoutes, 
   postRoutes, 
+  storyRoutes,
   barPageRoutes,
   tableClassificationRoutes,
   barTableRoutes,

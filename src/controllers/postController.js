@@ -7,13 +7,13 @@ class PostController {
   // Tạo post mới
   async createPost(req, res) {
     try {
-  const { title, content, images, expiredAt, type } = req.body;
+  const { title, content, images, expiredAt, type , videos, audios, caption, authorEntityId, authorEntityType, authorEntityName, authorEntityAvatar } = req.body;
       const authorId = req.user?.id || 1; // Từ middleware auth
       console.log("[POST] Creating new post");
       
-      const { title, content, images, videos, audios, caption, authorEntityId, authorEntityType, authorEntityName, authorEntityAvatar } = req.body;
+
       
-      const authorId = req.user?.id; // Từ middleware auth
+   
 
       if (!authorId) {
         console.error("[POST] No authorId found in request");
@@ -51,8 +51,7 @@ class PostController {
         });
       }
 
-      // Determine media type and create appropriate post
-      let result;
+  
       
       if (audios && Object.keys(audios).length > 0) {
         // Create music post using existing Music model
