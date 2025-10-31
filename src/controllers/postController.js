@@ -7,6 +7,8 @@ class PostController {
   // Tạo post mới
   async createPost(req, res) {
     try {
+  const { title, content, images, expiredAt, type } = req.body;
+      const authorId = req.user?.id || 1; // Từ middleware auth
       console.log("[POST] Creating new post");
       
       const { title, content, images, videos, audios, caption, authorEntityId, authorEntityType, authorEntityName, authorEntityAvatar } = req.body;
@@ -21,6 +23,16 @@ class PostController {
         });
       }
 
+      const postData = {
+        title,
+        content,
+        accountId: authorId, // Map authorId to accountId for schema
+        images: typeof images === "string" ? images : "",
+        expiredAt: expiredAt ? new Date(expiredAt) : null,
+        type: type || "post"
+      };
+
+      const result = await postService.createPost(postData);
       // Convert authorId to ObjectId if it's a string
       let authorObjectId;
       try {

@@ -122,6 +122,14 @@ function hasProfileComplete(account) {
   const requiredFields = ["UserName", "Avatar", "Phone", "Gender"]; // minimal required fields
   return requiredFields.every((key) => account[key] && String(account[key]).trim() !== "");
 }
+// Cập nhật mật khẩu tài khoản
+async function updatePassword(accountId, hashedPassword) {
+  const pool = await getPool();
+  await pool.request()
+    .input("AccountId", sql.UniqueIdentifier, accountId)
+    .input("Password", sql.NVarChar(100), hashedPassword)
+    .query(`UPDATE Accounts SET Password = @Password WHERE AccountId = @AccountId`);
+}
 
 module.exports = {
   findAccountByEmail,
@@ -130,4 +138,5 @@ module.exports = {
   updateLastLogin,
   updateAccountInfo,
   hasProfileComplete,
+  updatePassword
 };

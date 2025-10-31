@@ -1,10 +1,10 @@
 const mongoose = require("mongoose");
 
-// Schema cho Lượt Thích (theo photos.json)
+// Schema cho Lượt Thích
 const likeSchema = new mongoose.Schema(
   {
-    "id người thích": {
-      type: mongoose.Schema.Types.ObjectId,
+    accountId: {
+      type: String, // ID từ SQL Server
       required: true,
     },
     TypeRole: {
@@ -16,41 +16,31 @@ const likeSchema = new mongoose.Schema(
   { _id: false }
 );
 
-// Schema cho Lượt Trả Lời (theo photos.json)
+// Schema cho Lượt Trả Lời
 const replySchema = new mongoose.Schema(
   {
-    "Người Trả Lời": {
-      type: mongoose.Schema.Types.ObjectId,
+    accountId: {
+      type: String, // ID từ SQL Server
       required: true,
     },
-    "Nội Dung": {
+    content: {
       type: String,
       required: true,
     },
-    "Ảnh": {
+    images: {
       type: String,
       default: "",
     },
-    "Lượt Thích": {
+    likes: {
       type: Map,
-      of: new mongoose.Schema({
-        "id của người thích": {
-          type: mongoose.Schema.Types.ObjectId,
-          required: true,
-        },
-        TypeRole: {
-          type: String,
-          enum: ["Account", "BusinessAccount", "BarPage"],
-          required: true,
-        },
-      }, { _id: false }),
+      of: likeSchema,
       default: {},
     },
-    "Bình Luận Được Trả Lời": {
+    replyToId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: true,
+      required: true, // ID của comment hoặc reply mà reply này đang reply
     },
-    TypeRole: {
+    typeRole: {
       type: String,
       enum: ["Account", "BusinessAccount", "BarPage"],
       required: true,
@@ -59,42 +49,32 @@ const replySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Schema cho Bình Luận (theo photos.json)
+// Schema cho Bình Luận
 const commentSchema = new mongoose.Schema(
   {
-    "Người Bình Luận": {
-      type: mongoose.Schema.Types.ObjectId,
+    accountId: {
+      type: String, // ID từ SQL Server
       required: true,
     },
-    "Nội Dung": {
+    content: {
       type: String,
       required: true,
     },
-    "Lượt Thích": {
+    likes: {
       type: Map,
-      of: new mongoose.Schema({
-        "id người thích": {
-          type: mongoose.Schema.Types.ObjectId,
-          required: true,
-        },
-        TypeRole: {
-          type: String,
-          enum: ["Account", "BusinessAccount", "BarPage"],
-          required: true,
-        },
-      }, { _id: false }),
+      of: likeSchema,
       default: {},
     },
-    "Lượt Trả Lời": {
+    replies: {
       type: Map,
       of: replySchema,
       default: {},
     },
-    "Ảnh": {
+    images: {
       type: String,
       default: "",
     },
-    TypeRole: {
+    typeRole: {
       type: String,
       enum: ["Account", "BusinessAccount", "BarPage"],
       required: true,
@@ -103,7 +83,7 @@ const commentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Schema cho Ảnh (theo photos.json)
+// Schema cho Ảnh
 const imageSchema = new mongoose.Schema(
   {
     url: {
@@ -122,89 +102,10 @@ const imageSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Schema chính cho Post (theo photos.json)
+// Schema chính cho Post
 const postSchema = new mongoose.Schema(
   {
-    "Tiêu Đề": {
-      type: String,
-      required: true,
-    },
-    "Bình Luận": {
-      type: Map,
-      of: commentSchema,
-      default: new Map(),
-    },
-    "Thích": {
-      type: Map,
-      of: new mongoose.Schema({
-        "id người thích": {
-          type: mongoose.Schema.Types.ObjectId,
-          required: true,
-        },
-        TypeRole: {
-          type: String,
-          enum: ["Account", "BusinessAccount", "BarPage"],
-          required: true,
-        },
-      }, { _id: false }),
-      default: new Map(),
-    },
-    authorId: {
-      type: mongoose.Schema.Types.ObjectId,
-      required: true,
-    },
-    // Thêm accountId để tương thích với service
-    accountId: {
-      type: mongoose.Schema.Types.ObjectId,
-      required: true,
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
-    caption: {
-      type: String,
-      required: true,
-    },
-    postId: {
-      type: mongoose.Schema.Types.ObjectId,
-      required: true,
-    },
-    url: {
-      type: String,
-      required: false,
-      default: "default-post.jpg",
-    },
-    // Thêm các field mới cho media
-    images: {
-      type: Map,
-      of: imageSchema,
-      default: new Map(),
-    },
-    // Store entity info for display
-    authorEntityId: {
-      type: String,
-      default: null,
-    },
-    authorEntityType: {
-      type: String,
-      enum: ["Account", "BusinessAccount", "BarPage"],
-      default: "Account",
-    },
-    authorEntityName: {
-      type: String,
-      default: null,
-    },
-    authorEntityAvatar: {
-      type: String,
-      default: null,
-    },
-    // Thêm các field alias để tương thích với service
     title: {
-      type: String,
-      required: true,
-    },
-    content: {
       type: String,
       required: true,
     },
@@ -215,31 +116,44 @@ const postSchema = new mongoose.Schema(
     },
     likes: {
       type: Map,
-      of: new mongoose.Schema({
-        accountId: {
-          type: mongoose.Schema.Types.ObjectId,
-          required: true,
-        },
-        TypeRole: {
-          type: String,
-          enum: ["Account", "BusinessAccount", "BarPage"],
-          required: true,
-        },
-      }, { _id: false }),
+      of: likeSchema,
       default: new Map(),
+    },
+    accountId: {
+      type: String, // Lưu ID từ SQL Server dưới dạng string
+      required: true,
+    },
+    barId: {
+      type: String, // ID của bar (nếu là bài của bar)
+      default: null,
+    },
+    content: {
+      type: String,
+      required: true,
+    },
+    images: {
+      type: String,
+      default: "",
+    },
+    type: {
+      type: String,
+      enum: ["post", "story"], // post: news feed, story: story
+      default: "post",
+    },
+    expiredAt: {
+      type: Date, // chỉ dùng cho story
+      default: null,
     },
   },
   {
     timestamps: true,
-    collection: "posts", // Đổi tên collection theo JSON
+    collection: "posts", // Tên collection trong MongoDB
   }
 );
 
 // Index để tối ưu hóa query
 postSchema.index({ authorId: 1 });
-postSchema.index({ accountId: 1 });
-postSchema.index({ authorEntityId: 1 });
 postSchema.index({ createdAt: -1 });
-postSchema.index({ "Tiêu Đề": "text", caption: "text" });
+postSchema.index({ title: "text", content: "text" });
 
 module.exports = mongoose.model("Post", postSchema, "posts");
