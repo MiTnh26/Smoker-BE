@@ -22,4 +22,47 @@ const createCloudinaryUpload = (entity = "users") => {
   return multer({ storage });
 };
 
-module.exports = createCloudinaryUpload;
+// Middleware riêng cho posts - hỗ trợ video/audio
+const createPostUpload = () => {
+  const storage = new CloudinaryStorage({
+    cloudinary,
+    params: async (req, file) => {
+      const userId = req.user?.id || "unknown";
+      const folder = `Smoker/posts/${userId}/${file.fieldname}`;
+      
+      // Xác định resource_type dựa trên fieldname
+      let resource_type = "image";
+      let allowed_formats = ["jpg", "jpeg", "png", "webp", "avif"];
+      
+      if (file.fieldname === "videos") {
+        resource_type = "video";
+        allowed_formats = ["mp4", "mov", "avi", "webm", "mkv"];
+      } else if (file.fieldname === "audio") {
+        resource_type = "video"; // Cloudinary treats audio as video
+        allowed_formats = ["mp3", "wav", "ogg", "m4a", "aac"];
+      }
+      
+      return {
+        folder,
+        allowed_formats,
+        resource_type,
+        public_id: `${Date.now()}-${file.originalname}`,
+        // Transformations cho video/audio
+        transformation: resource_type === "video" ? [
+          { quality: "auto", format: "auto" }
+        ] : [
+          { quality: "auto", format: "auto" }
+        ]
+      };
+    },
+  });
+
+  return multer({ 
+    storage,
+    limits: {
+      fileSize: 100 * 1024 * 1024, // 100MB limit
+    }
+  });
+};
+
+module.exports = { createCloudinaryUpload, createPostUpload };

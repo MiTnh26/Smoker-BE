@@ -32,12 +32,12 @@ async function me(req, res) {
 }
 
 async function updateProfile(req, res) {
-  if (process.env.NODE_ENV === "development") {
-    console.log("=== updateProfile ===");
-    console.log("req.user:", req.user);
-    console.log("req.body:", req.body);
-    console.log("req.files:", req.files);
-  }
+  console.log("=== updateProfile ===");
+  console.log("[USER] req.user:", req.user);
+  console.log("[USER] req.body:", req.body);
+  console.log("[USER] req.files:", req.files);
+  console.log("[USER] req.body.avatar:", req.body?.avatar);
+  console.log("[USER] req.body.background:", req.body?.background);
 
   try {
     const userId = req.user.id;
@@ -63,8 +63,20 @@ async function updateProfile(req, res) {
     const current = await accountModel.getAccountById(userId);
     if (!current) return res.status(404).json(error("Không tìm thấy người dùng"));
     
-    const fileAvatar = req.files?.avatar?.[0]?.path ?? current.Avatar;
-    const fileBackground = req.files?.background?.[0]?.path ?? current.Background;
+    // Check if avatar/background are in files (uploaded) or body (URL)
+    const fileAvatar = req.files?.avatar?.[0]?.path;
+    const fileBackground = req.files?.background?.[0]?.path;
+    
+    // If no files uploaded, check if URLs are in body
+    const avatarUrl = req.body?.avatar || fileAvatar;
+    const backgroundUrl = req.body?.background || fileBackground;
+    
+    console.log("[USER] fileAvatar:", fileAvatar);
+    console.log("[USER] fileBackground:", fileBackground);
+    console.log("[USER] avatarUrl:", avatarUrl);
+    console.log("[USER] backgroundUrl:", backgroundUrl);
+    console.log("[USER] current.Avatar:", current.Avatar);
+    console.log("[USER] current.Background:", current.Background);
 
     const updateData = {
       userName: userName || current.UserName,
@@ -73,9 +85,11 @@ async function updateProfile(req, res) {
       phone,
       gender: gender || current.Gender,
       status: status || current.Status,
-      avatar: fileAvatar ?? current.Avatar,
-      background: fileBackground ?? current.Background,
+      avatar: avatarUrl || current.Avatar,
+      background: backgroundUrl || current.Background,
     };
+    
+    console.log("[USER] updateData:", updateData);
 
     const updated = await accountModel.updateAccountInfo(userId, updateData);
     if (!updated) return res.status(400).json(error("Cập nhật thất bại"));
