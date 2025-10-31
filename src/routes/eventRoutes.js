@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const EventController = require("../controllers/eventController");
-const createCloudinaryUpload = require("../middleware/uploadCloudinary"); // import đúng hàm tạo upload
+const { createCloudinaryUpload } = require("../middleware/uploadCloudinary"); // import đúng hàm tạo upload
 
 // Tạo instance upload riêng cho thư mục "events"
 const upload = createCloudinaryUpload("events");
