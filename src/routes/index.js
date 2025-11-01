@@ -11,6 +11,26 @@ const voucherRoutes = require("./voucherRoutes");
 const comboRoutes = require("./comboRoutes");
 const voucherApplyRoutes = require("./voucherApplyRoutes");
 const songRoutes = require("./songRoutes");
+const messageRoutes = require("./messageRoutes");
+const notificationRoutes = require("./notificationRoutes");
 
 
-module.exports = { authRoutes, userRoutes, businessRoutes, postRoutes, storyRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes,voucherRoutes,comboRoutes,voucherApplyRoutes,songRoutes };
+module.exports = { 
+  authRoutes, 
+  userRoutes, 
+  businessRoutes, 
+  postRoutes, 
+  storyRoutes,
+  barPageRoutes,
+  tableClassificationRoutes,
+  barTableRoutes,
+  eventRoutes,
+  voucherRoutes,
+  comboRoutes,
+  voucherApplyRoutes,
+  musicRoutes,
+  messageRoutes,
+  notificationRoutes,
+  songRoutes,
+  musicRoutes
+};
