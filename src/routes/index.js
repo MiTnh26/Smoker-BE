@@ -13,6 +13,8 @@ const voucherApplyRoutes = require("./voucherApplyRoutes");
 const songRoutes = require("./songRoutes");
 const messageRoutes = require("./messageRoutes");
 const notificationRoutes = require("./notificationRoutes");
+
+const followRoutes = require("./followRoutes");
 const musicRoutes = require("./musicRoutes");
 
 module.exports = { 
@@ -28,6 +30,7 @@ module.exports = {
   voucherRoutes,
   comboRoutes,
   voucherApplyRoutes,
+  followRoutes,
   musicRoutes,
   messageRoutes,
   notificationRoutes,
