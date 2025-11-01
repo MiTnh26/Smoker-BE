@@ -4,7 +4,8 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const { initSQLConnection } = require("./db/sqlserver");
 const connectDB = require("./db/mongodb");
-const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes,postRoutes,storyRoutes, comboRoutes, voucherRoutes,voucherApplyRoutes, songRoutes, musicRoutes, messageRoutes, notificationRoutes } = require("./routes");
+const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes,postRoutes,storyRoutes, comboRoutes, voucherRoutes,voucherApplyRoutes, songRoutes, musicRoutes, messageRoutes, notificationRoutes, followRoutes } = require("./routes");
+app.use("/api/follow", followRoutes);
 
 
 const app = express();
