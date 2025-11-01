@@ -10,6 +10,29 @@ async function me(req, res) {
     const user = await accountModel.getAccountById(userId);
     if (!user) return res.status(404).json(error("Không tìm thấy người dùng"));
 
+    // Parse address nếu là JSON, nếu không thì trả về như string
+    let address = user.Address || "";
+    let addressData = null;
+    
+    if (address) {
+      try {
+        const parsed = JSON.parse(address);
+        if (parsed && typeof parsed === 'object' && parsed.fullAddress !== undefined) {
+          // Đây là structured address data
+          addressData = {
+            provinceId: parsed.provinceId || null,
+            districtId: parsed.districtId || null,
+            wardId: parsed.wardId || null,
+            fullAddress: parsed.fullAddress || ""
+          };
+          address = parsed.fullAddress || parsed.detail || address;
+        }
+      } catch (e) {
+        // Không phải JSON, dùng như string bình thường
+        address = user.Address || "";
+      }
+    }
+
     return res.json(success("Lấy thông tin thành công", {
       id: user.AccountId,
       email: user.Email,
@@ -19,7 +42,8 @@ async function me(req, res) {
       background: user.Background,
       coverImage: user.Background,
       phone: user.Phone,
-      address: user.Address,
+      address: address,
+      addressData: addressData, // Thêm structured address data
       bio: user.Bio,
       gender: user.Gender,
       status: user.Status,
@@ -41,7 +65,7 @@ async function updateProfile(req, res) {
 
   try {
     const userId = req.user.id;
-    let { userName, bio, address, phone, gender, status } = req.body || {};
+    let { userName, bio, address, phone, gender, status, addressData } = req.body || {};
 
     // 🔒 Validate cơ bản
     userName = (userName || "").trim();
@@ -49,7 +73,32 @@ async function updateProfile(req, res) {
       return res.status(400).json(error("Tên người dùng phải có ít nhất 4 ký tự"));
 
     bio = (bio || "").slice(0, 500);
-    address = (address || "").trim();
+    
+    // Xử lý address: nếu có addressData (structured), lưu dưới dạng JSON
+    // Nếu không, lưu như string bình thường
+    let addressToSave = (address || "").trim();
+    if (addressData) {
+      try {
+        // Parse addressData nếu là string JSON
+        const addressDataObj = typeof addressData === 'string' 
+          ? JSON.parse(addressData) 
+          : addressData;
+        
+        // Lưu dưới dạng JSON string chứa cả full address và structured data
+        addressToSave = JSON.stringify({
+          fullAddress: address || addressDataObj.fullAddress || "",
+          provinceId: addressDataObj.provinceId || null,
+          districtId: addressDataObj.districtId || null,
+          wardId: addressDataObj.wardId || null,
+          detail: addressDataObj.detail || address || ""
+        });
+      } catch (e) {
+        console.warn("[USER] Failed to parse addressData, saving as plain string:", e);
+        // Nếu parse lỗi, lưu như string bình thường
+        addressToSave = (address || "").trim();
+      }
+    }
+    
     phone = (phone || "").replace(/\s/g, "").slice(0, 20);
     if (phone && !/^0\d{9,10}$/.test(phone))
       return res.status(400).json(error("Số điện thoại không hợp lệ"));
@@ -81,7 +130,7 @@ async function updateProfile(req, res) {
     const updateData = {
       userName: userName || current.UserName,
       bio,
-      address,
+      address: addressToSave,
       phone,
       gender: gender || current.Gender,
       status: status || current.Status,
@@ -94,6 +143,28 @@ async function updateProfile(req, res) {
     const updated = await accountModel.updateAccountInfo(userId, updateData);
     if (!updated) return res.status(400).json(error("Cập nhật thất bại"));
 
+    // Parse address để trả về structured data nếu có
+    let parsedAddress = updated.Address || "";
+    let parsedAddressData = null;
+    
+    if (parsedAddress) {
+      try {
+        const parsed = JSON.parse(parsedAddress);
+        if (parsed && typeof parsed === 'object' && parsed.fullAddress !== undefined) {
+          parsedAddressData = {
+            provinceId: parsed.provinceId || null,
+            districtId: parsed.districtId || null,
+            wardId: parsed.wardId || null,
+            fullAddress: parsed.fullAddress || ""
+          };
+          parsedAddress = parsed.fullAddress || parsed.detail || parsedAddress;
+        }
+      } catch (e) {
+        // Không phải JSON, dùng như string
+        parsedAddress = updated.Address || "";
+      }
+    }
+
     return res.json(success("Cập nhật hồ sơ thành công", {
       id: updated.AccountId,
       email: updated.Email,
@@ -102,7 +173,8 @@ async function updateProfile(req, res) {
       avatar: updated.Avatar,
       background: updated.Background,
       phone: updated.Phone,
-      address: updated.Address,
+      address: parsedAddress,
+      addressData: parsedAddressData, // Thêm structured address data
       bio: updated.Bio,
       gender: updated.Gender,
       status: updated.Status,
