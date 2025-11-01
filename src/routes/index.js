@@ -16,7 +16,7 @@ const notificationRoutes = require("./notificationRoutes");
 
 const followRoutes = require("./followRoutes");
 const musicRoutes = require("./musicRoutes");
-
+const reportRoutes = require("./reportRoutes");
 module.exports = { 
   authRoutes, 
   userRoutes, 
@@ -35,4 +35,5 @@ module.exports = {
   messageRoutes,
   notificationRoutes,
   songRoutes,
+  reportRoutes
 };
