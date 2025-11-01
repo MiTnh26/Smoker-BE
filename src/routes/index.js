@@ -13,7 +13,7 @@ const voucherApplyRoutes = require("./voucherApplyRoutes");
 const songRoutes = require("./songRoutes");
 const messageRoutes = require("./messageRoutes");
 const notificationRoutes = require("./notificationRoutes");
-
+const musicRoutes = require("./musicRoutes");
 
 module.exports = { 
   authRoutes, 
@@ -32,5 +32,4 @@ module.exports = {
   messageRoutes,
   notificationRoutes,
   songRoutes,
-  musicRoutes
 };
