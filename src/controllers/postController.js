@@ -23,6 +23,7 @@ class PostController {
         });
       }
 
+
       const postData = {
         title,
         content,
@@ -31,6 +32,10 @@ class PostController {
         expiredAt: expiredAt ? new Date(expiredAt) : null,
         type: type || "post"
       };
+      
+      if (req.body.songId) {
+        postData.songId = req.body.songId;
+      }
 
       const result = await postService.createPost(postData);
       // Convert authorId to ObjectId if it's a string
