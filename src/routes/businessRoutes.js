@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { businessController }= require("../controllers");
-const createCloudinaryUpload = require("../middleware/uploadCloudinary");
+const { createCloudinaryUpload } = require("../middleware/uploadCloudinary");
 
 // 1) Create business account (no file upload)
 router.post("/register", businessController.registerBusiness);

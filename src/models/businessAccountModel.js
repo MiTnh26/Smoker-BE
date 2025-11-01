@@ -58,7 +58,7 @@ async function createBusinessAccount({
     .input("Avatar", sql.NVarChar(1000), avatar)
     .input("Background", sql.NVarChar(1000), background)
     .input("Phone", sql.NVarChar(20), phone)
-    .input("Address", sql.NVarChar(255), address)
+    .input("Address", sql.NVarChar(sql.MAX), address)
     .input("Bio", sql.NVarChar(500), bio)
     .input("Gender", sql.NVarChar(20), gender)
     .input("Status", sql.NVarChar(20), status)
@@ -81,16 +81,17 @@ async function createBusinessAccount({
 // ✏️ Cập nhật avatar / background / bio
 async function updateBusinessAccountFiles(BussinessAccountId, updates) {
   const pool = await getPool();
-  const { avatar, background, bio, phone, address, gender, status, pricePerHours,
+  const { userName, avatar, background, bio, phone, address, gender, status, pricePerHours,
     pricePerSession } = updates;
 
   const result = await pool.request()
     .input("BussinessAccountId", sql.UniqueIdentifier, BussinessAccountId)
+    .input("UserName", sql.NVarChar(100), userName || null)
     .input("Avatar", sql.NVarChar(1000), avatar || null)
     .input("Background", sql.NVarChar(1000), background || null)
     .input("Bio", sql.NVarChar(500), bio || null)
     .input("Phone", sql.NVarChar(20), phone || null)
-    .input("Address", sql.NVarChar(255), address || null)
+    .input("Address", sql.NVarChar(sql.MAX), address || null)
     .input("Gender", sql.NVarChar(20), gender || null)
     .input("Status", sql.NVarChar(20), status || null)
     .input("PricePerHours", sql.Int, pricePerHours || null)
@@ -98,6 +99,7 @@ async function updateBusinessAccountFiles(BussinessAccountId, updates) {
     .query(`
       UPDATE BussinessAccounts
       SET 
+        UserName = COALESCE(@UserName, UserName),
         Avatar = COALESCE(@Avatar, Avatar),
         Background = COALESCE(@Background, Background),
         Bio = COALESCE(@Bio, Bio),

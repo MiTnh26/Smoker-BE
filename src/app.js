@@ -4,12 +4,30 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const { initSQLConnection } = require("./db/sqlserver");
 const connectDB = require("./db/mongodb");
-const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes,postRoutes,storyRoutes, comboRoutes, voucherRoutes,voucherApplyRoutes, songRoutes } = require("./routes");
+const {
+  authRoutes,
+  userRoutes,
+  businessRoutes,
+  barPageRoutes,
+  tableClassificationRoutes,
+  barTableRoutes,
+  eventRoutes,
+  postRoutes,
+  storyRoutes,
+  comboRoutes,
+  voucherRoutes,
+  voucherApplyRoutes,
+  songRoutes,
+  musicRoutes,
+  messageRoutes,
+  notificationRoutes,
+} = require("./routes");
 
 
 const app = express();
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 app.use(
   cors({
     origin: process.env.FRONTEND_URL,
@@ -18,6 +36,15 @@ app.use(
 );
 // Khởi tạo kết nối MongoDB
 connectDB();
+
+// Debug middleware
+app.use((req, res, next) => {
+  if (req.url !== "/api/user/profile") { // Skip debug for profile to reduce noise
+    console.log("📡 Incoming request:", req.method, req.url);
+  }
+  next();
+});
+
 // Khởi tạo kết nối SQL Server
 initSQLConnection();
 
@@ -34,6 +61,9 @@ app.use("/api/business", businessRoutes);
 app.use("/api/events",eventRoutes)
 app.use("/api/posts", postRoutes);
 app.use("/api/stories", storyRoutes);
+app.use("/api/music", musicRoutes);
+app.use("/api/messages", messageRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 app.use("/api/events",eventRoutes)
 app.use("/api/song", songRoutes);

@@ -5,14 +5,33 @@ class PostService {
   // Tạo post mới
   async createPost(postData) {
     try {
+      console.log("🔧 PostService.createPost - Starting");
+      console.log("📦 Post data received:", JSON.stringify(postData, null, 2));
+      
+      console.log("🏗️ Creating new Post instance...");
       const post = new Post(postData);
+      console.log("📝 Post instance created:", post);
+      
+      console.log("💾 Saving post to database...");
       await post.save();
+      console.log("✅ Post saved successfully:", post._id);
+      
       return {
         success: true,
         data: post,
         message: "Post created successfully"
       };
     } catch (error) {
+      console.log("💥 Error in PostService.createPost:", error);
+      console.log("💥 Error name:", error.name);
+      console.log("💥 Error message:", error.message);
+      console.log("💥 Error code:", error.code);
+      console.log("💥 Error stack:", error.stack);
+      
+      if (error.name === 'ValidationError') {
+        console.log("🔍 Validation errors:", error.errors);
+      }
+      
       return {
         success: false,
         message: "Error creating post",
@@ -560,7 +579,9 @@ class PostService {
       const posts = await Post.find({
         $or: [
           { "title": { $regex: query, $options: 'i' } },
-          { "content": { $regex: query, $options: 'i' } }
+          { "content": { $regex: query, $options: 'i' } },
+          { "Tiêu Đề": { $regex: query, $options: 'i' } },
+          { "caption": { $regex: query, $options: 'i' } }
         ]
       })
         .sort({ createdAt: -1 })
@@ -570,7 +591,9 @@ class PostService {
       const total = await Post.countDocuments({
         $or: [
           { "title": { $regex: query, $options: 'i' } },
-          { "content": { $regex: query, $options: 'i' } }
+          { "content": { $regex: query, $options: 'i' } },
+          { "Tiêu Đề": { $regex: query, $options: 'i' } },
+          { "caption": { $regex: query, $options: 'i' } }
         ]
       });
 
@@ -598,14 +621,20 @@ class PostService {
     try {
       const skip = (page - 1) * limit;
       const posts = await Post.find({
-        title: { $regex: title, $options: 'i' }
+        $or: [
+          { title: { $regex: title, $options: 'i' } },
+          { "Tiêu Đề": { $regex: title, $options: 'i' } }
+        ]
       })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit);
 
       const total = await Post.countDocuments({
-        title: { $regex: title, $options: 'i' }
+        $or: [
+          { title: { $regex: title, $options: 'i' } },
+          { "Tiêu Đề": { $regex: title, $options: 'i' } }
+        ]
       });
 
       return {
@@ -632,14 +661,20 @@ class PostService {
     try {
       const skip = (page - 1) * limit;
       const posts = await Post.find({
-        accountId: accountId
+        $or: [
+          { accountId: accountId },
+          { authorId: accountId }
+        ]
       })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit);
 
       const total = await Post.countDocuments({
-        accountId: accountId
+        $or: [
+          { accountId: accountId },
+          { authorId: accountId }
+        ]
       });
 
       return {
@@ -673,7 +708,10 @@ class PostService {
       }
 
       // Kiểm tra quyền chỉnh sửa (chỉ chủ sở hữu post)
-      if (post.accountId.toString() !== userId.toString()) {
+      const isOwner = (post.accountId && post.accountId.toString() === userId.toString()) ||
+                      (post.authorId && post.authorId.toString() === userId.toString());
+      
+      if (!isOwner) {
         return {
           success: false,
           message: "Unauthorized to update this post"
@@ -780,7 +818,10 @@ class PostService {
       }
 
       // Kiểm tra quyền xóa (chỉ author hoặc admin)
-      if (post.accountId.toString() !== userId.toString()) {
+      const isOwner = (post.accountId && post.accountId.toString() === userId.toString()) ||
+                      (post.authorId && post.authorId.toString() === userId.toString());
+      
+      if (!isOwner) {
         return {
           success: false,
           message: "Unauthorized to delete this post"
