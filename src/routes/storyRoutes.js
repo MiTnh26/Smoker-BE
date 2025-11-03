@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const storyController = require("../controllers/storyController");
 const postController = require("../controllers/postController");
-const createCloudinaryUpload = require("../middleware/uploadCloudinary");
+const { createCloudinaryUpload } = require("../middleware/uploadCloudinary");
 const { verifyToken } = require("../middleware/authMiddleware");
 
 // Middleware upload cho story (dùng Cloudinary, folder: stories)
