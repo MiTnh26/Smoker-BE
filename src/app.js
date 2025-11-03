@@ -23,6 +23,7 @@ const {
   notificationRoutes,
   bankInfoRoutes,
   livestreamRoutes,
+  mediaRoutes,
 } = require("./routes");
 
 
@@ -71,6 +72,7 @@ app.use("/api/events",eventRoutes)
 app.use("/api/song", songRoutes);
 app.use("/api/bank-info", bankInfoRoutes);
 app.use("/api/livestream", livestreamRoutes);
+app.use("/api/medias", mediaRoutes);
 app.get("/", (req, res) => {
   res.json({ 
     message: "Welcome to Smoker API 🚬",
