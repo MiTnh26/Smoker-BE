@@ -21,6 +21,8 @@ const {
   musicRoutes,
   messageRoutes,
   notificationRoutes,
+  followRoutes,
+  reportRoutes,
   bankInfoRoutes,
   livestreamRoutes,
   mediaRoutes,
@@ -70,6 +72,8 @@ app.use("/api/notifications", notificationRoutes);
 
 app.use("/api/events",eventRoutes)
 app.use("/api/song", songRoutes);
+app.use("/api/follow", followRoutes);
+app.use("/api/reports", reportRoutes);
 app.use("/api/bank-info", bankInfoRoutes);
 app.use("/api/livestream", livestreamRoutes);
 app.use("/api/medias", mediaRoutes);
