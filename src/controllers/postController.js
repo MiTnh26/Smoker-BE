@@ -2,18 +2,15 @@ const postService = require("../services/postService");
 const mongoose = require("mongoose");
 const Music = require("../models/musicModel");
 const Post = require("../models/postModel");
+const Media = require("../models/mediaModel");
 
 class PostController {
   // Tạo post mới
   async createPost(req, res) {
     try {
-  const { title, content, images, expiredAt, type , videos, audios, caption, authorEntityId, authorEntityType, authorEntityName, authorEntityAvatar } = req.body;
+      const { title, content, images, expiredAt, type, videos, audios, caption, authorEntityId, authorEntityType, authorEntityName, authorEntityAvatar } = req.body;
       const authorId = req.user?.id || 1; // Từ middleware auth
       console.log("[POST] Creating new post");
-      
-
-      
-   
 
       if (!authorId) {
         console.error("[POST] No authorId found in request");
@@ -23,21 +20,6 @@ class PostController {
         });
       }
 
-
-      const postData = {
-        title,
-        content,
-        accountId: authorId, // Map authorId to accountId for schema
-        images: typeof images === "string" ? images : "",
-        expiredAt: expiredAt ? new Date(expiredAt) : null,
-        type: type || "post"
-      };
-      
-      if (req.body.songId) {
-        postData.songId = req.body.songId;
-      }
-
-      const result = await postService.createPost(postData);
       // Convert authorId to ObjectId if it's a string
       let authorObjectId;
       try {
@@ -56,55 +38,219 @@ class PostController {
         });
       }
 
-  
-      
+      let result;
+
+      // Check if posting music (audios)
       if (audios && Object.keys(audios).length > 0) {
-        // Create music post using existing Music model
+        console.log("[POST] Creating music post");
+        
+        // Get music-specific fields from request body
+        const musicTitle = req.body.musicTitle || title || "Untitled";
+        const artistName = req.body.artistName || Object.values(audios)[0]?.artist || "Unknown Artist";
+        const description = req.body.description || caption || content || "";
+        const hashTag = req.body.hashTag || "";
+        const musicPurchaseLink = req.body.musicPurchaseLink || "";
+        const musicBackgroundImage = req.body.musicBackgroundImage || Object.values(audios)[0]?.thumbnail || "";
+        const audioUrl = Object.values(audios)[0]?.url || "";
+        
+        // Normalize authorEntityType to match enum values
+        const rawEntityType = (authorEntityType || "").toLowerCase();
+        let normalizedEntityType;
+        if (rawEntityType === "business" || rawEntityType === "businessaccount") {
+          normalizedEntityType = "BusinessAccount";
+        } else if (rawEntityType === "bar" || rawEntityType === "barpage") {
+          normalizedEntityType = "BarPage";
+        } else {
+          normalizedEntityType = "Account"; // customer, account, or any other -> Account
+        }
+        
+        // Create music entry in musics collection (English fields)
         const musicData = {
-          "Chi Tiết": caption || content,
-          "HashTag": "", // Can be extracted from content later
-          "Link Mua Nhạc": Object.values(audios)[0]?.url || "",
-          "Tên Bài Nhạc": title,
-          "Tên Nghệ Sĩ": Object.values(audios)[0]?.artist || "Unknown Artist",
-          "Ảnh Nền Bài Nhạc": Object.values(audios)[0]?.thumbnail || "",
-          "Người Đăng": authorObjectId,
-          // Store entity info for display
-          authorEntityId: authorEntityId || authorId,
-          authorEntityType: authorEntityType || "Account",
-          authorEntityName: authorEntityName || null,
-          authorEntityAvatar: authorEntityAvatar || null
+          details: description,
+          hashTag: hashTag,
+          purchaseLink: musicPurchaseLink || audioUrl, // Use purchase link or audio URL as fallback
+          audioUrl: audioUrl || null,
+          title: musicTitle,
+          artist: artistName,
+          coverUrl: musicBackgroundImage,
+          uploaderId: authorObjectId,
+          uploaderName: authorEntityName || null,
+          uploaderAvatar: authorEntityAvatar || null
         };
         
-        console.log("[POST] Creating music post");
         const music = new Music(musicData);
         await music.save();
-        result = { success: true, data: music, message: "Music post created successfully" };
-        
-      } else {
-        // Create text/image post in posts collection (photos)
-        const firstImageUrl = images && Object.keys(images).length > 0 
-          ? Object.values(images)[0]?.url || "" 
-          : "";
+        console.log("[POST] Music saved to musics collection:", music._id);
 
+        // Create post entry in posts collection linked to music
         const postData = {
-          "Tiêu Đề": title,
-          title: title, // Alias cho service
-          caption: caption || content,
-          content: caption || content, // Alias cho service
-          authorId: authorObjectId,
-          accountId: authorObjectId, // Alias cho service
-          postId: new mongoose.Types.ObjectId(),
-          url: firstImageUrl || "default-post.jpg", // Provide default URL
-          images: images || {},
-          // Store entity info for display
-          authorEntityId: authorEntityId || authorId,
-          authorEntityType: authorEntityType || "Account",
-          authorEntityName: authorEntityName || null,
-          authorEntityAvatar: authorEntityAvatar || null
+          title: musicTitle, // Use music title instead of generic title
+          content: description, // Use description as content
+          accountId: authorId,
+          songId: music._id, // Link to music
+          mediaIds: [],
+          expiredAt: expiredAt ? new Date(expiredAt) : null,
+          type: type || "post"
         };
 
-        console.log("[POST] Creating image/text post");
+        const post = await postService.createPost(postData);
+        
+        // Check if post creation was successful
+        if (!post.success || !post.data) {
+          console.error("[POST] Post creation failed:", post.message || post.error);
+          // Clean up: delete the music entry if post creation failed
+          try {
+            await Music.findByIdAndDelete(music._id);
+          } catch (cleanupError) {
+            console.error("[POST] Failed to cleanup music entry:", cleanupError);
+          }
+          return res.status(400).json({
+            success: false,
+            message: post.message || "Failed to create post",
+            error: post.error
+          });
+        }
+        
+        console.log("[POST] Post saved to posts collection:", post.data._id);
+
+        // Create media entries for background image (and optionally audio thumbnail if needed)
+        const newMediaIds = [];
+        if (musicBackgroundImage) {
+          const mediaDoc = new Media({
+            postId: post.data._id,
+            accountId: authorId,
+            url: musicBackgroundImage,
+            caption: description || "",
+            comments: new Map(),
+            likes: new Map()
+          });
+          await mediaDoc.save();
+          newMediaIds.push(mediaDoc._id);
+        }
+
+        if (newMediaIds.length > 0) {
+          await Post.findByIdAndUpdate(post.data._id, { $set: { mediaIds: newMediaIds } });
+          post.data.mediaIds = newMediaIds;
+        }
+        
+        result = {
+          success: true,
+          data: {
+            post: post.data,
+            music: music
+          },
+          message: "Music post created successfully in both posts and musics collections"
+        };
+
+      } else if ((images && typeof images === 'object' && Object.keys(images).length > 0) || (videos && typeof videos === 'object' && Object.keys(videos).length > 0)) {
+        // Create post with images/videos
+        console.log("[POST] Creating image/video post");
+        
+        // Prepare medias array
+        const allMedias = { ...images, ...videos };
+        
+        // Build array for creation
+        const mediaPayloads = Object.keys(allMedias).map(key => {
+          const mediaItem = allMedias[key];
+          return {
+            url: mediaItem.url || mediaItem,
+            caption: mediaItem.caption || caption || ""
+          };
+        });
+
+        // Create post entry in posts collection
+        const postData = {
+          title,
+          content: caption || content,
+          accountId: authorId,
+          mediaIds: [],
+          images: typeof images === "string" ? images : "",
+          expiredAt: expiredAt ? new Date(expiredAt) : null,
+          type: type || "post"
+        };
+
+        const post = await postService.createPost(postData);
+        
+        // Check if post creation was successful
+        if (!post.success || !post.data) {
+          console.error("[POST] Post creation failed:", post.message || post.error);
+          return res.status(400).json({
+            success: false,
+            message: post.message || "Failed to create post",
+            error: post.error
+          });
+        }
+        
+        console.log("[POST] Post saved to posts collection:", post.data._id);
+
+        // Create media entries in medias collection
+        const mediaEntries = [];
+        const postIdForMedia = mongoose.Types.ObjectId.isValid(post.data._id) 
+          ? new mongoose.Types.ObjectId(post.data._id)
+          : post.data._id;
+        
+        for (const mediaValue of mediaPayloads) {
+          const mediaData = {
+            postId: postIdForMedia,
+            accountId: authorId,
+            url: mediaValue.url,
+            caption: mediaValue.caption || "",
+            comments: new Map(),
+            likes: new Map()
+          };
+          const media = new Media(mediaData);
+          await media.save();
+          mediaEntries.push(media);
+          console.log("[POST] Media saved to medias collection:", media._id);
+        }
+
+        // Update post.mediaIds with created media IDs
+        const newIds = mediaEntries.map(m => m._id);
+        if (newIds.length > 0) {
+          await Post.findByIdAndUpdate(post.data._id, { $set: { mediaIds: newIds } });
+          post.data.mediaIds = newIds;
+        }
+
+        result = {
+          success: true,
+          data: {
+            post: post.data,
+            medias: mediaEntries
+          },
+          message: "Post created successfully in both posts and medias collections"
+        };
+
+      } else {
+        // Create basic text post (no images/videos/audios)
+        console.log("[POST] Creating text post");
+        
+        const postData = {
+          title,
+          content,
+          accountId: authorId,
+          mediaIds: [],
+          images: typeof images === "string" ? images : "",
+          expiredAt: expiredAt ? new Date(expiredAt) : null,
+          type: type || "post"
+        };
+
+        if (req.body.songId) {
+          postData.songId = req.body.songId;
+        }
+
         result = await postService.createPost(postData);
+        
+        // Check if post creation was successful
+        if (!result.success || !result.data) {
+          console.error("[POST] Post creation failed:", result.message || result.error);
+          return res.status(400).json({
+            success: false,
+            message: result.message || "Failed to create post",
+            error: result.error
+          });
+        }
+        
+        console.log("[POST] Post saved to posts collection:", result.data._id);
       }
       
       if (result.success) {
@@ -127,8 +273,13 @@ class PostController {
   // Lấy tất cả posts
   async getAllPosts(req, res) {
     try {
-      const { page = 1, limit = 10 } = req.query;
-      const result = await postService.getAllPosts(parseInt(page), parseInt(limit));
+      const { page = 1, limit = 10, includeMedias, includeMusic } = req.query;
+      const result = await postService.getAllPosts(
+        parseInt(page),
+        parseInt(limit),
+        String(includeMedias) === 'true',
+        String(includeMusic) === 'true'
+      );
       
       if (result.success) {
         res.status(200).json(result);
@@ -148,7 +299,12 @@ class PostController {
   async getPostById(req, res) {
     try {
       const { id } = req.params;
-      const result = await postService.getPostById(id);
+      const { includeMedias, includeMusic } = req.query;
+      const result = await postService.getPostById(
+        id,
+        String(includeMedias) === 'true',
+        String(includeMusic) === 'true'
+      );
       
       if (result.success) {
         res.status(200).json(result);
@@ -339,6 +495,7 @@ class PostController {
     try {
       const { postId, commentId, replyId } = req.params;
       const userId = req.user?.id;
+      const userRole = req.user?.role || "Account";
 
       if (!userId) {
         return res.status(401).json({
@@ -347,7 +504,7 @@ class PostController {
         });
       }
 
-      const result = await postService.deleteReply(postId, commentId, replyId, userId);
+      const result = await postService.deleteReply(postId, commentId, replyId, userId, userRole);
       
       if (result.success) {
         res.status(200).json(result);
@@ -437,6 +594,92 @@ class PostController {
       }
 
       const result = await postService.unlikeComment(postId, commentId, userId);
+      
+      if (result.success) {
+        res.status(200).json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+
+  // Cập nhật comment
+  async updateComment(req, res) {
+    try {
+      const { postId, commentId } = req.params;
+      const { content, images } = req.body;
+      const userId = req.user?.id;
+      const userRole = req.user?.role || "Account";
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
+      }
+
+      // Kiểm tra có ít nhất một field được cập nhật
+      if (content === undefined && images === undefined) {
+        return res.status(400).json({
+          success: false,
+          message: "At least one field (content or images) is required"
+        });
+      }
+
+      const updateData = {};
+      if (content !== undefined) updateData.content = content;
+      if (images !== undefined) updateData.images = images;
+
+      const result = await postService.updateComment(postId, commentId, updateData, userId, userRole);
+      
+      if (result.success) {
+        res.status(200).json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+
+  // Cập nhật reply
+  async updateReply(req, res) {
+    try {
+      const { postId, commentId, replyId } = req.params;
+      const { content, images } = req.body;
+      const userId = req.user?.id;
+      const userRole = req.user?.role || "Account";
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
+      }
+
+      // Kiểm tra có ít nhất một field được cập nhật
+      if (content === undefined && images === undefined) {
+        return res.status(400).json({
+          success: false,
+          message: "At least one field (content or images) is required"
+        });
+      }
+
+      const updateData = {};
+      if (content !== undefined) updateData.content = content;
+      if (images !== undefined) updateData.images = images;
+
+      const result = await postService.updateReply(postId, commentId, replyId, updateData, userId, userRole);
       
       if (result.success) {
         res.status(200).json(result);
@@ -761,6 +1004,8 @@ class PostController {
       });
     }
   }
+
+  
 }
 
 module.exports = new PostController();

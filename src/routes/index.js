@@ -16,6 +16,7 @@ const notificationRoutes = require("./notificationRoutes");
 const songRoutes = require("./songRoutes");
 const bankInfoRoutes = require("./bankInfoRoutes");
 const livestreamRoutes = require("./livestreamRoutes");
+const mediaRoutes = require("./mediaRoutes");
 
 module.exports = { 
   authRoutes, 
@@ -36,4 +37,5 @@ module.exports = {
   songRoutes,
   bankInfoRoutes,
   livestreamRoutes,
+  mediaRoutes,
 };
