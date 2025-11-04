@@ -17,10 +17,7 @@ const songRoutes = require("./songRoutes");
 const bankInfoRoutes = require("./bankInfoRoutes");
 const livestreamRoutes = require("./livestreamRoutes");
 const mediaRoutes = require("./mediaRoutes");
-
-
 const followRoutes = require("./followRoutes");
-const musicRoutes = require("./musicRoutes");
 const reportRoutes = require("./reportRoutes");
 module.exports = { 
   authRoutes, 
