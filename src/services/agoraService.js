@@ -1,4 +1,5 @@
-const { RtcTokenBuilder, RtcRole } = require("agora-token");
+const { RtcTokenBuilder, RtcRole } = require('agora-access-token');
+;
 const crypto = require("crypto");
 
 const APP_ID = process.env.AGORA_APP_ID;

@@ -12,6 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "@react-oauth/google": "^0.12.2",
+    "agora-access-token": "^2.0.4",
     "agora-rtc-sdk-ng": "^4.24.0",
     "agora-token": "^2.0.5",
     "axios": "^1.12.2",
