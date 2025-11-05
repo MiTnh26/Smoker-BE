@@ -53,7 +53,7 @@ const musicSchema = new mongoose.Schema(
     title: { type: String, required: true },
     artist: { type: String, required: true },
     coverUrl: { type: String, required: true },
-    uploaderId: { type: mongoose.Schema.Types.ObjectId, ref: "Account", required: true },
+    uploaderId: { type: String, required: true },
     comments: { type: Map, of: musicCommentSchema, default: {} },
     likes: { type: Map, of: mongoose.Schema.Types.ObjectId, default: {} },
     uploaderName: { type: String, default: null },

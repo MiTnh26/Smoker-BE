@@ -1,50 +1,44 @@
 const mongoose = require("mongoose");
 
-// Schema chính cho Notification
+// Main Notification Schema
 const notificationSchema = new mongoose.Schema(
   {
-    "Gửi Lúc": {
-      type: Date,
-      required: true,
-    },
-    "Loại Thông Báo": {
+    type: {
       type: String,
       enum: ["Confirm", "Messages", "Like", "Comment", "Follow"],
       required: true,
     },
-    "Người Gửi Thông Báo": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
+    sender: {
+      type: String, // UUID from SQL Server
       required: true,
     },
-    "Người Nhận Thông Báo": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
+    receiver: {
+      type: String, // UUID from SQL Server
       required: true,
     },
-    "Nội Dung": {
+    content: {
       type: String,
       required: true,
     },
-    "Trạng Thái": {
+    status: {
       type: String,
-      enum: ["Chưa Đọc", "Đã Đọc"],
-      default: "Chưa Đọc",
+      enum: ["Unread", "Read"],
+      default: "Unread",
     },
-    "Đường dẫn": {
+    link: {
       type: String,
       required: true,
     },
   },
   {
     timestamps: true,
-    collection: "notifaications", // Giữ nguyên tên collection từ JSON
+    collection: "notifaications", // Keep original collection name from JSON
   }
 );
 
-// Index để tối ưu hóa query
-notificationSchema.index({ "Người Nhận Thông Báo": 1 });
-notificationSchema.index({ "Trạng Thái": 1 });
+// Indexes for query optimization
+notificationSchema.index({ receiver: 1 });
+notificationSchema.index({ status: 1 });
 notificationSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model("Notification", notificationSchema, "notifaications");

@@ -144,6 +144,11 @@ const postSchema = new mongoose.Schema(
       type: Date, // chỉ dùng cho story
       default: null,
     },
+    musicId: {
+      type: mongoose.Schema.Types.ObjectId,
+       ref: "Music", 
+       default: null 
+      },
     songId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Song',

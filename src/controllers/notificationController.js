@@ -2,19 +2,14 @@ const Notification = require("../models/notificationModel");
 const mongoose = require("mongoose");
 
 class NotificationController {
-  // Tạo thông báo mới
+  // Create new notification
   async createNotification(req, res) {
     try {
-      const {
-        "Loại Thông Báo": loaiThongBao,
-        "Người Nhận Thông Báo": nguoiNhan,
-        "Nội Dung": noiDung,
-        "Đường dẫn": duongDan
-      } = req.body;
+      const { type, receiver, content, link } = req.body;
       
-      const nguoiGui = req.user?.id;
+      const sender = req.user?.id;
 
-      if (!nguoiGui) {
+      if (!sender) {
         return res.status(401).json({
           success: false,
           message: "Unauthorized"
@@ -22,13 +17,12 @@ class NotificationController {
       }
 
       const notificationData = {
-        "Gửi Lúc": new Date(),
-        "Loại Thông Báo": loaiThongBao,
-        "Người Gửi Thông Báo": nguoiGui,
-        "Người Nhận Thông Báo": nguoiNhan,
-        "Nội Dung": noiDung,
-        "Trạng Thái": "Chưa Đọc",
-        "Đường dẫn": duongDan
+        type,
+        sender,
+        receiver,
+        content,
+        status: "Unread",
+        link
       };
 
       const notification = new Notification(notificationData);
@@ -48,7 +42,7 @@ class NotificationController {
     }
   }
 
-  // Lấy thông báo của user
+  // Get user notifications
   async getNotifications(req, res) {
     try {
       const userId = req.user?.id;
@@ -64,14 +58,14 @@ class NotificationController {
       const skip = (page - 1) * limit;
       
       const notifications = await Notification.find({
-        "Người Nhận Thông Báo": userId
+        receiver: userId
       })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit));
       
       const total = await Notification.countDocuments({
-        "Người Nhận Thông Báo": userId
+        receiver: userId
       });
 
       res.status(200).json({
@@ -93,7 +87,7 @@ class NotificationController {
     }
   }
 
-  // Đánh dấu thông báo đã đọc
+  // Mark notification as read
   async markAsRead(req, res) {
     try {
       const { notificationId } = req.params;
@@ -109,9 +103,9 @@ class NotificationController {
       const notification = await Notification.findOneAndUpdate(
         {
           _id: notificationId,
-          "Người Nhận Thông Báo": userId
+          receiver: userId
         },
-        { "Trạng Thái": "Đã Đọc" },
+        { status: "Read" },
         { new: true }
       );
 
@@ -136,7 +130,7 @@ class NotificationController {
     }
   }
 
-  // Đánh dấu tất cả thông báo đã đọc
+  // Mark all notifications as read
   async markAllAsRead(req, res) {
     try {
       const userId = req.user?.id;
@@ -150,10 +144,10 @@ class NotificationController {
 
       await Notification.updateMany(
         {
-          "Người Nhận Thông Báo": userId,
-          "Trạng Thái": "Chưa Đọc"
+          receiver: userId,
+          status: "Unread"
         },
-        { "Trạng Thái": "Đã Đọc" }
+        { status: "Read" }
       );
 
       res.status(200).json({
@@ -169,7 +163,7 @@ class NotificationController {
     }
   }
 
-  // Lấy số lượng thông báo chưa đọc
+  // Get unread notification count
   async getUnreadCount(req, res) {
     try {
       console.log("📊 getUnreadCount - Request user:", req.user);
@@ -193,8 +187,8 @@ class NotificationController {
       }
       
       const count = await Notification.countDocuments({
-        "Người Nhận Thông Báo": queryUserId,
-        "Trạng Thái": "Chưa Đọc"
+        receiver: queryUserId,
+        status: "Unread"
       });
 
       console.log("✅ Unread count:", count);
@@ -205,6 +199,82 @@ class NotificationController {
     } catch (error) {
       console.error("❌ Error in getUnreadCount:", error);
       console.error("❌ Error stack:", error.stack);
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+
+  // Create test notification (for testing purposes)
+  async createTestNotification(req, res) {
+    try {
+      const userId = req.user?.id;
+      const { type } = req.body; // Like, Comment, Follow, Messages, Confirm
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
+      }
+
+      // Sample notification data based on type
+      const testNotifications = {
+        Like: {
+          type: "Like",
+          sender: userId, // Using same user as sender for test
+          receiver: userId,
+          content: "John Doe liked your post",
+          link: "/posts/123",
+          status: "Unread"
+        },
+        Comment: {
+          type: "Comment",
+          sender: userId,
+          receiver: userId,
+          content: "Jane Smith commented: 'Great post! Looking forward to more...'",
+          link: "/posts/123",
+          status: "Unread"
+        },
+        Follow: {
+          type: "Follow",
+          sender: userId,
+          receiver: userId,
+          content: "Mike Johnson started following you",
+          link: "/profile/mike-johnson",
+          status: "Unread"
+        },
+        Messages: {
+          type: "Messages",
+          sender: userId,
+          receiver: userId,
+          content: "Sarah Wilson: 'Hey! Are you free this weekend?'",
+          link: "/messages/sarah-wilson",
+          status: "Unread"
+        },
+        Confirm: {
+          type: "Confirm",
+          sender: userId,
+          receiver: userId,
+          content: "Your table booking has been confirmed",
+          link: "/bookings/456",
+          status: "Unread"
+        }
+      };
+
+      const notificationData = testNotifications[type] || testNotifications.Like;
+      
+      const notification = new Notification(notificationData);
+      await notification.save();
+
+      res.status(201).json({
+        success: true,
+        data: notification,
+        message: `Test ${type} notification created successfully`
+      });
+    } catch (error) {
       res.status(500).json({
         success: false,
         message: "Internal server error",
