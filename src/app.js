@@ -69,7 +69,6 @@ app.use("/api/stories", storyRoutes);
 app.use("/api/music", musicRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
-
 app.use("/api/events",eventRoutes)
 app.use("/api/song", songRoutes);
 app.use("/api/follow", followRoutes);

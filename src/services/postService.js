@@ -7,15 +7,15 @@ class PostService {
     try {
       console.log("🔧 PostService.createPost - Starting");
       console.log("📦 Post data received:", JSON.stringify(postData, null, 2));
-      
+
       console.log("🏗️ Creating new Post instance...");
       const post = new Post(postData);
       console.log("📝 Post instance created:", post);
-      
+
       console.log("💾 Saving post to database...");
       await post.save();
       console.log("✅ Post saved successfully:", post._id);
-      
+
       return {
         success: true,
         data: post,
@@ -27,11 +27,11 @@ class PostService {
       console.log("💥 Error message:", error.message);
       console.log("💥 Error code:", error.code);
       console.log("💥 Error stack:", error.stack);
-      
+
       if (error.name === 'ValidationError') {
         console.log("🔍 Validation errors:", error.errors);
       }
-      
+
       return {
         success: false,
         message: "Error creating post",
@@ -48,19 +48,26 @@ class PostService {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit);
+
       if (includeMedias) query.populate('mediaIds');
-      if (includeMusic) query.populate('songId');
+      if (includeMusic) {
+        query.populate('songId');
+        query.populate('musicId');
+      }
+
       const posts = await query.lean();
       // Map populated fields to required response keys
       if (Array.isArray(posts)) {
         for (const p of posts) {
           if (includeMedias && Array.isArray(p.mediaIds)) p.medias = p.mediaIds;
           if (includeMusic && p.songId) p.song = p.songId;
+          if (includeMusic && p.musicId) p.music = p.musicId;
         }
       }
-      
+
+
       const total = await Post.countDocuments();
-      
+
       return {
         success: true,
         data: posts,
@@ -85,16 +92,20 @@ class PostService {
     try {
       const query = Post.findById(postId);
       if (includeMedias) query.populate('mediaIds');
-      if (includeMusic) query.populate('songId');
+      if (includeMusic) {
+        query.populate('songId');
+        query.populate('musicId');
+      }
+
       const post = await query.lean();
-      
+
       if (!post) {
         return {
           success: false,
           message: "Post not found"
         };
       }
-      
+
       // Convert Mongoose document to plain object
       const postData = post;
       // Normalize populated fields into desired response shape
@@ -104,7 +115,11 @@ class PostService {
       if (includeMusic && postData.songId) {
         postData.song = postData.songId;
       }
-      
+      if (includeMusic && postData.musicId) {
+        postData.music = postData.musicId;
+      }
+
+
       // Ensure comments Map is properly converted to plain object
       if (postData.comments && postData.comments instanceof Map) {
         const commentsObj = {};
@@ -137,7 +152,7 @@ class PostService {
         }
         postData.comments = commentsObj;
       }
-      
+
       return {
         success: true,
         data: postData
@@ -326,7 +341,7 @@ class PostService {
 
       // Cập nhật updatedAt cho comment (timestamps sẽ tự động cập nhật khi save)
       comment.updatedAt = new Date();
-      
+
       post.markModified('comments');
       await post.save();
 
@@ -392,7 +407,7 @@ class PostService {
 
       // Cập nhật updatedAt cho reply (timestamps sẽ tự động cập nhật khi save)
       reply.updatedAt = new Date();
-      
+
       post.markModified('comments');
       await post.save();
 
@@ -451,7 +466,7 @@ class PostService {
         reply.likes.delete(existingLikeKey);
         post.markModified('comments');
         await post.save();
-        
+
         return {
           success: true,
           data: post,
@@ -619,7 +634,7 @@ class PostService {
         // Đã like rồi → unlike (toggle off)
         post.likes.delete(existingLikeKey);
         await post.save();
-        
+
         return {
           success: true,
           data: post,
@@ -719,7 +734,7 @@ class PostService {
         comment.likes.delete(existingLikeKey);
         post.markModified('comments');
         await post.save();
-        
+
         return {
           success: true,
           data: post,
@@ -933,8 +948,8 @@ class PostService {
 
       // Kiểm tra quyền chỉnh sửa (chỉ chủ sở hữu post)
       const isOwner = (post.accountId && post.accountId.toString() === userId.toString()) ||
-                      (post.authorId && post.authorId.toString() === userId.toString());
-      
+        (post.authorId && post.authorId.toString() === userId.toString());
+
       if (!isOwner) {
         return {
           success: false,
@@ -945,7 +960,7 @@ class PostService {
       // Chỉ cho phép cập nhật title và content, không cho phép cập nhật images
       const allowedFields = ['title', 'content'];
       const filteredUpdateData = {};
-      
+
       for (const field of allowedFields) {
         if (updateData[field] !== undefined) {
           filteredUpdateData[field] = updateData[field];
@@ -1044,8 +1059,8 @@ class PostService {
 
       // Kiểm tra quyền xóa (chỉ author hoặc admin)
       const isOwner = (post.accountId && post.accountId.toString() === userId.toString()) ||
-                      (post.authorId && post.authorId.toString() === userId.toString());
-      
+        (post.authorId && post.authorId.toString() === userId.toString());
+
       if (!isOwner) {
         return {
           success: false,

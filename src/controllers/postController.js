@@ -43,7 +43,7 @@ class PostController {
       // Check if posting music (audios)
       if (audios && Object.keys(audios).length > 0) {
         console.log("[POST] Creating music post");
-        
+
         // Get music-specific fields from request body
         const musicTitle = req.body.musicTitle || title || "Untitled";
         const artistName = req.body.artistName || Object.values(audios)[0]?.artist || "Unknown Artist";
@@ -52,7 +52,7 @@ class PostController {
         const musicPurchaseLink = req.body.musicPurchaseLink || "";
         const musicBackgroundImage = req.body.musicBackgroundImage || Object.values(audios)[0]?.thumbnail || "";
         const audioUrl = Object.values(audios)[0]?.url || "";
-        
+
         // Normalize authorEntityType to match enum values
         const rawEntityType = (authorEntityType || "").toLowerCase();
         let normalizedEntityType;
@@ -63,7 +63,7 @@ class PostController {
         } else {
           normalizedEntityType = "Account"; // customer, account, or any other -> Account
         }
-        
+
         // Create music entry in musics collection (English fields)
         const musicData = {
           details: description,
@@ -77,7 +77,7 @@ class PostController {
           uploaderName: authorEntityName || null,
           uploaderAvatar: authorEntityAvatar || null
         };
-        
+
         const music = new Music(musicData);
         await music.save();
         console.log("[POST] Music saved to musics collection:", music._id);
@@ -87,14 +87,15 @@ class PostController {
           title: musicTitle, // Use music title instead of generic title
           content: description, // Use description as content
           accountId: authorId,
-          songId: music._id, // Link to music
+          musicId: music._id,
+          songId: null,// Link to music
           mediaIds: [],
           expiredAt: expiredAt ? new Date(expiredAt) : null,
           type: type || "post"
         };
 
         const post = await postService.createPost(postData);
-        
+
         // Check if post creation was successful
         if (!post.success || !post.data) {
           console.error("[POST] Post creation failed:", post.message || post.error);
@@ -110,7 +111,7 @@ class PostController {
             error: post.error
           });
         }
-        
+
         console.log("[POST] Post saved to posts collection:", post.data._id);
 
         // Create media entries for background image (and optionally audio thumbnail if needed)
@@ -132,7 +133,7 @@ class PostController {
           await Post.findByIdAndUpdate(post.data._id, { $set: { mediaIds: newMediaIds } });
           post.data.mediaIds = newMediaIds;
         }
-        
+
         result = {
           success: true,
           data: {
@@ -145,10 +146,10 @@ class PostController {
       } else if ((images && typeof images === 'object' && Object.keys(images).length > 0) || (videos && typeof videos === 'object' && Object.keys(videos).length > 0)) {
         // Create post with images/videos
         console.log("[POST] Creating image/video post");
-        
+
         // Prepare medias array
         const allMedias = { ...images, ...videos };
-        
+
         // Build array for creation
         const mediaPayloads = Object.keys(allMedias).map(key => {
           const mediaItem = allMedias[key];
@@ -163,14 +164,15 @@ class PostController {
           title,
           content: caption || content,
           accountId: authorId,
+          musicId: req.body.musicId || null, // ✅ Thêm dòng này
+          songId: req.body.songId || null,
           mediaIds: [],
-          images: typeof images === "string" ? images : "",
           expiredAt: expiredAt ? new Date(expiredAt) : null,
           type: type || "post"
         };
 
         const post = await postService.createPost(postData);
-        
+
         // Check if post creation was successful
         if (!post.success || !post.data) {
           console.error("[POST] Post creation failed:", post.message || post.error);
@@ -180,15 +182,15 @@ class PostController {
             error: post.error
           });
         }
-        
+
         console.log("[POST] Post saved to posts collection:", post.data._id);
 
         // Create media entries in medias collection
         const mediaEntries = [];
-        const postIdForMedia = mongoose.Types.ObjectId.isValid(post.data._id) 
+        const postIdForMedia = mongoose.Types.ObjectId.isValid(post.data._id)
           ? new mongoose.Types.ObjectId(post.data._id)
           : post.data._id;
-        
+
         for (const mediaValue of mediaPayloads) {
           const mediaData = {
             postId: postIdForMedia,
@@ -223,7 +225,7 @@ class PostController {
       } else {
         // Create basic text post (no images/videos/audios)
         console.log("[POST] Creating text post");
-        
+
         const postData = {
           title,
           content,
@@ -231,7 +233,9 @@ class PostController {
           mediaIds: [],
           images: typeof images === "string" ? images : "",
           expiredAt: expiredAt ? new Date(expiredAt) : null,
-          type: type || "post"
+          type: type || "post",
+          musicId: req.body.musicId || null, 
+          songId: req.body.songId || null,
         };
 
         if (req.body.songId) {
@@ -239,7 +243,7 @@ class PostController {
         }
 
         result = await postService.createPost(postData);
-        
+
         // Check if post creation was successful
         if (!result.success || !result.data) {
           console.error("[POST] Post creation failed:", result.message || result.error);
@@ -249,10 +253,10 @@ class PostController {
             error: result.error
           });
         }
-        
+
         console.log("[POST] Post saved to posts collection:", result.data._id);
       }
-      
+
       if (result.success) {
         console.log("[POST] Post created successfully");
         res.status(201).json(result);
@@ -280,7 +284,7 @@ class PostController {
         String(includeMedias) === 'true',
         String(includeMusic) === 'true'
       );
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -305,7 +309,7 @@ class PostController {
         String(includeMedias) === 'true',
         String(includeMusic) === 'true'
       );
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -342,7 +346,7 @@ class PostController {
       };
 
       const result = await postService.addComment(postId, commentData);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -379,7 +383,7 @@ class PostController {
       };
 
       const result = await postService.addReply(postId, commentId, replyData);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -416,7 +420,7 @@ class PostController {
       };
 
       const result = await postService.addReplyToReply(postId, commentId, replyId, replyData);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -446,7 +450,7 @@ class PostController {
       }
 
       const result = await postService.likeReply(postId, commentId, replyId, userId, typeRole);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -475,7 +479,7 @@ class PostController {
       }
 
       const result = await postService.unlikeReply(postId, commentId, replyId, userId);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -505,7 +509,7 @@ class PostController {
       }
 
       const result = await postService.deleteReply(postId, commentId, replyId, userId, userRole);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -535,7 +539,7 @@ class PostController {
       }
 
       const result = await postService.likePost(postId, userId, typeRole);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -565,7 +569,7 @@ class PostController {
       }
 
       const result = await postService.likeComment(postId, commentId, userId, typeRole);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -594,7 +598,7 @@ class PostController {
       }
 
       const result = await postService.unlikeComment(postId, commentId, userId);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -637,7 +641,7 @@ class PostController {
       if (images !== undefined) updateData.images = images;
 
       const result = await postService.updateComment(postId, commentId, updateData, userId, userRole);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -680,7 +684,7 @@ class PostController {
       if (images !== undefined) updateData.images = images;
 
       const result = await postService.updateReply(postId, commentId, replyId, updateData, userId, userRole);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -710,7 +714,7 @@ class PostController {
       }
 
       const result = await postService.deleteComment(postId, commentId, userId, userRole);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -752,7 +756,7 @@ class PostController {
       if (content !== undefined) updateData.content = content;
 
       const result = await postService.updatePost(id, updateData, userId);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -781,7 +785,7 @@ class PostController {
       }
 
       const result = await postService.unlikePost(postId, userId);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -800,7 +804,7 @@ class PostController {
   async searchPosts(req, res) {
     try {
       const { q, page = 1, limit = 10 } = req.query;
-      
+
       if (!q) {
         return res.status(400).json({
           success: false,
@@ -809,7 +813,7 @@ class PostController {
       }
 
       const result = await postService.searchPosts(q, parseInt(page), parseInt(limit));
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -828,7 +832,7 @@ class PostController {
   async searchPostsByTitle(req, res) {
     try {
       const { title, page = 1, limit = 10 } = req.query;
-      
+
       if (!title) {
         return res.status(400).json({
           success: false,
@@ -837,7 +841,7 @@ class PostController {
       }
 
       const result = await postService.searchPostsByTitle(title, parseInt(page), parseInt(limit));
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -856,7 +860,7 @@ class PostController {
   async searchPostsByAuthor(req, res) {
     try {
       const { accountId, page = 1, limit = 10 } = req.query;
-      
+
       if (!accountId) {
         return res.status(400).json({
           success: false,
@@ -865,7 +869,7 @@ class PostController {
       }
 
       const result = await postService.searchPostsByAuthor(accountId, parseInt(page), parseInt(limit));
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -884,7 +888,7 @@ class PostController {
   async uploadPostMedia(req, res) {
     try {
       const uploadedFiles = [];
-      
+
       // Process uploaded files
       if (req.files) {
         Object.keys(req.files).forEach(fieldName => {
@@ -902,9 +906,9 @@ class PostController {
           });
         });
       }
-      
+
       console.log(`[UPLOAD] ${uploadedFiles.length} files uploaded`);
-      
+
       res.status(200).json({
         success: true,
         data: uploadedFiles,
@@ -925,7 +929,7 @@ class PostController {
     try {
       const { authorId } = req.params;
       const { page = 1, limit = 10 } = req.query;
-      
+
       if (!authorId) {
         return res.status(400).json({
           success: false,
@@ -953,9 +957,9 @@ class PostController {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit));
-      
+
       const total = await Post.countDocuments(query);
-      
+
       res.status(200).json({
         success: true,
         data: posts,
@@ -990,7 +994,7 @@ class PostController {
       }
 
       const result = await postService.deletePost(id, userId);
-      
+
       if (result.success) {
         res.status(200).json(result);
       } else {
@@ -1005,7 +1009,7 @@ class PostController {
     }
   }
 
-  
+
 }
 
 module.exports = new PostController();
