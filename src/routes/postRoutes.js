@@ -16,6 +16,7 @@ router.get("/author/:authorId", postController.getPostsByAuthor);
 
 // Routes cho Comments (cần auth) - phải đặt trước routes có :id
 router.post("/:postId/comments", verifyToken, postController.addComment);
+router.put("/:postId/comments/:commentId", verifyToken, postController.updateComment);
 router.delete("/:postId/comments/:commentId", verifyToken, postController.deleteComment);
 
 // Routes cho Comment Likes (cần auth) - đặt trước routes replies
@@ -29,6 +30,7 @@ router.delete("/:postId/comments/:commentId/replies/:replyId/like", verifyToken,
 // Routes cho Replies (cần auth) - đặt sau routes likes
 router.post("/:postId/comments/:commentId/replies/:replyId", verifyToken, postController.addReplyToReply); // Reply vào reply
 router.post("/:postId/comments/:commentId/replies", verifyToken, postController.addReply); // Reply vào comment
+router.put("/:postId/comments/:commentId/replies/:replyId", verifyToken, postController.updateReply); // Cập nhật reply
 router.delete("/:postId/comments/:commentId/replies/:replyId", verifyToken, postController.deleteReply); // Xóa reply
 
 // Routes cho Post Likes (cần auth)

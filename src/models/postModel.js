@@ -144,11 +144,22 @@ const postSchema = new mongoose.Schema(
       type: Date, // chỉ dùng cho story
       default: null,
     },
+    musicId: {
+      type: mongoose.Schema.Types.ObjectId,
+       ref: "Music", 
+       default: null 
+      },
     songId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Song',
       default: null,
     },
+    mediaIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Media',
+      }
+    ],
   },
   {
     timestamps: true,
@@ -160,5 +171,6 @@ const postSchema = new mongoose.Schema(
 postSchema.index({ authorId: 1 });
 postSchema.index({ createdAt: -1 });
 postSchema.index({ title: "text", content: "text" });
+postSchema.index({ mediaIds: 1 });
 
 module.exports = mongoose.model("Post", postSchema, "posts");

@@ -59,18 +59,67 @@ const { createEntityAccount } = require("../models/entityAccountModel");
   
       const avatar = req.files?.avatar?.[0]?.path || barPage.Avatar;
       const background = req.files?.background?.[0]?.path || barPage.Background;
-      const { barName, address, phoneNumber, email } = req.body || {};
-  
+      const { barName, address, phoneNumber, email, addressData } = req.body || {};
+
+      // Xử lý address: nếu có addressData (structured), lưu dưới dạng JSON
+      let addressToSave = (address || "").trim();
+      if (addressData) {
+        try {
+          const addressDataObj = typeof addressData === 'string' 
+            ? JSON.parse(addressData) 
+            : addressData;
+          
+          addressToSave = JSON.stringify({
+            fullAddress: address || addressDataObj.fullAddress || "",
+            provinceId: addressDataObj.provinceId || null,
+            districtId: addressDataObj.districtId || null,
+            wardId: addressDataObj.wardId || null,
+            detail: addressDataObj.detail || address || ""
+          });
+        } catch (e) {
+          console.warn("[BAR] Failed to parse addressData, saving as plain string:", e);
+          addressToSave = (address || "").trim();
+        }
+      }
+
       const updated = await updateBarPage(barPageId, {
         barName,
         avatar,
         background,
-        address,
+        address: addressToSave,
         phoneNumber,
         email,
       });
-  
-      return res.status(200).json({ status: "success", data: updated });
+
+      // Parse address để trả về structured data
+      let parsedAddress = updated.Address || "";
+      let parsedAddressData = null;
+      
+      if (parsedAddress) {
+        try {
+          const parsed = JSON.parse(parsedAddress);
+          if (parsed && typeof parsed === 'object' && parsed.fullAddress !== undefined) {
+            parsedAddressData = {
+              provinceId: parsed.provinceId || null,
+              districtId: parsed.districtId || null,
+              wardId: parsed.wardId || null,
+              fullAddress: parsed.fullAddress || ""
+            };
+            parsedAddress = parsed.fullAddress || parsed.detail || parsedAddress;
+          }
+        } catch (e) {
+          parsedAddress = updated.Address || "";
+        }
+      }
+
+      return res.status(200).json({ 
+        status: "success", 
+        data: {
+          ...updated,
+          Address: parsedAddress,
+          addressData: parsedAddressData
+        }
+      });
     } catch (err) {
       console.error("updateBarPageInfo error:", err);
       return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
@@ -87,8 +136,36 @@ const { createEntityAccount } = require("../models/entityAccountModel");
       const barPage = await getBarPageByAccountId(accountId);
       if (!barPage)
         return res.status(404).json({ status: "error", message: "Không tìm thấy trang bar cho tài khoản này" });
-  
-      return res.status(200).json({ status: "success", data: barPage });
+
+      // Parse address nếu là JSON
+      let address = barPage.Address || "";
+      let addressData = null;
+      
+      if (address) {
+        try {
+          const parsed = JSON.parse(address);
+          if (parsed && typeof parsed === 'object' && parsed.fullAddress !== undefined) {
+            addressData = {
+              provinceId: parsed.provinceId || null,
+              districtId: parsed.districtId || null,
+              wardId: parsed.wardId || null,
+              fullAddress: parsed.fullAddress || ""
+            };
+            address = parsed.fullAddress || parsed.detail || address;
+          }
+        } catch (e) {
+          address = barPage.Address || "";
+        }
+      }
+
+      return res.status(200).json({ 
+        status: "success", 
+        data: {
+          ...barPage,
+          Address: address,
+          addressData: addressData
+        }
+      });
     } catch (err) {
       console.error("getBarPageByAccountId error:", err);
       return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
@@ -110,8 +187,36 @@ const { createEntityAccount } = require("../models/entityAccountModel");
        console.log("✅ [getBarPageById] Query result:", barPage);
       if (!barPage)
         return res.status(404).json({ status: "error", message: "Không tìm thấy BarPage" });
-  
-      return res.status(200).json({ status: "success", data: barPage });
+
+      // Parse address nếu là JSON
+      let address = barPage.Address || "";
+      let addressData = null;
+      
+      if (address) {
+        try {
+          const parsed = JSON.parse(address);
+          if (parsed && typeof parsed === 'object' && parsed.fullAddress !== undefined) {
+            addressData = {
+              provinceId: parsed.provinceId || null,
+              districtId: parsed.districtId || null,
+              wardId: parsed.wardId || null,
+              fullAddress: parsed.fullAddress || ""
+            };
+            address = parsed.fullAddress || parsed.detail || address;
+          }
+        } catch (e) {
+          address = barPage.Address || "";
+        }
+      }
+
+      return res.status(200).json({ 
+        status: "success", 
+        data: {
+          ...barPage,
+          Address: address,
+          addressData: addressData
+        }
+      });
     } catch (err) {
       console.error("getBarPageById error:", err);
       return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });

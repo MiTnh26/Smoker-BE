@@ -7,15 +7,15 @@ class PostService {
     try {
       console.log("🔧 PostService.createPost - Starting");
       console.log("📦 Post data received:", JSON.stringify(postData, null, 2));
-      
+
       console.log("🏗️ Creating new Post instance...");
       const post = new Post(postData);
       console.log("📝 Post instance created:", post);
-      
+
       console.log("💾 Saving post to database...");
       await post.save();
       console.log("✅ Post saved successfully:", post._id);
-      
+
       return {
         success: true,
         data: post,
@@ -27,11 +27,11 @@ class PostService {
       console.log("💥 Error message:", error.message);
       console.log("💥 Error code:", error.code);
       console.log("💥 Error stack:", error.stack);
-      
+
       if (error.name === 'ValidationError') {
         console.log("🔍 Validation errors:", error.errors);
       }
-      
+
       return {
         success: false,
         message: "Error creating post",
@@ -41,16 +41,33 @@ class PostService {
   }
 
   // Lấy tất cả posts
-  async getAllPosts(page = 1, limit = 10) {
+  async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false) {
     try {
       const skip = (page - 1) * limit;
-      const posts = await Post.find()
+      const query = Post.find()
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit);
-      
+
+      if (includeMedias) query.populate('mediaIds');
+      if (includeMusic) {
+        query.populate('songId');
+        query.populate('musicId');
+      }
+
+      const posts = await query.lean();
+      // Map populated fields to required response keys
+      if (Array.isArray(posts)) {
+        for (const p of posts) {
+          if (includeMedias && Array.isArray(p.mediaIds)) p.medias = p.mediaIds;
+          if (includeMusic && p.songId) p.song = p.songId;
+          if (includeMusic && p.musicId) p.music = p.musicId;
+        }
+      }
+
+
       const total = await Post.countDocuments();
-      
+
       return {
         success: true,
         data: posts,
@@ -71,20 +88,74 @@ class PostService {
   }
 
   // Lấy post theo ID
-  async getPostById(postId) {
+  async getPostById(postId, includeMedias = false, includeMusic = false) {
     try {
-      const post = await Post.findById(postId);
-      
+      const query = Post.findById(postId);
+      if (includeMedias) query.populate('mediaIds');
+      if (includeMusic) {
+        query.populate('songId');
+        query.populate('musicId');
+      }
+
+      const post = await query.lean();
+
       if (!post) {
         return {
           success: false,
           message: "Post not found"
         };
       }
-      
+
+      // Convert Mongoose document to plain object
+      const postData = post;
+      // Normalize populated fields into desired response shape
+      if (includeMedias && Array.isArray(postData.mediaIds)) {
+        postData.medias = postData.mediaIds;
+      }
+      if (includeMusic && postData.songId) {
+        postData.song = postData.songId;
+      }
+      if (includeMusic && postData.musicId) {
+        postData.music = postData.musicId;
+      }
+
+
+      // Ensure comments Map is properly converted to plain object
+      if (postData.comments && postData.comments instanceof Map) {
+        const commentsObj = {};
+        for (const [key, value] of postData.comments.entries()) {
+          commentsObj[String(key)] = value.toObject ? value.toObject() : value;
+          // Also convert replies Map if exists
+          if (commentsObj[String(key)].replies && commentsObj[String(key)].replies instanceof Map) {
+            const repliesObj = {};
+            for (const [replyKey, replyValue] of commentsObj[String(key)].replies.entries()) {
+              repliesObj[String(replyKey)] = replyValue.toObject ? replyValue.toObject() : replyValue;
+            }
+            commentsObj[String(key)].replies = repliesObj;
+          }
+        }
+        postData.comments = commentsObj;
+      } else if (postData.comments && typeof postData.comments === 'object' && !Array.isArray(postData.comments)) {
+        // If already an object but might have Map values, check and convert
+        const commentsObj = {};
+        for (const [key, value] of Object.entries(postData.comments)) {
+          const commentValue = value.toObject ? value.toObject() : value;
+          commentsObj[String(key)] = commentValue;
+          // Convert replies if it's a Map
+          if (commentValue.replies && commentValue.replies instanceof Map) {
+            const repliesObj = {};
+            for (const [replyKey, replyValue] of commentValue.replies.entries()) {
+              repliesObj[String(replyKey)] = replyValue.toObject ? replyValue.toObject() : replyValue;
+            }
+            commentsObj[String(key)].replies = repliesObj;
+          }
+        }
+        postData.comments = commentsObj;
+      }
+
       return {
         success: true,
-        data: post
+        data: postData
       };
     } catch (error) {
       return {
@@ -114,6 +185,7 @@ class PostService {
       };
 
       post.comments.set(commentId.toString(), comment);
+      post.markModified('comments');
       await post.save();
 
       return {
@@ -158,6 +230,7 @@ class PostService {
       };
 
       comment.replies.set(replyId.toString(), reply);
+      post.markModified('comments');
       await post.save();
 
       return {
@@ -211,6 +284,7 @@ class PostService {
       };
 
       comment.replies.set(newReplyId.toString(), newReply);
+      post.markModified('comments');
       await post.save();
 
       return {
@@ -227,7 +301,131 @@ class PostService {
     }
   }
 
-  // Thích reply
+  // Cập nhật comment
+  async updateComment(postId, commentId, updateData, userId, userRole = "Account") {
+    try {
+      const post = await Post.findById(postId);
+      if (!post) {
+        return {
+          success: false,
+          message: "Post not found"
+        };
+      }
+
+      const comment = post.comments.get(commentId);
+      if (!comment) {
+        return {
+          success: false,
+          message: "Comment not found"
+        };
+      }
+
+      // Kiểm tra quyền chỉnh sửa (chủ sở hữu comment hoặc admin)
+      const isCommentOwner = comment.accountId.toString() === userId.toString();
+      const isAdmin = userRole === "Admin" || userRole === "admin";
+
+      if (!isCommentOwner && !isAdmin) {
+        return {
+          success: false,
+          message: "Unauthorized to update this comment"
+        };
+      }
+
+      // Cập nhật các trường được phép
+      if (updateData.content !== undefined) {
+        comment.content = updateData.content;
+      }
+      if (updateData.images !== undefined) {
+        comment.images = updateData.images;
+      }
+
+      // Cập nhật updatedAt cho comment (timestamps sẽ tự động cập nhật khi save)
+      comment.updatedAt = new Date();
+
+      post.markModified('comments');
+      await post.save();
+
+      return {
+        success: true,
+        data: post,
+        message: "Comment updated successfully"
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: "Error updating comment",
+        error: error.message
+      };
+    }
+  }
+
+  // Cập nhật reply
+  async updateReply(postId, commentId, replyId, updateData, userId, userRole = "Account") {
+    try {
+      const post = await Post.findById(postId);
+      if (!post) {
+        return {
+          success: false,
+          message: "Post not found"
+        };
+      }
+
+      const comment = post.comments.get(commentId);
+      if (!comment) {
+        return {
+          success: false,
+          message: "Comment not found"
+        };
+      }
+
+      const reply = comment.replies.get(replyId);
+      if (!reply) {
+        return {
+          success: false,
+          message: "Reply not found"
+        };
+      }
+
+      // Kiểm tra quyền chỉnh sửa (chủ sở hữu reply hoặc admin)
+      const isReplyOwner = reply.accountId.toString() === userId.toString();
+      const isAdmin = userRole === "Admin" || userRole === "admin";
+
+      if (!isReplyOwner && !isAdmin) {
+        return {
+          success: false,
+          message: "Unauthorized to update this reply"
+        };
+      }
+
+      // Cập nhật các trường được phép
+      if (updateData.content !== undefined) {
+        reply.content = updateData.content;
+      }
+      if (updateData.images !== undefined) {
+        reply.images = updateData.images;
+      }
+
+      // Cập nhật updatedAt cho reply (timestamps sẽ tự động cập nhật khi save)
+      reply.updatedAt = new Date();
+
+      post.markModified('comments');
+      await post.save();
+
+      return {
+        success: true,
+        data: post,
+        message: "Reply updated successfully"
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: "Error updating reply",
+        error: error.message
+      };
+    }
+  }
+
+  // Thích reply (toggle behavior)
   async likeReply(postId, commentId, replyId, userId, typeRole) {
     try {
       const post = await Post.findById(postId);
@@ -254,36 +452,48 @@ class PostService {
         };
       }
 
-      // Kiểm tra đã thích reply chưa
-      const existingLike = Array.from(reply.likes.values())
-        .find(like => like.accountId.toString() === userId.toString());
-
-      if (existingLike) {
-        return {
-          success: false,
-          message: "Already liked this reply"
-        };
+      // Tìm like hiện tại (nếu có)
+      let existingLikeKey = null;
+      for (const [likeId, like] of reply.likes.entries()) {
+        if (like.accountId.toString() === userId.toString()) {
+          existingLikeKey = likeId;
+          break;
+        }
       }
 
-      // Tạo ID mới cho like
-      const likeId = new mongoose.Types.ObjectId();
-      const like = {
-        accountId: userId,
-        TypeRole: typeRole || "Account"
-      };
+      if (existingLikeKey) {
+        // Đã like rồi → unlike (toggle off)
+        reply.likes.delete(existingLikeKey);
+        post.markModified('comments');
+        await post.save();
 
-      reply.likes.set(likeId.toString(), like);
-      await post.save();
+        return {
+          success: true,
+          data: post,
+          message: "Reply unliked successfully"
+        };
+      } else {
+        // Chưa like → like (toggle on)
+        const likeId = new mongoose.Types.ObjectId();
+        const like = {
+          accountId: userId,
+          TypeRole: typeRole || "Account"
+        };
 
-      return {
-        success: true,
-        data: post,
-        message: "Reply liked successfully"
-      };
+        reply.likes.set(likeId.toString(), like);
+        post.markModified('comments');
+        await post.save();
+
+        return {
+          success: true,
+          data: post,
+          message: "Reply liked successfully"
+        };
+      }
     } catch (error) {
       return {
         success: false,
-        message: "Error liking reply",
+        message: "Error toggling reply like",
         error: error.message
       };
     }
@@ -324,6 +534,7 @@ class PostService {
         }
       }
 
+      post.markModified('comments');
       await post.save();
 
       return {
@@ -341,7 +552,7 @@ class PostService {
   }
 
   // Xóa reply
-  async deleteReply(postId, commentId, replyId, userId) {
+  async deleteReply(postId, commentId, replyId, userId, userRole = "Account") {
     try {
       const post = await Post.findById(postId);
       if (!post) {
@@ -367,8 +578,12 @@ class PostService {
         };
       }
 
-      // Kiểm tra quyền xóa (chỉ chủ sở hữu reply)
-      if (reply.accountId.toString() !== userId.toString()) {
+      // Kiểm tra quyền xóa (chủ sở hữu reply, chủ sở hữu post, hoặc admin)
+      const isReplyOwner = reply.accountId.toString() === userId.toString();
+      const isPostOwner = post.accountId.toString() === userId.toString();
+      const isAdmin = userRole === "Admin" || userRole === "admin";
+
+      if (!isReplyOwner && !isPostOwner && !isAdmin) {
         return {
           success: false,
           message: "Unauthorized to delete this reply"
@@ -377,6 +592,7 @@ class PostService {
 
       // Xóa reply
       comment.replies.delete(replyId);
+      post.markModified('comments');
       await post.save();
 
       return {
@@ -394,7 +610,7 @@ class PostService {
   }
 
 
-  // Thích post
+  // Thích post (toggle behavior)
   async likePost(postId, userId, typeRole) {
     try {
       const post = await Post.findById(postId);
@@ -405,36 +621,46 @@ class PostService {
         };
       }
 
-      // Kiểm tra đã thích chưa
-      const existingLike = Array.from(post.likes.values())
-        .find(like => like.accountId.toString() === userId.toString());
-
-      if (existingLike) {
-        return {
-          success: false,
-          message: "Already liked this post"
-        };
+      // Tìm like hiện tại (nếu có)
+      let existingLikeKey = null;
+      for (const [likeId, like] of post.likes.entries()) {
+        if (like.accountId.toString() === userId.toString()) {
+          existingLikeKey = likeId;
+          break;
+        }
       }
 
-      // Tạo ID mới cho like
-      const likeId = new mongoose.Types.ObjectId();
-      const like = {
-        accountId: userId,
-        TypeRole: typeRole || "Account"
-      };
+      if (existingLikeKey) {
+        // Đã like rồi → unlike (toggle off)
+        post.likes.delete(existingLikeKey);
+        await post.save();
 
-      post.likes.set(likeId.toString(), like);
-      await post.save();
+        return {
+          success: true,
+          data: post,
+          message: "Post unliked successfully"
+        };
+      } else {
+        // Chưa like → like (toggle on)
+        const likeId = new mongoose.Types.ObjectId();
+        const like = {
+          accountId: userId,
+          TypeRole: typeRole || "Account"
+        };
 
-      return {
-        success: true,
-        data: post,
-        message: "Post liked successfully"
-      };
+        post.likes.set(likeId.toString(), like);
+        await post.save();
+
+        return {
+          success: true,
+          data: post,
+          message: "Post liked successfully"
+        };
+      }
     } catch (error) {
       return {
         success: false,
-        message: "Error liking post",
+        message: "Error toggling post like",
         error: error.message
       };
     }
@@ -475,7 +701,7 @@ class PostService {
     }
   }
 
-  // Thích comment
+  // Thích comment (toggle behavior)
   async likeComment(postId, commentId, userId, typeRole) {
     try {
       const post = await Post.findById(postId);
@@ -494,36 +720,48 @@ class PostService {
         };
       }
 
-      // Kiểm tra đã thích comment chưa
-      const existingLike = Array.from(comment.likes.values())
-        .find(like => like.accountId.toString() === userId.toString());
-
-      if (existingLike) {
-        return {
-          success: false,
-          message: "Already liked this comment"
-        };
+      // Tìm like hiện tại (nếu có)
+      let existingLikeKey = null;
+      for (const [likeId, like] of comment.likes.entries()) {
+        if (like.accountId.toString() === userId.toString()) {
+          existingLikeKey = likeId;
+          break;
+        }
       }
 
-      // Tạo ID mới cho like
-      const likeId = new mongoose.Types.ObjectId();
-      const like = {
-        accountId: userId,
-        TypeRole: typeRole || "Account"
-      };
+      if (existingLikeKey) {
+        // Đã like rồi → unlike (toggle off)
+        comment.likes.delete(existingLikeKey);
+        post.markModified('comments');
+        await post.save();
 
-      comment.likes.set(likeId.toString(), like);
-      await post.save();
+        return {
+          success: true,
+          data: post,
+          message: "Comment unliked successfully"
+        };
+      } else {
+        // Chưa like → like (toggle on)
+        const likeId = new mongoose.Types.ObjectId();
+        const like = {
+          accountId: userId,
+          TypeRole: typeRole || "Account"
+        };
 
-      return {
-        success: true,
-        data: post,
-        message: "Comment liked successfully"
-      };
+        comment.likes.set(likeId.toString(), like);
+        post.markModified('comments');
+        await post.save();
+
+        return {
+          success: true,
+          data: post,
+          message: "Comment liked successfully"
+        };
+      }
     } catch (error) {
       return {
         success: false,
-        message: "Error liking comment",
+        message: "Error toggling comment like",
         error: error.message
       };
     }
@@ -556,6 +794,7 @@ class PostService {
         }
       }
 
+      post.markModified('comments');
       await post.save();
 
       return {
@@ -709,8 +948,8 @@ class PostService {
 
       // Kiểm tra quyền chỉnh sửa (chỉ chủ sở hữu post)
       const isOwner = (post.accountId && post.accountId.toString() === userId.toString()) ||
-                      (post.authorId && post.authorId.toString() === userId.toString());
-      
+        (post.authorId && post.authorId.toString() === userId.toString());
+
       if (!isOwner) {
         return {
           success: false,
@@ -721,7 +960,7 @@ class PostService {
       // Chỉ cho phép cập nhật title và content, không cho phép cập nhật images
       const allowedFields = ['title', 'content'];
       const filteredUpdateData = {};
-      
+
       for (const field of allowedFields) {
         if (updateData[field] !== undefined) {
           filteredUpdateData[field] = updateData[field];
@@ -790,6 +1029,7 @@ class PostService {
 
       // Xóa comment và tất cả replies của nó
       post.comments.delete(commentId);
+      post.markModified('comments');
       await post.save();
 
       return {
@@ -819,8 +1059,8 @@ class PostService {
 
       // Kiểm tra quyền xóa (chỉ author hoặc admin)
       const isOwner = (post.accountId && post.accountId.toString() === userId.toString()) ||
-                      (post.authorId && post.authorId.toString() === userId.toString());
-      
+        (post.authorId && post.authorId.toString() === userId.toString());
+
       if (!isOwner) {
         return {
           success: false,
