@@ -1,52 +1,42 @@
-const mongoose = require("mongoose");
+const { getPool, sql } = require('../config/db');
 
-// Schema cho Tin Nhắn trong Cuộc Trò Chuyện
-const messageSchema = new mongoose.Schema(
-  {
-    "Nội Dung Tin Nhắn": {
-      type: String,
-      required: true,
-    },
-    "Gửi Lúc": {
-      type: Date,
-      required: true,
-    },
-    "Người Gửi": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
-      required: true,
-    },
-  },
-  { timestamps: true }
-);
+// Thêm tin nhắn mới
+async function addMessage(conversationId, senderId, content, messageType = 'text') {
+    const pool = await getPool();
+    // Insert message, không dùng OUTPUT
+    await pool.request()
+        .input('conversationId', sql.UniqueIdentifier, conversationId)
+        .input('senderId', sql.UniqueIdentifier, senderId)
+        .input('content', sql.NVarChar, content)
+        .input('messageType', sql.NVarChar, messageType)
+        .query(`INSERT INTO Messages (conversationId, senderId, content, messageType) VALUES (@conversationId, @senderId, @content, @messageType)`);
+    // Lấy messageId vừa thêm
+    const result = await pool.request().query(`SELECT TOP 1 * FROM Messages WHERE conversationId = '${conversationId}' AND senderId = '${senderId}' ORDER BY sentAt DESC`);
+    return result.recordset[0];
+}
 
-// Schema chính cho Message
-const messageModelSchema = new mongoose.Schema(
-  {
-    "Cuộc Trò Chuyện": {
-      type: Map,
-      of: messageSchema,
-      default: {},
-    },
-    "Người 1": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
-      required: true,
-    },
-    "Người 2": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
-      required: true,
-    },
-  },
-  {
-    timestamps: true,
-    collection: "messages",
-  }
-);
+// Lấy tin nhắn theo conversationId
+async function getMessagesByConversation(conversationId, limit = 50, offset = 0) {
+    const pool = await getPool();
+    const result = await pool.request()
+        .input('conversationId', sql.UniqueIdentifier, conversationId)
+        .input('offset', sql.Int, offset)
+        .input('limit', sql.Int, limit)
+        .query(`SELECT * FROM Messages WHERE conversationId = @conversationId ORDER BY sentAt DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`);
+    return result.recordset;
+}
 
-// Index để tối ưu hóa query
-messageModelSchema.index({ "Người 1": 1, "Người 2": 1 });
-messageModelSchema.index({ createdAt: -1 });
+// Đánh dấu tin nhắn đã đọc
+async function markMessagesAsRead(conversationId, userId) {
+    const pool = await getPool();
+    await pool.request()
+        .input('conversationId', sql.UniqueIdentifier, conversationId)
+        .input('userId', sql.UniqueIdentifier, userId)
+        .query(`UPDATE Messages SET isRead = 1 WHERE conversationId = @conversationId AND senderId <> @userId AND isRead = 0`);
+}
 
-module.exports = mongoose.model("Message", messageModelSchema, "messages");
+module.exports = {
+    addMessage,
+    getMessagesByConversation,
+    markMessagesAsRead
+};

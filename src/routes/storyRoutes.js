@@ -6,7 +6,7 @@ const { createCloudinaryUpload } = require("../middleware/uploadCloudinary");
 const { verifyToken } = require("../middleware/authMiddleware");
 
 // Middleware upload cho story (dùng Cloudinary, folder: stories)
-// const uploadStory = createCloudinaryUpload("users");
+const uploadStory = createCloudinaryUpload("users");
 
 // Lấy danh sách story (public)
 router.get("/", storyController.getStories);
