@@ -20,28 +20,8 @@ class PostController {
         });
       }
 
-
       // Convert authorId to ObjectId if it's a string
-      let authorObjectId = authorId;
-      if (typeof authorId === "string") {
-        authorObjectId = new mongoose.Types.ObjectId(authorId);
-      }
-
-      const postData = {
-        title,
-        content,
-        accountId: authorObjectId, // Map authorId to accountId for schema
-        images: typeof images === "string" ? images : "",
-        expiredAt: expiredAt ? new Date(expiredAt) : null,
-        type: type || "post",
-      };
-
-      if (req.body.songId) {
-        postData.songId = req.body.songId;
-      }
-
-      let result = await postService.createPost(postData);
-
+      let authorObjectId;
       try {
         // Check if it's already a valid ObjectId
         if (mongoose.Types.ObjectId.isValid(authorId)) {
@@ -58,7 +38,7 @@ class PostController {
         });
       }
 
-       result;
+      let result;
 
       // Check if posting music (audios)
       if (audios && Object.keys(audios).length > 0) {
@@ -254,7 +234,7 @@ class PostController {
           images: typeof images === "string" ? images : "",
           expiredAt: expiredAt ? new Date(expiredAt) : null,
           type: type || "post",
-          musicId: req.body.musicId || null,
+          musicId: req.body.musicId || null, 
           songId: req.body.songId || null,
         };
 
