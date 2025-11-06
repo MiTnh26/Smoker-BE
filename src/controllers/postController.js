@@ -37,7 +37,7 @@ class PostController {
         postData.songId = req.body.songId;
       }
 
-      const result = await postService.createPost(postData);
+  let result = await postService.createPost(postData);
       // Convert authorId to ObjectId if it's a string
       let authorObjectId;
       try {
