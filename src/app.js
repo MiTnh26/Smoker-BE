@@ -4,8 +4,29 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const { initSQLConnection } = require("./db/sqlserver");
 const connectDB = require("./db/mongodb");
-const { authRoutes, userRoutes, businessRoutes, barPageRoutes,tableClassificationRoutes,barTableRoutes,eventRoutes,postRoutes,storyRoutes, comboRoutes, voucherRoutes,voucherApplyRoutes, songRoutes, musicRoutes, messageRoutes, notificationRoutes, followRoutes, reportRoutes } = require("./routes");
-
+const {
+  authRoutes,
+  userRoutes,
+  businessRoutes,
+  barPageRoutes,
+  tableClassificationRoutes,
+  barTableRoutes,
+  eventRoutes,
+  postRoutes,
+  storyRoutes,
+  comboRoutes,
+  voucherRoutes,
+  voucherApplyRoutes,
+  songRoutes,
+  musicRoutes,
+  messageRoutes,
+  notificationRoutes,
+  followRoutes,
+  reportRoutes,
+  bankInfoRoutes,
+  livestreamRoutes,
+  mediaRoutes,
+} = require("./routes");
 
 
 const app = express();
@@ -48,11 +69,13 @@ app.use("/api/stories", storyRoutes);
 app.use("/api/music", musicRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
-
 app.use("/api/events",eventRoutes)
 app.use("/api/song", songRoutes);
 app.use("/api/follow", followRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/bank-info", bankInfoRoutes);
+app.use("/api/livestream", livestreamRoutes);
+app.use("/api/medias", mediaRoutes);
 app.get("/", (req, res) => {
   res.json({ 
     message: "Welcome to Smoker API 🚬",

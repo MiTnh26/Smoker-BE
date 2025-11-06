@@ -38,7 +38,7 @@ const createPostUpload = () => {
         resource_type = "video";
         allowed_formats = ["mp4", "mov", "avi", "webm", "mkv"];
       } else if (file.fieldname === "audio") {
-        resource_type = "video"; // Cloudinary treats audio as video
+        resource_type = "auto"; // Cloudinary treats audio as video
         allowed_formats = ["mp3", "wav", "ogg", "m4a", "aac"];
       }
       

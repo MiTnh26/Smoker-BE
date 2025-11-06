@@ -10,12 +10,14 @@ const eventRoutes = require("./eventRoutes");
 const voucherRoutes = require("./voucherRoutes");
 const comboRoutes = require("./comboRoutes");
 const voucherApplyRoutes = require("./voucherApplyRoutes");
-const songRoutes = require("./songRoutes");
+const musicRoutes = require("./musicRoutes");
 const messageRoutes = require("./messageRoutes");
 const notificationRoutes = require("./notificationRoutes");
-
+const songRoutes = require("./songRoutes");
+const bankInfoRoutes = require("./bankInfoRoutes");
+const livestreamRoutes = require("./livestreamRoutes");
+const mediaRoutes = require("./mediaRoutes");
 const followRoutes = require("./followRoutes");
-const musicRoutes = require("./musicRoutes");
 const reportRoutes = require("./reportRoutes");
 module.exports = { 
   authRoutes, 
@@ -35,5 +37,9 @@ module.exports = {
   messageRoutes,
   notificationRoutes,
   songRoutes,
+  bankInfoRoutes,
+  livestreamRoutes,
+  mediaRoutes,
+
   reportRoutes
 };

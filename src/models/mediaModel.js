@@ -1,0 +1,148 @@
+const mongoose = require("mongoose");
+
+// Schema cho Lượt Thích trong Media
+const mediaLikeSchema = new mongoose.Schema(
+  {
+    accountId: {
+      type: mongoose.Schema.Types.Mixed, // Can be String or ObjectId
+      required: true,
+    },
+    TypeRole: {
+      type: String,
+      enum: ["Account", "BusinessAccount", "BarPage"],
+      required: true,
+    },
+  },
+  { _id: false }
+);
+
+// Schema cho Lượt Trả Lời trong Media
+const mediaReplySchema = new mongoose.Schema(
+  {
+    accountId: {
+      type: mongoose.Schema.Types.Mixed, // Can be String or ObjectId
+      required: true,
+    },
+    content: {
+      type: String,
+      required: true,
+    },
+    images: {
+      type: String,
+      default: "",
+    },
+    likes: {
+      type: Map,
+      of: mediaLikeSchema,
+      default: {},
+    },
+    replyToId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+    },
+    TypeRole: {
+      type: String,
+      enum: ["Account", "BusinessAccount", "BarPage"],
+      required: true,
+    },
+    id: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: function() {
+        return new mongoose.Types.ObjectId();
+      },
+    },
+  },
+  { timestamps: true, _id: false }
+);
+
+// Schema cho Bình Luận trong Media
+const mediaCommentSchema = new mongoose.Schema(
+  {
+    id: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: function() {
+        return new mongoose.Types.ObjectId();
+      },
+    },
+    accountId: {
+      type: mongoose.Schema.Types.Mixed, // Can be String or ObjectId
+      required: true,
+    },
+    content: {
+      type: String,
+      required: true,
+    },
+    likes: {
+      type: Map,
+      of: mediaLikeSchema,
+      default: {},
+    },
+    replies: {
+      type: Map,
+      of: mediaReplySchema,
+      default: {},
+    },
+    images: {
+      type: String,
+      default: "",
+    },
+    TypeRole: {
+      type: String,
+      enum: ["Account", "BusinessAccount", "BarPage"],
+      required: true,
+    },
+  },
+  { timestamps: true, _id: false }
+);
+
+// Schema chính cho Media
+const mediaSchema = new mongoose.Schema(
+  {
+    postId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Post",
+      required: true,
+    },
+    accountId: {
+      type: mongoose.Schema.Types.Mixed, // Can be String or ObjectId
+      required: true,
+    },
+    url: {
+      type: String,
+      required: true,
+    },
+  type: {
+    type: String,
+    enum: ["image", "video"],
+    default: "image",
+  },
+    caption: {
+      type: String,
+      default: "",
+    },
+    comments: {
+      type: Map,
+      of: mediaCommentSchema,
+      default: new Map(),
+    },
+    likes: {
+      type: Map,
+      of: mediaLikeSchema,
+      default: new Map(),
+    },
+  },
+  {
+    timestamps: true,
+    collection: "medias",
+  }
+);
+
+// Index để tối ưu hóa query
+mediaSchema.index({ postId: 1 });
+mediaSchema.index({ accountId: 1 });
+mediaSchema.index({ createdAt: -1 });
+// Avoid duplicate medias per post for same URL
+mediaSchema.index({ postId: 1, url: 1 }, { unique: false });
+
+module.exports = mongoose.model("Media", mediaSchema, "medias");
+

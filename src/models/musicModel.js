@@ -1,20 +1,18 @@
 const mongoose = require("mongoose");
 
-// Lượt thích lưu dưới dạng Map<ObjectId>
-
-// Schema cho Trả Lời Bình Luận trong Music
+// English-field Music schema
 const musicReplySchema = new mongoose.Schema(
   {
-    "Người Trả Lời": {
+    replierId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Account",
       required: true,
     },
-    "Nội Dung Trả Lời": {
+    content: {
       type: String,
       required: true,
     },
-    "id Bình Luận Được Trả Lời": {
+    repliedCommentId: {
       type: mongoose.Schema.Types.ObjectId,
       required: true,
     },
@@ -22,24 +20,23 @@ const musicReplySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Schema cho Bình Luận trong Music
 const musicCommentSchema = new mongoose.Schema(
   {
-    "Người Bình Luận": {
+    commenterId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Account",
       required: true,
     },
-    "Nội Dung": {
+    content: {
       type: String,
       required: true,
     },
-    "Trả Lời Bình Luận": {
+    replies: {
       type: Map,
       of: musicReplySchema,
       default: {},
     },
-    "Ảnh": {
+    images: {
       type: String,
       default: "",
     },
@@ -47,66 +44,20 @@ const musicCommentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Schema chính cho Music
 const musicSchema = new mongoose.Schema(
   {
-    "Chi Tiết": {
-      type: String,
-      required: true,
-    },
-    "HashTag": {
-      type: String,
-      required: true,
-    },
-    "Link Mua Nhạc": {
-      type: String,
-      required: true,
-    },
-    "Tên Bài Nhạc": {
-      type: String,
-      required: true,
-    },
-    "Tên Nghệ Sĩ": {
-      type: String,
-      required: true,
-    },
-    "Ảnh Nền Bài Nhạc": {
-      type: String,
-      required: true,
-    },
-    "Người Đăng": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
-      required: true,
-    },
-    "Bình Luận": {
-      type: Map,
-      of: musicCommentSchema,
-      default: {},
-    },
-    "Thích": {
-      type: Map,
-      of: mongoose.Schema.Types.ObjectId,
-      default: {},
-    },
-    // Store entity info for display
-    authorEntityId: {
-      type: String,
-      default: null,
-    },
-    authorEntityType: {
-      type: String,
-      enum: ["Account", "BusinessAccount", "BarPage"],
-      default: "Account",
-    },
-    authorEntityName: {
-      type: String,
-      default: null,
-    },
-    authorEntityAvatar: {
-      type: String,
-      default: null,
-    },
+    details: { type: String, required: true },
+    hashTag: { type: String, required: true },
+    purchaseLink: { type: String, required: true },
+    audioUrl: { type: String, default: null },
+    title: { type: String, required: true },
+    artist: { type: String, required: true },
+    coverUrl: { type: String, required: true },
+    uploaderId: { type: String, required: true },
+    comments: { type: Map, of: musicCommentSchema, default: {} },
+    likes: { type: Map, of: mongoose.Schema.Types.ObjectId, default: {} },
+    uploaderName: { type: String, default: null },
+    uploaderAvatar: { type: String, default: null },
   },
   {
     timestamps: true,
@@ -114,10 +65,8 @@ const musicSchema = new mongoose.Schema(
   }
 );
 
-// Index để tối ưu hóa query
-musicSchema.index({ "Người Đăng": 1 });
-musicSchema.index({ authorEntityId: 1 });
+musicSchema.index({ uploaderId: 1 });
 musicSchema.index({ createdAt: -1 });
-musicSchema.index({ "Tên Bài Nhạc": "text", "Tên Nghệ Sĩ": "text" });
+musicSchema.index({ title: "text", artist: "text" });
 
 module.exports = mongoose.model("Music", musicSchema, "musics");
