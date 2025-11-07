@@ -1,5 +1,5 @@
 const conversationAccess = require('../models/conversationModel');
-const messageAccess = require('../models/messageModel');
+const messageAccess = require('../models/messageDocument');
 
 // Tạo hoặc lấy cuộc trò chuyện giữa 2 user
 async function getOrCreateConversationService(participant1Id, participant2Id) {

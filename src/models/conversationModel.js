@@ -1,4 +1,4 @@
-const { getPool, sql } = require('../config/db');
+const { getPool, sql } = require("../db/sqlserver");
 
 // Tạo hoặc lấy cuộc trò chuyện giữa 2 user
 async function findOrCreateConversation(participant1Id, participant2Id) {

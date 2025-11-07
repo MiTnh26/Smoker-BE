@@ -1,3 +1,16 @@
+/**
+ * Lấy EntityAccountId từ AccountId (chính chủ user)
+ * @param {string} accountId
+ * @returns {string|null} EntityAccountId hoặc null nếu không tìm thấy
+ */
+async function getEntityAccountIdByAccountId(accountId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("AccountId", sql.UniqueIdentifier, accountId)
+    .query("SELECT TOP 1 EntityAccountId FROM EntityAccounts WHERE EntityType = 'Account' AND EntityId = @AccountId");
+  if (result.recordset.length > 0) return result.recordset[0].EntityAccountId;
+  return null;
+}
 // models/entityAccountModel.js
 const { getPool, sql } = require("../db/sqlserver");
 
@@ -21,23 +34,29 @@ async function createEntityAccount(entityType, entityId, accountId) {
 async function getEntitiesByAccountId(accountId) {
   const pool = await getPool();
 
-  // 1. Lấy BarPages
+  // 1. Lấy BarPages kèm EntityAccountId
   const barPagesResult = await pool.request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
-    .query(`SELECT BarPageId AS id, BarName AS name, Avatar AS avatar, Role AS role
-            FROM BarPages WHERE AccountId = @AccountId`);
+    .query(`SELECT b.BarPageId AS id, b.BarName AS name, b.Avatar AS avatar, b.Role AS role, ea.EntityAccountId
+            FROM BarPages b
+            JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = b.BarPageId
+            WHERE b.AccountId = @AccountId`);
 
-  // 2. Lấy BusinessAccounts
+  // 2. Lấy BusinessAccounts kèm EntityAccountId
   const businessAccountsResult = await pool.request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
-    .query(`SELECT BussinessAccountId AS id, UserName AS name, Avatar AS avatar, Role AS role
-            FROM BussinessAccounts WHERE AccountId = @AccountId`);
+    .query(`SELECT ba.BussinessAccountId AS id, ba.UserName AS name, ba.Avatar AS avatar, ba.Role AS role, ea.EntityAccountId
+            FROM BussinessAccounts ba
+            JOIN EntityAccounts ea ON ea.EntityType = 'BusinessAccount' AND ea.EntityId = ba.BussinessAccountId
+            WHERE ba.AccountId = @AccountId`);
 
-  // 3. Tự thêm Account chính
+  // 3. Lấy Account chính kèm EntityAccountId
   const accountResult = await pool.request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
-    .query(`SELECT AccountId AS id, UserName AS name, Avatar AS avatar, Role AS role
-            FROM Accounts WHERE AccountId = @AccountId`);
+    .query(`SELECT a.AccountId AS id, a.UserName AS name, a.Avatar AS avatar, a.Role AS role, ea.EntityAccountId
+            FROM Accounts a
+            JOIN EntityAccounts ea ON ea.EntityType = 'Account' AND ea.EntityId = a.AccountId
+            WHERE a.AccountId = @AccountId`);
 
   return [
     { type: "Account", ...accountResult.recordset[0] },
@@ -45,4 +64,4 @@ async function getEntitiesByAccountId(accountId) {
     ...businessAccountsResult.recordset.map(r => ({ type: "BusinessAccount", ...r }))
   ];
 }
-module.exports = {getEntitiesByAccountId , createEntityAccount };
+module.exports = {getEntitiesByAccountId , createEntityAccount, getEntityAccountIdByAccountId };

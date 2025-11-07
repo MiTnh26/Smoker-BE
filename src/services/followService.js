@@ -1,9 +1,15 @@
 const { success, error } = require("../utils/response");
+const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 const FollowModel = require("../models/followModel");
 
 exports.followEntity = async ({ followerId, followingId, followingType }) => {
 	try {
-		await FollowModel.followEntity({ followerId, followingId, followingType });
+		// Nếu followerId/followingId là accountId (UUID user), lấy EntityAccountId
+		let followerEntityAccountId = await getEntityAccountIdByAccountId(followerId) || followerId;
+		let followingEntityAccountId = await getEntityAccountIdByAccountId(followingId) || followingId;
+		console.log("Resolved followerEntityAccountId:", followerEntityAccountId);
+		console.log("Resolved followingEntityAccountId:", followingEntityAccountId);
+		await FollowModel.followEntity({ followerId: followerEntityAccountId, followingId: followingEntityAccountId, followingType });
 		return success("Followed successfully.");
 	} catch (err) {
 		if (err.message && err.message.includes("UQ_Follow")) {
@@ -15,7 +21,9 @@ exports.followEntity = async ({ followerId, followingId, followingType }) => {
 
 exports.unfollowEntity = async ({ followerId, followingId }) => {
 	try {
-		const affected = await FollowModel.unfollowEntity({ followerId, followingId });
+		let followerEntityAccountId = await getEntityAccountIdByAccountId(followerId) || followerId;
+		let followingEntityAccountId = await getEntityAccountIdByAccountId(followingId) || followingId;
+		const affected = await FollowModel.unfollowEntity({ followerId: followerEntityAccountId, followingId: followingEntityAccountId });
 		if (affected === 0) {
 			return error("Follow relationship not found.", 404);
 		}
@@ -45,7 +53,9 @@ exports.getFollowing = async (entityId) => {
 
 exports.checkFollowing = async ({ followerId, followingId }) => {
 	try {
-		const isFollowing = await FollowModel.checkFollowing({ followerId, followingId });
+		let followerEntityAccountId = await getEntityAccountIdByAccountId(followerId) || followerId;
+		let followingEntityAccountId = await getEntityAccountIdByAccountId(followingId) || followingId;
+		const isFollowing = await FollowModel.checkFollowing({ followerId: followerEntityAccountId, followingId: followingEntityAccountId });
 		return success("Checked follow status.", { isFollowing });
 	} catch (err) {
 		return error("Error checking follow status: " + err.message, 500);

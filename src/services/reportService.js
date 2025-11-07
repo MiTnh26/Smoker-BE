@@ -1,9 +1,22 @@
 const { success, error } = require("../utils/response");
 const ReportModel = require("../models/reportModel");
-
+const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 exports.createReport = async (data) => {
 	try {
-		const report = await ReportModel.createReport(data);
+		let processedData = { ...data };
+		if (data.TargetOwnerId) {
+			const entityAccountId = await getEntityAccountIdByAccountId(data.TargetOwnerId);
+			if (entityAccountId) {
+				processedData.TargetOwnerId = entityAccountId;
+			}
+		}
+		if (data.ReporterId) {
+			const reporterEntityId = await getEntityAccountIdByAccountId(data.ReporterId);
+			if (reporterEntityId) {
+				processedData.ReporterId = reporterEntityId;
+			}
+		}
+		const report = await ReportModel.createReport(processedData);
 		return success("Report created successfully.", report);
 	} catch (err) {
 		return error("Error creating report: " + err.message, 500);

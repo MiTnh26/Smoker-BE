@@ -55,7 +55,7 @@ class PostService {
         query.populate('musicId');
       }
 
-      const posts = await query.lean();
+      const posts = await query;
       // Map populated fields to required response keys
       if (Array.isArray(posts)) {
         for (const p of posts) {
