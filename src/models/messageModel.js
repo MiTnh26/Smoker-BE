@@ -1,4 +1,4 @@
-const { getPool, sql } = require('../db/sqlserver');
+const { getPool, sql } = require("../db/sqlserver");
 
 // Thêm tin nhắn mới
 async function addMessage(conversationId, senderId, content, messageType = 'text') {

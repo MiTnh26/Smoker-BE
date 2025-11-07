@@ -12,9 +12,12 @@ const messageSchema = new mongoose.Schema(
       required: true,
     },
     "Người Gửi": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
+      type: String, // UUID hoặc ObjectId đều được, miễn đồng bộ với userId
       required: true,
+    },
+    "Đã Đọc": {
+      type: Boolean,
+      default: false
     },
   },
   { timestamps: true }
@@ -29,13 +32,11 @@ const messageModelSchema = new mongoose.Schema(
       default: {},
     },
     "Người 1": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
+      type: String, // UUID hoặc ObjectId đều được, miễn đồng bộ với userId
       required: true,
     },
     "Người 2": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
+      type: String,
       required: true,
     },
   },

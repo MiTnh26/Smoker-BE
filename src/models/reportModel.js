@@ -7,7 +7,7 @@ class ReportModel {
 		request.input("ReporterId", sql.UniqueIdentifier, data.ReporterId);
 		request.input("ReporterRole", sql.NVarChar, data.ReporterRole);
 		request.input("TargetType", sql.NVarChar, data.TargetType);
-		request.input("TargetId", sql.UniqueIdentifier, data.TargetId);
+	request.input("TargetId", sql.NVarChar(50), data.TargetId);
 		request.input("TargetOwnerId", sql.UniqueIdentifier, data.TargetOwnerId || null);
 		request.input("Reason", sql.NVarChar, data.Reason);
 		request.input("Description", sql.NVarChar, data.Description || null);
@@ -30,7 +30,7 @@ class ReportModel {
 		const pool = await getPool();
 		const result = await pool.request()
 			.input("targetType", sql.NVarChar, targetType)
-			.input("targetId", sql.UniqueIdentifier, targetId)
+		.input("targetId", sql.NVarChar(50), targetId)
 			.query("SELECT * FROM Reports WHERE TargetType = @targetType AND TargetId = @targetId ORDER BY CreatedAt DESC");
 		return result.recordset;
 	}
