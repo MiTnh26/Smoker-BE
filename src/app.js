@@ -63,13 +63,12 @@ app.use("/api/bar-table", barTableRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/business", businessRoutes);
-app.use("/api/events",eventRoutes)
+app.use("/api/events", eventRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/stories", storyRoutes);
 app.use("/api/music", musicRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
-app.use("/api/events",eventRoutes)
 app.use("/api/song", songRoutes);
 app.use("/api/follow", followRoutes);
 app.use("/api/reports", reportRoutes);
