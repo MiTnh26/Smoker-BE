@@ -13,10 +13,34 @@ function initSocket(server) {
     });
     // Lắng nghe sự kiện join từ client để cho socket vào room userId
     ioInstance.on('connection', (socket) => {
+        console.log('=== SOCKET CONNECTION ===');
+        console.log('Socket connected:', socket.id);
+        
+        // Join user room (for notifications)
         socket.on('join', (userId) => {
-            socket.join(String(userId));
-            // console.log('User', socket.id, 'joined room', userId);
+            const roomId = String(userId);
+            socket.join(roomId);
+            console.log('User', socket.id, 'joined room:', roomId);
         });
+        
+        // Join conversation room (for realtime chat - like Messenger)
+        socket.on('join_conversation', (conversationId) => {
+            const conversationRoom = `conversation:${conversationId}`;
+            socket.join(conversationRoom);
+            console.log('Socket', socket.id, 'joined conversation room:', conversationRoom);
+        });
+        
+        // Leave conversation room
+        socket.on('leave_conversation', (conversationId) => {
+            const conversationRoom = `conversation:${conversationId}`;
+            socket.leave(conversationRoom);
+            console.log('Socket', socket.id, 'left conversation room:', conversationRoom);
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('Socket disconnected:', socket.id);
+        });
+        console.log('========================');
     });
     return ioInstance;
 }

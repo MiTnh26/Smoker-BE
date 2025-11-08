@@ -1,15 +1,90 @@
 /**
  * Lấy EntityAccountId từ AccountId (chính chủ user)
+ * Query theo AccountId (chủ sở hữu) thay vì EntityId để tìm EntityAccountId đúng
  * @param {string} accountId
  * @returns {string|null} EntityAccountId hoặc null nếu không tìm thấy
  */
 async function getEntityAccountIdByAccountId(accountId) {
-  const pool = await getPool();
-  const result = await pool.request()
-    .input("AccountId", sql.UniqueIdentifier, accountId)
-    .query("SELECT TOP 1 EntityAccountId FROM EntityAccounts WHERE EntityType = 'Account' AND EntityId = @AccountId");
-  if (result.recordset.length > 0) return result.recordset[0].EntityAccountId;
-  return null;
+  try {
+    console.log('🔍 getEntityAccountIdByAccountId - Input AccountId:', accountId, '| Type:', typeof accountId);
+    const pool = await getPool();
+    // Query theo AccountId (chủ sở hữu) và EntityType='Account', EntityId=AccountId
+    // Để tìm EntityAccountId của Account chính
+    const result = await pool.request()
+      .input("AccountId", sql.UniqueIdentifier, accountId)
+      .query(`
+        SELECT TOP 1 EntityAccountId 
+        FROM EntityAccounts 
+        WHERE EntityType = 'Account' 
+          AND EntityId = @AccountId
+          AND AccountId = @AccountId
+      `);
+    
+    console.log('📊 Query result - Records found:', result.recordset.length);
+    
+    if (result.recordset.length > 0) {
+      const entityAccountId = result.recordset[0].EntityAccountId;
+      const entityAccountIdStr = entityAccountId ? String(entityAccountId) : null;
+      console.log('✅ Found EntityAccountId:', entityAccountIdStr, '| Raw type:', typeof entityAccountId);
+      // Convert to string if it's a UniqueIdentifier object
+      return entityAccountIdStr;
+    }
+    
+    // Nếu chưa có EntityAccount, tự động tạo (fallback)
+    console.log('⚠️ EntityAccount not found for AccountId:', accountId, '- Creating new one...');
+    try {
+      await createEntityAccount("Account", accountId, accountId);
+      console.log('✅ Created EntityAccount for AccountId:', accountId);
+      
+      // Lấy lại EntityAccountId vừa tạo
+      const result2 = await pool.request()
+        .input("AccountId", sql.UniqueIdentifier, accountId)
+        .query(`
+          SELECT TOP 1 EntityAccountId 
+          FROM EntityAccounts 
+          WHERE EntityType = 'Account' 
+            AND EntityId = @AccountId
+            AND AccountId = @AccountId
+        `);
+      
+      if (result2.recordset.length > 0) {
+        const entityAccountId = result2.recordset[0].EntityAccountId;
+        const entityAccountIdStr = entityAccountId ? String(entityAccountId) : null;
+        console.log('✅ Retrieved new EntityAccountId:', entityAccountIdStr);
+        return entityAccountIdStr;
+      }
+      console.error('❌ Failed to retrieve newly created EntityAccountId');
+    } catch (createError) {
+      // Nếu đã tồn tại (UNIQUE constraint) thì query lại
+      if (createError.code === 'EREQUEST' || createError.message?.includes('UNIQUE')) {
+        console.log('⚠️ EntityAccount already exists, querying again...');
+        const result3 = await pool.request()
+          .input("AccountId", sql.UniqueIdentifier, accountId)
+          .query(`
+            SELECT TOP 1 EntityAccountId 
+            FROM EntityAccounts 
+            WHERE EntityType = 'Account' 
+              AND EntityId = @AccountId
+              AND AccountId = @AccountId
+          `);
+        
+        if (result3.recordset.length > 0) {
+          const entityAccountId = result3.recordset[0].EntityAccountId;
+          const entityAccountIdStr = entityAccountId ? String(entityAccountId) : null;
+          console.log('✅ Retrieved existing EntityAccountId:', entityAccountIdStr);
+          return entityAccountIdStr;
+        }
+      }
+      console.error('❌ Error creating EntityAccount:', createError.message);
+    }
+    
+    console.error('❌ getEntityAccountIdByAccountId - Returning null');
+    return null;
+  } catch (error) {
+    console.error('❌ Error in getEntityAccountIdByAccountId:', error.message);
+    console.error('Stack:', error.stack);
+    return null;
+  }
 }
 // models/entityAccountModel.js
 const { getPool, sql } = require("../db/sqlserver");
@@ -21,15 +96,25 @@ const { getPool, sql } = require("../db/sqlserver");
  * @param {string} accountId - ID của chủ sở hữu (AccountId của user)
  */
 async function createEntityAccount(entityType, entityId, accountId) {
-  const pool = await getPool();
-  await pool.request()
-    .input("EntityType", sql.NVarChar(50), entityType)
-    .input("EntityId", sql.UniqueIdentifier, entityId)
-    .input("AccountId", sql.UniqueIdentifier, accountId)
-    .query(`
-      INSERT INTO EntityAccounts (EntityType, EntityId, AccountId)
-      VALUES (@EntityType, @EntityId, @AccountId)
-    `);
+  try {
+    const pool = await getPool();
+    await pool.request()
+      .input("EntityType", sql.NVarChar(50), entityType)
+      .input("EntityId", sql.UniqueIdentifier, entityId)
+      .input("AccountId", sql.UniqueIdentifier, accountId)
+      .query(`
+        INSERT INTO EntityAccounts (EntityType, EntityId, AccountId)
+        VALUES (@EntityType, @EntityId, @AccountId)
+      `);
+    console.log('Created EntityAccount:', { entityType, entityId, accountId });
+  } catch (error) {
+    // Nếu đã tồn tại (UNIQUE constraint) thì bỏ qua
+    if (error.code === 'EREQUEST' && error.message && error.message.includes('UNIQUE')) {
+      console.log('EntityAccount already exists:', { entityType, entityId });
+      return;
+    }
+    throw error;
+  }
 }
 async function getEntitiesByAccountId(accountId) {
   const pool = await getPool();

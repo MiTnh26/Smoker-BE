@@ -7,6 +7,8 @@ const multer = require("multer");
 
 router.get("/me", verifyToken, userController.me);
 router.get("/:accountId/entities", verifyToken, userController.getEntities);
+router.get("/entity-account/:accountId", verifyToken, userController.getEntityAccountId);
+router.get("/by-entity/:entityAccountId", userController.getByEntityId);
 const uploadUser = createCloudinaryUpload("users");
 
 // Middleware to parse FormData with text fields

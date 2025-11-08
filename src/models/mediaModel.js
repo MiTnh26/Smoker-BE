@@ -104,8 +104,24 @@ const mediaSchema = new mongoose.Schema(
       required: true,
     },
     accountId: {
-      type: mongoose.Schema.Types.Mixed, // Can be String or ObjectId
+      type: mongoose.Schema.Types.Mixed, // Can be String or ObjectId (backward compatibility)
+      default: null,
+    },
+    entityAccountId: {
+      type: String, // Lưu EntityAccountId - ID của role/entity đang upload
       required: true,
+      index: true,
+    },
+    entityId: {
+      type: String, // Lưu EntityId - ID của entity cụ thể (AccountId, BarPageId, BusinessAccountId)
+      default: null,
+      index: true,
+    },
+    entityType: {
+      type: String, // Lưu EntityType - Loại entity: "Account", "BarPage", "BusinessAccount"
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+      index: true,
     },
     url: {
       type: String,
@@ -143,6 +159,8 @@ mediaSchema.index({ accountId: 1 });
 mediaSchema.index({ createdAt: -1 });
 // Avoid duplicate medias per post for same URL
 mediaSchema.index({ postId: 1, url: 1 }, { unique: false });
+mediaSchema.index({ entityAccountId: 1 }); // Index cho entityAccountId
+mediaSchema.index({ entityType: 1, entityId: 1 }); // Composite index cho entityType và entityId
 
 module.exports = mongoose.model("Media", mediaSchema, "medias");
 

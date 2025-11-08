@@ -3,14 +3,81 @@ const mongoose = require("mongoose");
 const Music = require("../models/musicModel");
 const Post = require("../models/postModel");
 const Media = require("../models/mediaModel");
+const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
+const { getPool, sql } = require("../db/sqlserver");
 
 class PostController {
   // Tạo post mới
   async createPost(req, res) {
     try {
-      const { title, content, images, expiredAt, type, videos, audios, caption, authorEntityId, authorEntityType, authorEntityName, authorEntityAvatar } = req.body;
-      const authorId = req.user?.id || 1; // Từ middleware auth
-      console.log("[POST] Creating new post");
+      const { title, content, images, expiredAt, type, videos, audios, caption, authorEntityId, authorEntityType, authorEntityName, authorEntityAvatar, entityAccountId } = req.body;
+      const authorId = req.user?.id || 1; // AccountId từ middleware auth
+      
+      // Lấy entityAccountId, entityId, entityType từ request body hoặc từ activeEntity
+      let postEntityAccountId = entityAccountId;
+      let postEntityId = authorEntityId;
+      let postEntityType = authorEntityType;
+      
+      if (!postEntityAccountId && postEntityId && postEntityType) {
+        // Nếu có authorEntityId và authorEntityType, tìm EntityAccountId tương ứng
+        try {
+          const pool = await getPool();
+          const normalizedEntityType = postEntityType === "Business" ? "BusinessAccount" : 
+                           postEntityType === "Bar" || postEntityType === "BarPage" ? "BarPage" : "Account";
+          postEntityType = normalizedEntityType;
+          
+          const result = await pool.request()
+            .input("AccountId", sql.UniqueIdentifier, authorId)
+            .input("EntityType", sql.NVarChar, normalizedEntityType)
+            .input("EntityId", sql.UniqueIdentifier, postEntityId)
+            .query(`SELECT TOP 1 EntityAccountId FROM EntityAccounts 
+                    WHERE AccountId = @AccountId AND EntityType = @EntityType AND EntityId = @EntityId`);
+          
+          if (result.recordset.length > 0) {
+            postEntityAccountId = String(result.recordset[0].EntityAccountId);
+          }
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId from authorEntityId:", err);
+        }
+      }
+      
+      if (!postEntityAccountId) {
+        // Fallback: lấy EntityAccountId của Account chính
+        try {
+          postEntityAccountId = await getEntityAccountIdByAccountId(authorId);
+          if (postEntityAccountId && !postEntityId) {
+            // Nếu lấy được EntityAccountId của Account, set entityId và entityType
+            postEntityId = String(authorId);
+            postEntityType = "Account";
+          }
+        } catch (err) {
+          console.error("[POST] Could not get EntityAccountId:", err);
+          return res.status(400).json({
+            success: false,
+            message: "Could not determine EntityAccountId for post"
+          });
+        }
+      }
+      
+      // Normalize entityType nếu chưa có
+      if (!postEntityType && postEntityAccountId) {
+        // Nếu có entityAccountId nhưng chưa có entityType, query để lấy
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, postEntityAccountId)
+            .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+          
+          if (result.recordset.length > 0) {
+            postEntityType = result.recordset[0].EntityType;
+            if (!postEntityId) {
+              postEntityId = String(result.recordset[0].EntityId);
+            }
+          }
+        } catch (err) {
+          console.warn("[POST] Could not get EntityType from EntityAccountId:", err);
+        }
+      }
 
       if (!authorId) {
         console.error("[POST] No authorId found in request");
@@ -42,7 +109,6 @@ class PostController {
 
       // Check if posting music (audios)
       if (audios && Object.keys(audios).length > 0) {
-        console.log("[POST] Creating music post");
 
         // Get music-specific fields from request body
         const musicTitle = req.body.musicTitle || title || "Untitled";
@@ -73,20 +139,25 @@ class PostController {
           title: musicTitle,
           artist: artistName,
           coverUrl: musicBackgroundImage,
-          uploaderId: authorObjectId,
+          uploaderId: String(authorId), // Backward compatibility
+          entityAccountId: postEntityAccountId, // Primary field
+          entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
+          entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
           uploaderName: authorEntityName || null,
           uploaderAvatar: authorEntityAvatar || null
         };
 
         const music = new Music(musicData);
         await music.save();
-        console.log("[POST] Music saved to musics collection:", music._id);
 
         // Create post entry in posts collection linked to music
         const postData = {
           title: musicTitle, // Use music title instead of generic title
           content: description, // Use description as content
-          accountId: authorId,
+          accountId: authorId, // Keep for backward compatibility
+          entityAccountId: postEntityAccountId, // Primary field
+          entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
+          entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
           musicId: music._id,
           songId: null,// Link to music
           mediaIds: [],
@@ -112,14 +183,15 @@ class PostController {
           });
         }
 
-        console.log("[POST] Post saved to posts collection:", post.data._id);
-
         // Create media entries for background image (and optionally audio thumbnail if needed)
         const newMediaIds = [];
         if (musicBackgroundImage) {
           const mediaDoc = new Media({
             postId: post.data._id,
-            accountId: authorId,
+            accountId: authorId, // Keep for backward compatibility
+            entityAccountId: postEntityAccountId, // Primary field
+            entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
+            entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
             url: musicBackgroundImage,
             caption: description || "",
             comments: new Map(),
@@ -134,10 +206,17 @@ class PostController {
           post.data.mediaIds = newMediaIds;
         }
 
+        // Enrich post với author info ngay sau khi tạo
+        let postDataToEnrich = post.data;
+        if (postDataToEnrich.toObject) {
+          postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
+        }
+        await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
+        
         result = {
           success: true,
           data: {
-            post: post.data,
+            post: postDataToEnrich,
             music: music
           },
           message: "Music post created successfully in both posts and musics collections"
@@ -145,7 +224,6 @@ class PostController {
 
       } else if ((images && typeof images === 'object' && Object.keys(images).length > 0) || (videos && typeof videos === 'object' && Object.keys(videos).length > 0)) {
         // Create post with images/videos
-        console.log("[POST] Creating image/video post");
 
         // Prepare medias array
         const allMedias = { ...images, ...videos };
@@ -163,7 +241,10 @@ class PostController {
         const postData = {
           title,
           content: caption || content,
-          accountId: authorId,
+          accountId: authorId, // Keep for backward compatibility
+          entityAccountId: postEntityAccountId, // Primary field
+          entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
+          entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
           musicId: req.body.musicId || null, // ✅ Thêm dòng này
           songId: req.body.songId || null,
           mediaIds: [],
@@ -183,8 +264,6 @@ class PostController {
           });
         }
 
-        console.log("[POST] Post saved to posts collection:", post.data._id);
-
         // Create media entries in medias collection
         const mediaEntries = [];
         const postIdForMedia = mongoose.Types.ObjectId.isValid(post.data._id)
@@ -194,7 +273,10 @@ class PostController {
         for (const mediaValue of mediaPayloads) {
           const mediaData = {
             postId: postIdForMedia,
-            accountId: authorId,
+            accountId: authorId, // Keep for backward compatibility
+            entityAccountId: postEntityAccountId, // Primary field
+            entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
+            entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
             url: mediaValue.url,
             caption: mediaValue.caption || "",
             comments: new Map(),
@@ -203,7 +285,6 @@ class PostController {
           const media = new Media(mediaData);
           await media.save();
           mediaEntries.push(media);
-          console.log("[POST] Media saved to medias collection:", media._id);
         }
 
         // Update post.mediaIds with created media IDs
@@ -213,10 +294,17 @@ class PostController {
           post.data.mediaIds = newIds;
         }
 
+        // Enrich post với author info ngay sau khi tạo
+        let postDataToEnrich = post.data;
+        if (postDataToEnrich.toObject) {
+          postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
+        }
+        await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
+
         result = {
           success: true,
           data: {
-            post: post.data,
+            post: postDataToEnrich,
             medias: mediaEntries
           },
           message: "Post created successfully in both posts and medias collections"
@@ -224,12 +312,14 @@ class PostController {
 
       } else {
         // Create basic text post (no images/videos/audios)
-        console.log("[POST] Creating text post");
 
         const postData = {
           title,
           content,
-          accountId: authorId,
+          accountId: authorId, // Keep for backward compatibility
+          entityAccountId: postEntityAccountId, // Primary field
+          entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
+          entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
           mediaIds: [],
           images: typeof images === "string" ? images : "",
           expiredAt: expiredAt ? new Date(expiredAt) : null,
@@ -253,12 +343,32 @@ class PostController {
             error: result.error
           });
         }
+      }
 
-        console.log("[POST] Post saved to posts collection:", result.data._id);
+      // Enrich post với author info (authorName, authorAvatar) ngay sau khi tạo
+      // Chỉ enrich cho text post (không có music hoặc media), vì music post và media post đã enrich ở trên
+      if (result.success && result.data && !result.data.post && !result.data.medias) {
+        try {
+          // Convert post data to plain object nếu cần
+          let postDataToEnrich = result.data;
+          
+          // Convert to plain object nếu là Mongoose document
+          if (postDataToEnrich.toObject) {
+            postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
+          }
+          
+          // Enrich với author info
+          await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
+          
+          // Update result.data với enriched data
+          result.data = postDataToEnrich;
+        } catch (enrichError) {
+          console.warn("[POST] Error enriching post with author info:", enrichError.message);
+          // Không fail request nếu enrich lỗi, chỉ log warning
+        }
       }
 
       if (result.success) {
-        console.log("[POST] Post created successfully");
         res.status(201).json(result);
       } else {
         console.error("[POST] Post creation failed");
@@ -328,7 +438,7 @@ class PostController {
   async addComment(req, res) {
     try {
       const { postId } = req.params;
-      const { content, images, typeRole } = req.body;
+      const { content, images, typeRole, entityAccountId, entityId, entityType } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -338,11 +448,51 @@ class PostController {
         });
       }
 
+      // Lấy entityAccountId, entityId, entityType từ request body hoặc từ accountId
+      let commentEntityAccountId = entityAccountId;
+      let commentEntityId = entityId;
+      let commentEntityType = entityType;
+
+      if (!commentEntityAccountId) {
+        // Fallback: lấy EntityAccountId của Account chính
+        try {
+          commentEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          if (commentEntityAccountId && !commentEntityId) {
+            commentEntityId = String(userId);
+            commentEntityType = "Account";
+          }
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId for comment:", err);
+        }
+      }
+
+      // Normalize entityType nếu chưa có
+      if (!commentEntityType && commentEntityAccountId) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, commentEntityAccountId)
+            .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+          
+          if (result.recordset.length > 0) {
+            commentEntityType = result.recordset[0].EntityType;
+            if (!commentEntityId) {
+              commentEntityId = String(result.recordset[0].EntityId);
+            }
+          }
+        } catch (err) {
+          console.warn("[POST] Could not get EntityType from EntityAccountId:", err);
+        }
+      }
+
       const commentData = {
-        accountId: userId,
+        accountId: userId, // Backward compatibility
+        entityAccountId: commentEntityAccountId,
+        entityId: commentEntityId,
+        entityType: commentEntityType,
         content,
         images,
-        typeRole: typeRole || "Account",
+        typeRole: typeRole || commentEntityType || "Account",
       };
 
       const result = await postService.addComment(postId, commentData);
@@ -365,7 +515,7 @@ class PostController {
   async addReply(req, res) {
     try {
       const { postId, commentId } = req.params;
-      const { content, images, typeRole } = req.body;
+      const { content, images, typeRole, entityAccountId, entityId, entityType } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -375,11 +525,51 @@ class PostController {
         });
       }
 
+      // Lấy entityAccountId, entityId, entityType từ request body hoặc từ accountId
+      let replyEntityAccountId = entityAccountId;
+      let replyEntityId = entityId;
+      let replyEntityType = entityType;
+
+      if (!replyEntityAccountId) {
+        // Fallback: lấy EntityAccountId của Account chính
+        try {
+          replyEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          if (replyEntityAccountId && !replyEntityId) {
+            replyEntityId = String(userId);
+            replyEntityType = "Account";
+          }
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId for reply:", err);
+        }
+      }
+
+      // Normalize entityType nếu chưa có
+      if (!replyEntityType && replyEntityAccountId) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, replyEntityAccountId)
+            .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+          
+          if (result.recordset.length > 0) {
+            replyEntityType = result.recordset[0].EntityType;
+            if (!replyEntityId) {
+              replyEntityId = String(result.recordset[0].EntityId);
+            }
+          }
+        } catch (err) {
+          console.warn("[POST] Could not get EntityType from EntityAccountId:", err);
+        }
+      }
+
       const replyData = {
-        accountId: userId,
+        accountId: userId, // Backward compatibility
+        entityAccountId: replyEntityAccountId,
+        entityId: replyEntityId,
+        entityType: replyEntityType,
         content,
         images,
-        typeRole: typeRole || "Account"
+        typeRole: typeRole || replyEntityType || "Account"
       };
 
       const result = await postService.addReply(postId, commentId, replyData);
@@ -402,7 +592,7 @@ class PostController {
   async addReplyToReply(req, res) {
     try {
       const { postId, commentId, replyId } = req.params;
-      const { content, images, typeRole } = req.body;
+      const { content, images, typeRole, entityAccountId, entityId, entityType } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -412,11 +602,51 @@ class PostController {
         });
       }
 
+      // Lấy entityAccountId, entityId, entityType từ request body hoặc từ accountId
+      let replyEntityAccountId = entityAccountId;
+      let replyEntityId = entityId;
+      let replyEntityType = entityType;
+
+      if (!replyEntityAccountId) {
+        // Fallback: lấy EntityAccountId của Account chính
+        try {
+          replyEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          if (replyEntityAccountId && !replyEntityId) {
+            replyEntityId = String(userId);
+            replyEntityType = "Account";
+          }
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId for reply to reply:", err);
+        }
+      }
+
+      // Normalize entityType nếu chưa có
+      if (!replyEntityType && replyEntityAccountId) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, replyEntityAccountId)
+            .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+          
+          if (result.recordset.length > 0) {
+            replyEntityType = result.recordset[0].EntityType;
+            if (!replyEntityId) {
+              replyEntityId = String(result.recordset[0].EntityId);
+            }
+          }
+        } catch (err) {
+          console.warn("[POST] Could not get EntityType from EntityAccountId:", err);
+        }
+      }
+
       const replyData = {
-        accountId: userId,
+        accountId: userId, // Backward compatibility
+        entityAccountId: replyEntityAccountId,
+        entityId: replyEntityId,
+        entityType: replyEntityType,
         content,
         images,
-        typeRole: typeRole || "Account"
+        typeRole: typeRole || replyEntityType || "Account"
       };
 
       const result = await postService.addReplyToReply(postId, commentId, replyId, replyData);
@@ -439,7 +669,7 @@ class PostController {
   async likeReply(req, res) {
     try {
       const { postId, commentId, replyId } = req.params;
-      const { typeRole = "Account" } = req.body;
+      const { typeRole = "Account", entityAccountId } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -449,7 +679,17 @@ class PostController {
         });
       }
 
-      const result = await postService.likeReply(postId, commentId, replyId, userId, typeRole);
+      // Lấy entityAccountId từ request body hoặc từ accountId
+      let userEntityAccountId = entityAccountId;
+      if (!userEntityAccountId) {
+        try {
+          userEntityAccountId = await getEntityAccountIdByAccountId(userId);
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId for like reply:", err);
+        }
+      }
+
+      const result = await postService.likeReply(postId, commentId, replyId, userId, typeRole, userEntityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -469,6 +709,7 @@ class PostController {
   async unlikeReply(req, res) {
     try {
       const { postId, commentId, replyId } = req.params;
+      const { entityAccountId } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -478,7 +719,17 @@ class PostController {
         });
       }
 
-      const result = await postService.unlikeReply(postId, commentId, replyId, userId);
+      // Lấy entityAccountId từ request body hoặc từ accountId
+      let userEntityAccountId = entityAccountId;
+      if (!userEntityAccountId) {
+        try {
+          userEntityAccountId = await getEntityAccountIdByAccountId(userId);
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId for unlike reply:", err);
+        }
+      }
+
+      const result = await postService.unlikeReply(postId, commentId, replyId, userId, userEntityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -508,7 +759,9 @@ class PostController {
         });
       }
 
-      const result = await postService.deleteReply(postId, commentId, replyId, userId, userRole);
+      // Lấy entityAccountId từ request hoặc từ accountId
+      const entityAccountId = req.body.entityAccountId || req.user?.entityAccountId;
+      const result = await postService.deleteReply(postId, commentId, replyId, userId, userRole, entityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -558,7 +811,7 @@ class PostController {
   async likeComment(req, res) {
     try {
       const { postId, commentId } = req.params;
-      const { typeRole = "Account" } = req.body;
+      const { typeRole = "Account", entityAccountId } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -568,7 +821,17 @@ class PostController {
         });
       }
 
-      const result = await postService.likeComment(postId, commentId, userId, typeRole);
+      // Lấy entityAccountId từ request body hoặc từ accountId
+      let userEntityAccountId = entityAccountId;
+      if (!userEntityAccountId) {
+        try {
+          userEntityAccountId = await getEntityAccountIdByAccountId(userId);
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId for like comment:", err);
+        }
+      }
+
+      const result = await postService.likeComment(postId, commentId, userId, typeRole, userEntityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -588,6 +851,7 @@ class PostController {
   async unlikeComment(req, res) {
     try {
       const { postId, commentId } = req.params;
+      const { entityAccountId } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -597,7 +861,17 @@ class PostController {
         });
       }
 
-      const result = await postService.unlikeComment(postId, commentId, userId);
+      // Lấy entityAccountId từ request body hoặc từ accountId
+      let userEntityAccountId = entityAccountId;
+      if (!userEntityAccountId) {
+        try {
+          userEntityAccountId = await getEntityAccountIdByAccountId(userId);
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId for unlike comment:", err);
+        }
+      }
+
+      const result = await postService.unlikeComment(postId, commentId, userId, userEntityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -683,7 +957,9 @@ class PostController {
       if (content !== undefined) updateData.content = content;
       if (images !== undefined) updateData.images = images;
 
-      const result = await postService.updateReply(postId, commentId, replyId, updateData, userId, userRole);
+      // Lấy entityAccountId từ request hoặc từ accountId
+      const entityAccountId = req.body.entityAccountId || req.user?.entityAccountId;
+      const result = await postService.updateReply(postId, commentId, replyId, updateData, userId, userRole, entityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -713,7 +989,9 @@ class PostController {
         });
       }
 
-      const result = await postService.deleteComment(postId, commentId, userId, userRole);
+      // Lấy entityAccountId từ request hoặc từ accountId
+      const entityAccountId = req.body.entityAccountId || req.user?.entityAccountId;
+      const result = await postService.deleteComment(postId, commentId, userId, userRole, entityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -755,7 +1033,9 @@ class PostController {
       if (title !== undefined) updateData.title = title;
       if (content !== undefined) updateData.content = content;
 
-      const result = await postService.updatePost(id, updateData, userId);
+      // Lấy entityAccountId từ request hoặc từ accountId
+      const entityAccountId = req.body.entityAccountId || req.user?.entityAccountId;
+      const result = await postService.updatePost(id, updateData, userId, entityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -859,16 +1139,16 @@ class PostController {
   // Tìm kiếm posts theo author
   async searchPostsByAuthor(req, res) {
     try {
-      const { accountId, page = 1, limit = 10 } = req.query;
+      const { entityAccountId, page = 1, limit = 10 } = req.query;
 
-      if (!accountId) {
+      if (!entityAccountId) {
         return res.status(400).json({
           success: false,
-          message: "Account ID is required"
+          message: "EntityAccountId is required"
         });
       }
 
-      const result = await postService.searchPostsByAuthor(accountId, parseInt(page), parseInt(limit));
+      const result = await postService.searchPostsByAuthor(entityAccountId, parseInt(page), parseInt(limit));
 
       if (result.success) {
         res.status(200).json(result);
@@ -937,20 +1217,18 @@ class PostController {
         });
       }
 
-      // Build query to handle both ObjectId and UUID string
+      // authorId trong params có thể là entityAccountId hoặc entityId
+      // Nếu có query parameter entityAccountId thì dùng nó, không thì coi authorId là entityAccountId
+      const entityAccountId = req.query.entityAccountId || authorId;
+      
+      // Build query - chỉ tìm theo entityAccountId hoặc entityId và status = "active"
       const query = {
+        status: "active", // Chỉ lấy posts chưa trash, chưa xóa
         $or: [
-          { authorEntityId: authorId } // Try string match first
+          { entityAccountId: entityAccountId },
+          { entityId: authorId } // Có thể authorId là entityId
         ]
       };
-
-      // If authorId is a valid ObjectId, also search by accountId
-      if (mongoose.Types.ObjectId.isValid(authorId)) {
-        query.$or.push(
-          { accountId: new mongoose.Types.ObjectId(authorId) },
-          { authorId: new mongoose.Types.ObjectId(authorId) }
-        );
-      }
 
       const skip = (page - 1) * limit;
       const posts = await Post.find(query)
@@ -980,6 +1258,120 @@ class PostController {
     }
   }
 
+  // Trash post (ẩn bài viết)
+  async trashPost(req, res) {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
+      }
+
+      // Lấy entityAccountId từ request hoặc từ accountId
+      const entityAccountId = req.body.entityAccountId || req.user?.entityAccountId;
+      if (!entityAccountId) {
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required"
+        });
+      }
+
+      const result = await postService.trashPost(id, entityAccountId);
+
+      if (result.success) {
+        res.status(200).json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+
+  // Restore post (khôi phục bài viết)
+  async restorePost(req, res) {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
+      }
+
+      // Lấy entityAccountId từ request hoặc từ accountId
+      const entityAccountId = req.body.entityAccountId || req.user?.entityAccountId;
+      if (!entityAccountId) {
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required"
+        });
+      }
+
+      const result = await postService.restorePost(id, entityAccountId);
+
+      if (result.success) {
+        res.status(200).json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+
+  // Lấy posts đã trash của user hiện tại
+  async getTrashedPosts(req, res) {
+    try {
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
+      }
+
+      // Lấy entityAccountId từ request hoặc từ accountId
+      const entityAccountId = req.query.entityAccountId || req.body.entityAccountId || req.user?.entityAccountId;
+      if (!entityAccountId) {
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required"
+        });
+      }
+
+      const { page = 1, limit = 10 } = req.query;
+      const result = await postService.getTrashedPosts(entityAccountId, parseInt(page), parseInt(limit));
+
+      if (result.success) {
+        res.status(200).json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+
   // Xóa post
   async deletePost(req, res) {
     try {
@@ -993,7 +1385,67 @@ class PostController {
         });
       }
 
-      const result = await postService.deletePost(id, userId);
+      // Lấy entityAccountId từ request hoặc từ accountId
+      const entityAccountId = req.body.entityAccountId || req.user?.entityAccountId;
+      const result = await postService.deletePost(id, userId, entityAccountId);
+
+      if (result.success) {
+        res.status(200).json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+
+  // Track view - tăng số lượt xem của post
+  async trackView(req, res) {
+    try {
+      const { postId } = req.params;
+      const accountId = req.user?.id; // Optional: để track xem ai đã xem
+
+      if (!postId) {
+        return res.status(400).json({
+          success: false,
+          message: "Post ID is required"
+        });
+      }
+
+      const result = await postService.incrementView(postId, accountId);
+
+      if (result.success) {
+        res.status(200).json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+
+  // Track share - tăng số lượt share của post
+  async trackShare(req, res) {
+    try {
+      const { postId } = req.params;
+      const accountId = req.user?.id;
+
+      if (!postId) {
+        return res.status(400).json({
+          success: false,
+          message: "Post ID is required"
+        });
+      }
+
+      const result = await postService.incrementShare(postId, accountId);
 
       if (result.success) {
         res.status(200).json(result);
