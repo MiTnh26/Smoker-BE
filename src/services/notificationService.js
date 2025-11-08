@@ -9,18 +9,42 @@ class NotificationService {
    * Create a notification
    * @param {Object} data - Notification data
    * @param {String} data.type - Notification type (Confirm, Messages, Like, Comment, Follow)
-   * @param {String|ObjectId} data.sender - ID of the user sending the notification
-   * @param {String|ObjectId} data.receiver - ID of the user receiving the notification
+   * @param {String|ObjectId} data.sender - ID of the user sending the notification (AccountId - backward compatibility)
+   * @param {String} data.senderEntityAccountId - EntityAccountId of sender (required)
+   * @param {String} data.senderEntityId - EntityId of sender (optional)
+   * @param {String} data.senderEntityType - EntityType of sender (optional)
+   * @param {String|ObjectId} data.receiver - ID of the user receiving the notification (AccountId - backward compatibility)
+   * @param {String} data.receiverEntityAccountId - EntityAccountId of receiver (required)
+   * @param {String} data.receiverEntityId - EntityId of receiver (optional)
+   * @param {String} data.receiverEntityType - EntityType of receiver (optional)
    * @param {String} data.content - Notification content/message
    * @param {String} data.link - Link to navigate when notification is clicked
    * @returns {Promise<Object>} Created notification
    */
-  async createNotification({ type, sender, receiver, content, link }) {
+  async createNotification({ 
+    type, 
+    sender, 
+    senderEntityAccountId,
+    senderEntityId,
+    senderEntityType,
+    receiver, 
+    receiverEntityAccountId,
+    receiverEntityId,
+    receiverEntityType,
+    content, 
+    link 
+  }) {
     try {
       const notification = new Notification({
         type,
-        sender,
-        receiver,
+        sender, // Backward compatibility
+        senderEntityAccountId,
+        senderEntityId,
+        senderEntityType,
+        receiver, // Backward compatibility
+        receiverEntityAccountId,
+        receiverEntityId,
+        receiverEntityType,
         content,
         link: link || "/",
         status: "Unread",

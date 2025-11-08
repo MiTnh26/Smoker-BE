@@ -7,6 +7,10 @@ exports.followEntity = async ({ followerId, followingId, followingType }) => {
 		// Nếu followerId/followingId là accountId (UUID user), lấy EntityAccountId
 		let followerEntityAccountId = await getEntityAccountIdByAccountId(followerId) || followerId;
 		let followingEntityAccountId = await getEntityAccountIdByAccountId(followingId) || followingId;
+	// Prevent self-follow
+	if (followerEntityAccountId === followingEntityAccountId) {
+		return error("Cannot follow yourself.", 400);
+	}
 		console.log("Resolved followerEntityAccountId:", followerEntityAccountId);
 		console.log("Resolved followingEntityAccountId:", followingEntityAccountId);
 		await FollowModel.followEntity({ followerId: followerEntityAccountId, followingId: followingEntityAccountId, followingType });
@@ -35,7 +39,8 @@ exports.unfollowEntity = async ({ followerId, followingId }) => {
 
 exports.getFollowers = async (entityId) => {
 	try {
-		const followers = await FollowModel.getFollowers(entityId);
+        const entityAccountId = await getEntityAccountIdByAccountId(entityId) || entityId;
+        const followers = await FollowModel.getFollowers(entityAccountId);
 		return success("Fetched followers.", followers);
 	} catch (err) {
 		return error("Error fetching followers: " + err.message, 500);
@@ -44,7 +49,8 @@ exports.getFollowers = async (entityId) => {
 
 exports.getFollowing = async (entityId) => {
 	try {
-		const following = await FollowModel.getFollowing(entityId);
+        const entityAccountId = await getEntityAccountIdByAccountId(entityId) || entityId;
+        const following = await FollowModel.getFollowing(entityAccountId);
 		return success("Fetched following list.", following);
 	} catch (err) {
 		return error("Error fetching following list: " + err.message, 500);

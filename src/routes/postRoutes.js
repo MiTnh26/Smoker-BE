@@ -37,6 +37,10 @@ router.delete("/:postId/comments/:commentId/replies/:replyId", verifyToken, post
 router.post("/:postId/like", verifyToken, postController.likePost);
 router.delete("/:postId/like", verifyToken, postController.unlikePost);
 
+// Routes để track views và shares (phải đặt trước routes có :id để tránh conflict)
+router.post("/:postId/view", postController.trackView); // Public - ai cũng có thể track view
+router.post("/:postId/share", verifyToken, postController.trackShare); // Cần auth để share
+
 // Routes cần authentication (private routes)
 router.post("/", verifyToken, postController.createPost);
 router.post("/upload", verifyToken, uploadPost.fields([
@@ -46,6 +50,11 @@ router.post("/upload", verifyToken, uploadPost.fields([
 ]), postController.uploadPostMedia);
 router.put("/:id", verifyToken, postController.updatePost);
 router.delete("/:id", verifyToken, postController.deletePost);
+
+// Routes cho Trash (cần auth) - đặt trước routes có :id để tránh conflict
+router.get("/trash", verifyToken, postController.getTrashedPosts);
+router.post("/:id/trash", verifyToken, postController.trashPost);
+router.post("/:id/restore", verifyToken, postController.restorePost);
 
 // Routes không cần authentication (public routes) - phải đặt cuối
 router.get("/:id", postController.getPostById);

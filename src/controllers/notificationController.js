@@ -1,13 +1,26 @@
 const Notification = require("../models/notificationModel");
 const mongoose = require("mongoose");
+const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
+const { getPool, sql } = require("../db/sqlserver");
 
 class NotificationController {
   // Create new notification
   async createNotification(req, res) {
     try {
-      const { type, receiver, content, link } = req.body;
+      const { 
+        type, 
+        receiver, 
+        receiverEntityAccountId,
+        receiverEntityId,
+        receiverEntityType,
+        content, 
+        link 
+      } = req.body;
       
-      const sender = req.user?.id;
+      const sender = req.user?.id; // AccountId
+      const senderEntityAccountId = req.body.senderEntityAccountId;
+      const senderEntityId = req.body.senderEntityId;
+      const senderEntityType = req.body.senderEntityType;
 
       if (!sender) {
         return res.status(401).json({
@@ -16,10 +29,87 @@ class NotificationController {
         });
       }
 
+      // Lấy senderEntityAccountId nếu chưa có
+      let finalSenderEntityAccountId = senderEntityAccountId;
+      let finalSenderEntityId = senderEntityId;
+      let finalSenderEntityType = senderEntityType;
+
+      if (!finalSenderEntityAccountId) {
+        try {
+          finalSenderEntityAccountId = await getEntityAccountIdByAccountId(sender);
+          if (finalSenderEntityAccountId && !finalSenderEntityId) {
+            finalSenderEntityId = String(sender);
+            finalSenderEntityType = "Account";
+          }
+        } catch (err) {
+          console.warn("[Notification] Could not get sender EntityAccountId:", err);
+        }
+      }
+
+      // Lấy receiverEntityAccountId nếu chưa có
+      let finalReceiverEntityAccountId = receiverEntityAccountId;
+      let finalReceiverEntityId = receiverEntityId;
+      let finalReceiverEntityType = receiverEntityType;
+
+      if (!finalReceiverEntityAccountId && receiver) {
+        try {
+          finalReceiverEntityAccountId = await getEntityAccountIdByAccountId(receiver);
+          if (finalReceiverEntityAccountId && !finalReceiverEntityId) {
+            finalReceiverEntityId = String(receiver);
+            finalReceiverEntityType = "Account";
+          }
+        } catch (err) {
+          console.warn("[Notification] Could not get receiver EntityAccountId:", err);
+        }
+      }
+
+      // Nếu có entityAccountId nhưng chưa có entityType, query để lấy
+      if (finalSenderEntityAccountId && !finalSenderEntityType) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, finalSenderEntityAccountId)
+            .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+          
+          if (result.recordset.length > 0) {
+            finalSenderEntityType = result.recordset[0].EntityType;
+            if (!finalSenderEntityId) {
+              finalSenderEntityId = String(result.recordset[0].EntityId);
+            }
+          }
+        } catch (err) {
+          console.warn("[Notification] Could not get sender EntityType:", err);
+        }
+      }
+
+      if (finalReceiverEntityAccountId && !finalReceiverEntityType) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, finalReceiverEntityAccountId)
+            .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+          
+          if (result.recordset.length > 0) {
+            finalReceiverEntityType = result.recordset[0].EntityType;
+            if (!finalReceiverEntityId) {
+              finalReceiverEntityId = String(result.recordset[0].EntityId);
+            }
+          }
+        } catch (err) {
+          console.warn("[Notification] Could not get receiver EntityType:", err);
+        }
+      }
+
       const notificationData = {
         type,
-        sender,
-        receiver,
+        sender, // Backward compatibility
+        senderEntityAccountId: finalSenderEntityAccountId,
+        senderEntityId: finalSenderEntityId,
+        senderEntityType: finalSenderEntityType,
+        receiver, // Backward compatibility
+        receiverEntityAccountId: finalReceiverEntityAccountId,
+        receiverEntityId: finalReceiverEntityId,
+        receiverEntityType: finalReceiverEntityType,
         content,
         status: "Unread",
         link

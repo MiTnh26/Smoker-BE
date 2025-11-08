@@ -2,6 +2,7 @@
 
 
 const { accountModel,entityAccountModel } = require("../models");
+const { getPool, sql } = require("../db/sqlserver");
 const { success, error } = require("../utils/response");
 
 async function me(req, res) {
@@ -100,8 +101,31 @@ async function updateProfile(req, res) {
     }
     
     phone = (phone || "").replace(/\s/g, "").slice(0, 20);
-    if (phone && !/^0\d{9,10}$/.test(phone))
-      return res.status(400).json(error("Số điện thoại không hợp lệ"));
+    if (phone) {
+      // Normalize phone: convert +84 to 0, or 84 to 0
+      let normalizedPhone = phone;
+      if (normalizedPhone.startsWith('+84')) {
+        normalizedPhone = '0' + normalizedPhone.substring(3);
+      } else if (normalizedPhone.startsWith('84') && normalizedPhone.length >= 10) {
+        normalizedPhone = '0' + normalizedPhone.substring(2);
+      }
+      
+      // Validate Vietnamese phone: 10-11 digits starting with 0
+      const isVietnameseFormat = /^0\d{9,10}$/.test(normalizedPhone);
+      
+      // Validate international format: + followed by country code and 6-14 digits
+      // Accept +84xxxxxxxxx (Vietnam) or other international formats
+      const isInternationalFormat = /^\+[1-9]\d{6,14}$/.test(phone) || 
+                                     /^\+84\d{9,10}$/.test(phone); // Vietnam international format
+      
+      if (!isVietnameseFormat && !isInternationalFormat) {
+        console.log('[USER] Phone validation failed:', { phone, normalizedPhone, isVietnameseFormat, isInternationalFormat });
+        return res.status(400).json(error("Số điện thoại không hợp lệ"));
+      }
+      
+      // Use normalized phone for storage (Vietnamese format if possible)
+      phone = isVietnameseFormat ? normalizedPhone : phone;
+    }
 
     gender = gender?.toLowerCase() || null;
     if (gender && !["male", "female"].includes(gender))
@@ -198,5 +222,146 @@ async function getEntities(req, res) {
     return res.status(500).json(error("Lỗi server khi lấy entities"));
   }
 }
-module.exports = { me, updateProfile,getEntities };
+async function getEntityAccountId(req, res) {
+  try {
+    const { accountId } = req.params;
+    if (!accountId) return res.status(400).json(error("Thiếu accountId"));
+
+    console.log("[getEntityAccountId] Request for AccountId:", accountId);
+    const entityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(accountId);
+    console.log("[getEntityAccountId] Result:", entityAccountId);
+    
+    if (!entityAccountId) {
+      console.error("[getEntityAccountId] EntityAccountId is null after getEntityAccountIdByAccountId");
+      return res.status(404).json(error("Không tìm thấy EntityAccountId. Có thể EntityAccount chưa được tạo."));
+    }
+
+    const entityAccountIdStr = String(entityAccountId);
+    console.log("[getEntityAccountId] Returning EntityAccountId:", entityAccountIdStr);
+    return res.json(success("Lấy EntityAccountId thành công", { EntityAccountId: entityAccountIdStr }));
+  } catch (err) {
+    console.error("getEntityAccountId error:", err);
+    console.error("getEntityAccountId error stack:", err.stack);
+    return res.status(500).json(error("Lỗi server khi lấy EntityAccountId: " + (err.message || "Unknown error")));
+  }
+}
+
+module.exports = { me, updateProfile, getEntities, getEntityAccountId };
+
+// Public: resolve entity summary by EntityAccountId
+module.exports.getByEntityId = async (req, res) => {
+  try {
+    const { entityAccountId } = req.params;
+    console.log('[getByEntityId] Requested EntityAccountId:', entityAccountId);
+    
+    const pool = await getPool();
+    const ea = await pool.request()
+      .input("id", sql.UniqueIdentifier, entityAccountId)
+      .query("SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @id");
+    
+    console.log('[getByEntityId] Query result count:', ea.recordset.length);
+    
+    if (ea.recordset.length === 0) {
+      // Log for debugging - check if EntityAccountId exists in any form
+      console.log('[getByEntityId] EntityAccountId not found in EntityAccounts table:', entityAccountId);
+      return res.status(404).json({ success: false, message: "Entity not found" });
+    }
+    const { EntityType, EntityId } = ea.recordset[0];
+    console.log('[getByEntityId] Found EntityType:', EntityType, 'EntityId:', EntityId);
+    
+    if (EntityType === 'BarPage') {
+      const r = await pool.request().input("eid", sql.UniqueIdentifier, EntityId).query(
+        "SELECT BarName AS name, Avatar AS avatar, Background AS background, Role AS role, Email, PhoneNumber AS phone FROM BarPages WHERE BarPageId = @eid"
+      );
+      console.log('[getByEntityId] BarPage query result count:', r.recordset.length);
+      
+      if (r.recordset.length === 0) {
+        console.error('[getByEntityId] BarPage not found with BarPageId:', EntityId);
+        return res.status(404).json({ success: false, message: "BarPage not found" });
+      }
+      
+      const row = r.recordset[0];
+      console.log('[getByEntityId] BarPage row data:', { 
+        name: row.name, 
+        BarName: row.name, 
+        avatar: row.avatar,
+        hasName: !!row.name 
+      });
+      
+      if (!row.name) {
+        console.warn('[getByEntityId] ⚠️ BarPage BarName is NULL or empty for BarPageId:', EntityId);
+      }
+      
+      return res.json({ success: true, data: { entityId: entityAccountId, type: 'BAR', name: row.name, avatar: row.avatar, background: row.background, role: row.role || 'Bar', bio: '', contact: { email: row.Email || null, phone: row.phone || null } } });
+    }
+    if (EntityType === 'BusinessAccount') {
+      // Query without Bio first to avoid column error
+      const r = await pool.request().input("eid", sql.UniqueIdentifier, EntityId).query(
+        "SELECT UserName AS name, Avatar AS avatar, Background AS background, Role AS role, Address, Phone FROM BussinessAccounts WHERE BussinessAccountId = @eid"
+      );
+      console.log('[getByEntityId] BusinessAccount query result count:', r.recordset.length);
+      
+      if (r.recordset.length === 0) {
+        console.error('[getByEntityId] BusinessAccount not found with BussinessAccountId:', EntityId);
+        return res.status(404).json({ success: false, message: "BusinessAccount not found" });
+      }
+      
+      const row = r.recordset[0];
+      console.log('[getByEntityId] BusinessAccount row data:', { 
+        name: row.name, 
+        UserName: row.name, 
+        avatar: row.avatar,
+        hasName: !!row.name 
+      });
+      
+      if (!row.name) {
+        console.warn('[getByEntityId] ⚠️ BusinessAccount UserName is NULL or empty for BussinessAccountId:', EntityId);
+      }
+      
+      let address = row.Address || null;
+      if (address) {
+        try {
+          const parsed = JSON.parse(address);
+          address = parsed?.fullAddress || parsed?.detail || address;
+        } catch {}
+      }
+      // Bio column may not exist in database, use empty string as default
+      const bio = '';
+      return res.json({ success: true, data: { entityId: entityAccountId, type: (row.role || '').toUpperCase() || 'USER', name: row.name, avatar: row.avatar, background: row.background, role: row.role, bio: bio, contact: { email: null, phone: row.Phone || null, address } } });
+    }
+    // Default Account
+    const r = await pool.request().input("eid", sql.UniqueIdentifier, EntityId).query(
+      "SELECT UserName AS name, Avatar AS avatar, Background AS background, Role AS role, Bio, Address, Phone, Email FROM Accounts WHERE AccountId = @eid"
+    );
+    console.log('[getByEntityId] Account query result count:', r.recordset.length);
+    
+    if (r.recordset.length === 0) {
+      console.error('[getByEntityId] Account not found with AccountId:', EntityId);
+      return res.status(404).json({ success: false, message: "Account not found" });
+    }
+    
+    const row = r.recordset[0];
+    console.log('[getByEntityId] Account row data:', { 
+      name: row.name, 
+      UserName: row.name, 
+      avatar: row.avatar,
+      hasName: !!row.name 
+    });
+    
+    if (!row.name) {
+      console.warn('[getByEntityId] ⚠️ Account UserName is NULL or empty for AccountId:', EntityId);
+    }
+    
+    let address = row.Address || null;
+    if (address) {
+      try {
+        const parsed = JSON.parse(address);
+        address = parsed?.fullAddress || parsed?.detail || address;
+      } catch {}
+    }
+    return res.json({ success: true, data: { entityId: entityAccountId, type: 'USER', name: row.name, avatar: row.avatar, background: row.background, role: row.role, bio: row.Bio || '', contact: { email: row.Email || null, phone: row.Phone || null, address } } });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Server error', error: e.message });
+  }
+};
 

@@ -18,6 +18,7 @@ async function getBarPageById(barPageId) {
 
 /**
  * Lấy BarPage theo AccountId (vì mỗi account chỉ có 1 bar page)
+ * JOIN với EntityAccounts để lấy EntityAccountId
  */
 async function getBarPageByAccountId(accountId) {
   const pool = await getPool();
@@ -25,9 +26,10 @@ async function getBarPageByAccountId(accountId) {
     .request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
     .query(`
-      SELECT BarPageId, AccountId, BarName, Avatar, Background, Address, PhoneNumber, Role, Email, created_at
-      FROM BarPages
-      WHERE AccountId = @AccountId
+      SELECT b.BarPageId, b.AccountId, b.BarName, b.Avatar, b.Background, b.Address, b.PhoneNumber, b.Role, b.Email, b.created_at, ea.EntityAccountId
+      FROM BarPages b
+      LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = b.BarPageId
+      WHERE b.AccountId = @AccountId
     `);
   return result.recordset[0] || null;
 }

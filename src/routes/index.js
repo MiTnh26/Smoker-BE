@@ -18,6 +18,7 @@ const bankInfoRoutes = require("./bankInfoRoutes");
 const livestreamRoutes = require("./livestreamRoutes");
 const mediaRoutes = require("./mediaRoutes");
 const followRoutes = require("./followRoutes");
+const searchRoutes = require("./searchRoutes");
 const reportRoutes = require("./reportRoutes");
 module.exports = { 
   authRoutes, 
@@ -33,6 +34,7 @@ module.exports = {
   comboRoutes,
   voucherApplyRoutes,
   followRoutes,
+  searchRoutes,
   musicRoutes,
   messageRoutes,
   notificationRoutes,
