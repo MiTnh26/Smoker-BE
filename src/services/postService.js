@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const FeedAlgorithm = require("./feedAlgorithm");
 const { getPool, sql } = require("../db/sqlserver");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
+const notificationService = require("./notificationService");
 
 class PostService {
   /**
@@ -69,7 +70,14 @@ class PostService {
     try {
       const skip = (page - 1) * limit;
       // Filter posts đã trash: chỉ lấy posts có status = "active" (chưa trash, chưa xóa)
-      const query = Post.find({ status: "active" })
+      // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
+      const query = Post.find({ 
+        status: "active",
+        $or: [
+          { type: "post" },
+          { type: { $exists: false } } // Backward compatibility: posts cũ có thể không có field type
+        ]
+      })
         .sort({ trendingScore: -1, createdAt: -1 }) // Sort theo trending score, sau đó theo thời gian
         .skip(skip)
         .limit(limit);
@@ -121,12 +129,27 @@ class PostService {
             if (Array.isArray(p.mediaIds) && p.mediaIds.length > 0) {
               p.medias = p.mediaIds.map(media => {
                 const mediaObj = media.toObject ? media.toObject() : media;
+                const url = (mediaObj.url || '').toLowerCase();
+                
+                // Detect type từ URL extension (ưu tiên hơn type trong DB để fix trường hợp type bị sai)
+                let detectedType = mediaObj.type;
+                if (url.includes('.mp4') || url.includes('.webm') || url.includes('.mov') || 
+                    url.includes('.avi') || url.includes('.mkv') || url.includes('video')) {
+                  detectedType = 'video';
+                } else if (url.includes('.mp3') || url.includes('.wav') || url.includes('.m4a') || 
+                           url.includes('.ogg') || url.includes('.aac') || url.includes('audio')) {
+                  detectedType = 'audio';
+                } else if (!detectedType || detectedType === 'image') {
+                  // Nếu không detect được hoặc type là image, giữ nguyên
+                  detectedType = detectedType || 'image';
+                }
+                
                 return {
                   _id: mediaObj._id,
                   id: mediaObj._id,
                   url: mediaObj.url,
                   caption: mediaObj.caption || "",
-                  type: mediaObj.type || (mediaObj.url ? (mediaObj.url.toLowerCase().includes('video') ? 'video' : 'image') : 'image'),
+                  type: detectedType,
                   createdAt: mediaObj.createdAt,
                   uploadDate: mediaObj.createdAt
                 };
@@ -175,6 +198,8 @@ class PostService {
   // Lấy post theo ID
   async getPostById(postId, includeMedias = false, includeMusic = false) {
     try {
+      console.log('[PostService] getPostById - postId:', postId, 'includeMedias:', includeMedias, 'includeMusic:', includeMusic);
+      
       // Chỉ lấy post có status = "active" (chưa trash, chưa xóa)
       const query = Post.findOne({ _id: postId, status: "active" });
       if (includeMedias) query.populate('mediaIds');
@@ -184,6 +209,8 @@ class PostService {
       }
 
       const post = await query.lean();
+      
+      console.log('[PostService] getPostById - Post found:', !!post);
 
       if (!post) {
         return {
@@ -196,7 +223,33 @@ class PostService {
       const postData = post;
       // Normalize populated fields into desired response shape
       if (includeMedias && Array.isArray(postData.mediaIds)) {
-        postData.medias = postData.mediaIds;
+        postData.medias = postData.mediaIds.map(media => {
+          const mediaObj = media.toObject ? media.toObject() : media;
+          const url = (mediaObj.url || '').toLowerCase();
+          
+          // Detect type từ URL extension (ưu tiên hơn type trong DB để fix trường hợp type bị sai)
+          let detectedType = mediaObj.type;
+          if (url.includes('.mp4') || url.includes('.webm') || url.includes('.mov') || 
+              url.includes('.avi') || url.includes('.mkv') || url.includes('video')) {
+            detectedType = 'video';
+          } else if (url.includes('.mp3') || url.includes('.wav') || url.includes('.m4a') || 
+                     url.includes('.ogg') || url.includes('.aac') || url.includes('audio')) {
+            detectedType = 'audio';
+          } else if (!detectedType || detectedType === 'image') {
+            // Nếu không detect được hoặc type là image, giữ nguyên
+            detectedType = detectedType || 'image';
+          }
+          
+          return {
+            _id: mediaObj._id,
+            id: mediaObj._id,
+            url: mediaObj.url,
+            caption: mediaObj.caption || "",
+            type: detectedType,
+            createdAt: mediaObj.createdAt,
+            uploadDate: mediaObj.createdAt
+          };
+        });
       }
       if (includeMusic && postData.songId) {
         postData.song = postData.songId;
@@ -292,6 +345,74 @@ class PostService {
       // Cập nhật trending score sau khi thêm comment
       await FeedAlgorithm.updatePostTrendingScore(postId.toString());
 
+      // Tạo notification cho post owner (không gửi nếu comment chính mình)
+      try {
+        const senderEntityAccountId = commentData.entityAccountId;
+        const receiverEntityAccountId = post.entityAccountId;
+        
+        // Chỉ tạo notification nếu sender !== receiver
+        if (senderEntityAccountId && receiverEntityAccountId && 
+            String(senderEntityAccountId).trim().toLowerCase() !== String(receiverEntityAccountId).trim().toLowerCase()) {
+          
+          // Lấy sender và receiver accountIds cho backward compatibility
+          const senderAccountId = commentData.accountId;
+          const receiverAccountId = post.accountId;
+          
+          // Lấy entity info
+          let senderEntityId = commentData.entityId;
+          let senderEntityType = commentData.entityType;
+          let receiverEntityId = post.entityId;
+          let receiverEntityType = post.entityType;
+          
+          // Get sender entity info from SQL Server if not available
+          if (senderEntityAccountId && (!senderEntityId || !senderEntityType)) {
+            try {
+              const pool = await getPool();
+              const result = await pool.request()
+                .input("EntityAccountId", sql.UniqueIdentifier, senderEntityAccountId)
+                .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+              if (result.recordset.length > 0) {
+                senderEntityType = result.recordset[0].EntityType;
+                senderEntityId = String(result.recordset[0].EntityId);
+              }
+            } catch (err) {
+              console.warn("[PostService] Could not get sender entity info:", err);
+            }
+          }
+          
+          // Get receiver entity info from SQL Server if not available
+          if (receiverEntityAccountId && (!receiverEntityId || !receiverEntityType)) {
+            try {
+              const pool = await getPool();
+              const result = await pool.request()
+                .input("EntityAccountId", sql.UniqueIdentifier, receiverEntityAccountId)
+                .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+              if (result.recordset.length > 0) {
+                receiverEntityType = result.recordset[0].EntityType;
+                receiverEntityId = String(result.recordset[0].EntityId);
+              }
+            } catch (err) {
+              console.warn("[PostService] Could not get receiver entity info:", err);
+            }
+          }
+          
+          await notificationService.createCommentNotification({
+            sender: senderAccountId,
+            senderEntityAccountId: String(senderEntityAccountId),
+            senderEntityId: senderEntityId,
+            senderEntityType: senderEntityType,
+            receiver: receiverAccountId,
+            receiverEntityAccountId: String(receiverEntityAccountId),
+            receiverEntityId: receiverEntityId,
+            receiverEntityType: receiverEntityType,
+            postId: postId.toString()
+          });
+        }
+      } catch (notifError) {
+        // Log error but don't fail the comment operation
+        console.error("[PostService] Error creating comment notification:", notifError);
+      }
+
       return {
         success: true,
         data: post,
@@ -339,6 +460,75 @@ class PostService {
 
       // Cập nhật trending score sau khi thêm reply
       await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+
+      // Tạo notification cho comment owner (không gửi nếu reply chính mình)
+      try {
+        const senderEntityAccountId = replyData.entityAccountId;
+        const receiverEntityAccountId = comment.entityAccountId;
+        
+        // Chỉ tạo notification nếu sender !== receiver
+        if (senderEntityAccountId && receiverEntityAccountId && 
+            String(senderEntityAccountId).trim().toLowerCase() !== String(receiverEntityAccountId).trim().toLowerCase()) {
+          
+          // Lấy sender và receiver accountIds cho backward compatibility
+          const senderAccountId = replyData.accountId;
+          const receiverAccountId = comment.accountId;
+          
+          // Lấy entity info
+          let senderEntityId = replyData.entityId;
+          let senderEntityType = replyData.entityType;
+          let receiverEntityId = comment.entityId;
+          let receiverEntityType = comment.entityType;
+          
+          // Get sender entity info from SQL Server if not available
+          if (senderEntityAccountId && (!senderEntityId || !senderEntityType)) {
+            try {
+              const pool = await getPool();
+              const result = await pool.request()
+                .input("EntityAccountId", sql.UniqueIdentifier, senderEntityAccountId)
+                .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+              if (result.recordset.length > 0) {
+                senderEntityType = result.recordset[0].EntityType;
+                senderEntityId = String(result.recordset[0].EntityId);
+              }
+            } catch (err) {
+              console.warn("[PostService] Could not get sender entity info:", err);
+            }
+          }
+          
+          // Get receiver entity info from SQL Server if not available
+          if (receiverEntityAccountId && (!receiverEntityId || !receiverEntityType)) {
+            try {
+              const pool = await getPool();
+              const result = await pool.request()
+                .input("EntityAccountId", sql.UniqueIdentifier, receiverEntityAccountId)
+                .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+              if (result.recordset.length > 0) {
+                receiverEntityType = result.recordset[0].EntityType;
+                receiverEntityId = String(result.recordset[0].EntityId);
+              }
+            } catch (err) {
+              console.warn("[PostService] Could not get receiver entity info:", err);
+            }
+          }
+          
+          await notificationService.createReplyNotification({
+            sender: senderAccountId,
+            senderEntityAccountId: String(senderEntityAccountId),
+            senderEntityId: senderEntityId,
+            senderEntityType: senderEntityType,
+            receiver: receiverAccountId,
+            receiverEntityAccountId: String(receiverEntityAccountId),
+            receiverEntityId: receiverEntityId,
+            receiverEntityType: receiverEntityType,
+            postId: postId.toString(),
+            commentId: commentId.toString() // Add commentId to scroll to the replied comment
+          });
+        }
+      } catch (notifError) {
+        // Log error but don't fail the reply operation
+        console.error("[PostService] Error creating reply notification:", notifError);
+      }
 
       return {
         success: true,
@@ -396,6 +586,75 @@ class PostService {
 
       // Cập nhật trending score sau khi thêm reply to reply
       await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+
+      // Tạo notification cho reply owner (không gửi nếu reply chính mình)
+      try {
+        const senderEntityAccountId = replyData.entityAccountId;
+        const receiverEntityAccountId = targetReply.entityAccountId;
+        
+        // Chỉ tạo notification nếu sender !== receiver
+        if (senderEntityAccountId && receiverEntityAccountId && 
+            String(senderEntityAccountId).trim().toLowerCase() !== String(receiverEntityAccountId).trim().toLowerCase()) {
+          
+          // Lấy sender và receiver accountIds cho backward compatibility
+          const senderAccountId = replyData.accountId;
+          const receiverAccountId = targetReply.accountId;
+          
+          // Lấy entity info
+          let senderEntityId = replyData.entityId;
+          let senderEntityType = replyData.entityType;
+          let receiverEntityId = targetReply.entityId;
+          let receiverEntityType = targetReply.entityType;
+          
+          // Get sender entity info from SQL Server if not available
+          if (senderEntityAccountId && (!senderEntityId || !senderEntityType)) {
+            try {
+              const pool = await getPool();
+              const result = await pool.request()
+                .input("EntityAccountId", sql.UniqueIdentifier, senderEntityAccountId)
+                .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+              if (result.recordset.length > 0) {
+                senderEntityType = result.recordset[0].EntityType;
+                senderEntityId = String(result.recordset[0].EntityId);
+              }
+            } catch (err) {
+              console.warn("[PostService] Could not get sender entity info:", err);
+            }
+          }
+          
+          // Get receiver entity info from SQL Server if not available
+          if (receiverEntityAccountId && (!receiverEntityId || !receiverEntityType)) {
+            try {
+              const pool = await getPool();
+              const result = await pool.request()
+                .input("EntityAccountId", sql.UniqueIdentifier, receiverEntityAccountId)
+                .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+              if (result.recordset.length > 0) {
+                receiverEntityType = result.recordset[0].EntityType;
+                receiverEntityId = String(result.recordset[0].EntityId);
+              }
+            } catch (err) {
+              console.warn("[PostService] Could not get receiver entity info:", err);
+            }
+          }
+          
+          await notificationService.createReplyNotification({
+            sender: senderAccountId,
+            senderEntityAccountId: String(senderEntityAccountId),
+            senderEntityId: senderEntityId,
+            senderEntityType: senderEntityType,
+            receiver: receiverAccountId,
+            receiverEntityAccountId: String(receiverEntityAccountId),
+            receiverEntityId: receiverEntityId,
+            receiverEntityType: receiverEntityType,
+            postId: postId.toString(),
+            commentId: commentId.toString() // Add commentId to scroll to the replied comment
+          });
+        }
+      } catch (notifError) {
+        // Log error but don't fail the reply operation
+        console.error("[PostService] Error creating reply notification:", notifError);
+      }
 
       return {
         success: true,
@@ -789,6 +1048,77 @@ class PostService {
         // Cập nhật trending score sau khi like
         await FeedAlgorithm.updatePostTrendingScore(postId.toString());
 
+        // Tạo notification cho post owner (không gửi nếu like chính mình)
+        try {
+          // Lấy sender entityAccountId
+          const senderEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          const receiverEntityAccountId = post.entityAccountId;
+          
+          // Chỉ tạo notification nếu sender !== receiver
+          if (senderEntityAccountId && receiverEntityAccountId && 
+              String(senderEntityAccountId).trim().toLowerCase() !== String(receiverEntityAccountId).trim().toLowerCase()) {
+            const isStory = post.type === "story";
+            
+            // Lấy sender và receiver accountIds cho backward compatibility
+            const senderAccountId = userId;
+            const receiverAccountId = post.accountId;
+            
+            // Lấy entity info từ SQL Server
+            let senderEntityId = null;
+            let senderEntityType = null;
+            let receiverEntityId = post.entityId;
+            let receiverEntityType = post.entityType;
+            
+            // Get sender entity info from SQL Server
+            if (senderEntityAccountId) {
+              try {
+                const pool = await getPool();
+                const result = await pool.request()
+                  .input("EntityAccountId", sql.UniqueIdentifier, senderEntityAccountId)
+                  .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+                if (result.recordset.length > 0) {
+                  senderEntityType = result.recordset[0].EntityType;
+                  senderEntityId = String(result.recordset[0].EntityId);
+                }
+              } catch (err) {
+                console.warn("[PostService] Could not get sender entity info:", err);
+              }
+            }
+            
+            // Get receiver entity info from SQL Server if not available in post
+            if (receiverEntityAccountId && (!receiverEntityId || !receiverEntityType)) {
+              try {
+                const pool = await getPool();
+                const result = await pool.request()
+                  .input("EntityAccountId", sql.UniqueIdentifier, receiverEntityAccountId)
+                  .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+                if (result.recordset.length > 0) {
+                  receiverEntityType = result.recordset[0].EntityType;
+                  receiverEntityId = String(result.recordset[0].EntityId);
+                }
+              } catch (err) {
+                console.warn("[PostService] Could not get receiver entity info:", err);
+              }
+            }
+            
+            await notificationService.createLikeNotification({
+              sender: senderAccountId,
+              senderEntityAccountId: String(senderEntityAccountId),
+              senderEntityId: senderEntityId,
+              senderEntityType: senderEntityType,
+              receiver: receiverAccountId,
+              receiverEntityAccountId: String(receiverEntityAccountId),
+              receiverEntityId: receiverEntityId,
+              receiverEntityType: receiverEntityType,
+              postId: postId.toString(),
+              isStory: isStory
+            });
+          }
+        } catch (notifError) {
+          // Log error but don't fail the like operation
+          console.error("[PostService] Error creating like notification:", notifError);
+        }
+
         return {
           success: true,
           data: post,
@@ -981,10 +1311,18 @@ class PostService {
       const searchQuery = {
         status: "active", // Chỉ tìm posts chưa trash, chưa xóa
         $or: [
-          { "title": { $regex: query, $options: 'i' } },
-          { "content": { $regex: query, $options: 'i' } },
-          { "Tiêu Đề": { $regex: query, $options: 'i' } },
-          { "caption": { $regex: query, $options: 'i' } }
+          { type: "post" },
+          { type: { $exists: false } } // Backward compatibility
+        ],
+        $and: [
+          {
+            $or: [
+              { "title": { $regex: query, $options: 'i' } },
+              { "content": { $regex: query, $options: 'i' } },
+              { "Tiêu Đề": { $regex: query, $options: 'i' } },
+              { "caption": { $regex: query, $options: 'i' } }
+            ]
+          }
         ]
       };
       const posts = await Post.find(searchQuery)
@@ -1020,8 +1358,16 @@ class PostService {
       const searchQuery = {
         status: "active", // Chỉ tìm posts chưa trash, chưa xóa
         $or: [
-          { title: { $regex: title, $options: 'i' } },
-          { "Tiêu Đề": { $regex: title, $options: 'i' } }
+          { type: "post" },
+          { type: { $exists: false } } // Backward compatibility
+        ],
+        $and: [
+          {
+            $or: [
+              { title: { $regex: title, $options: 'i' } },
+              { "Tiêu Đề": { $regex: title, $options: 'i' } }
+            ]
+          }
         ]
       };
       const posts = await Post.find(searchQuery)
@@ -1057,8 +1403,16 @@ class PostService {
       const searchQuery = {
         status: "active", // Chỉ tìm posts chưa trash, chưa xóa
         $or: [
-          { accountId: accountId },
-          { authorId: accountId }
+          { type: "post" },
+          { type: { $exists: false } } // Backward compatibility
+        ],
+        $and: [
+          {
+            $or: [
+              { accountId: accountId },
+              { authorId: accountId }
+            ]
+          }
         ]
       };
       const posts = await Post.find(searchQuery)
@@ -1642,6 +1996,7 @@ class PostService {
         if (entityAccountId) {
           // Normalize để so sánh: trim và lowercase
           const entityAccountIdStr = String(entityAccountId).trim().toLowerCase();
+          const originalEntityAccountId = String(entityAccountId).trim(); // Giữ original để set vào post
           const entityInfo = entityMap.get(entityAccountIdStr);
           
           if (entityInfo) {
@@ -1652,6 +2007,8 @@ class PostService {
             post.authorEntityAvatar = entityInfo.avatar;
             post.authorEntityType = entityInfo.entityType;
             post.authorEntityId = entityInfo.entityId;
+            // Thêm authorEntityAccountId để frontend có thể so sánh (dùng original, không lowercase)
+            post.authorEntityAccountId = entityInfo.originalEntityAccountId || originalEntityAccountId;
           } else {
             // Nếu không tìm thấy trong map, log để debug
             console.warn(`[PostService] Could not find author info for entityAccountId: ${entityAccountIdStr}`);

@@ -10,7 +10,7 @@ class PostController {
   // Tạo post mới
   async createPost(req, res) {
     try {
-      const { title, content, images, expiredAt, type, videos, audios, caption, authorEntityId, authorEntityType, authorEntityName, authorEntityAvatar, entityAccountId } = req.body;
+      const { title, content, images, expiredAt, type, videos, audios, caption, authorEntityId, authorEntityType, authorEntityName, authorEntityAvatar, entityAccountId, repostedFromId, mediaIds } = req.body;
       const authorId = req.user?.id || 1; // AccountId từ middleware auth
       
       // Lấy entityAccountId, entityId, entityType từ request body hoặc từ activeEntity
@@ -107,14 +107,26 @@ class PostController {
 
       let result;
 
-      // Check if posting music (audios)
+      // Check if posting music (audios) - CHỈ DÀNH CHO POST, KHÔNG PHẢI STORY
+      // Story chỉ dùng songId (chọn từ danh sách), không dùng musicId (upload file)
       if (audios && Object.keys(audios).length > 0) {
+        // Nếu là story, không cho phép upload nhạc
+        if (type === "story") {
+          return res.status(400).json({
+            success: false,
+            message: "Story cannot have uploaded music. Please select a song from the library instead."
+          });
+        }
 
         // Get music-specific fields from request body
         const musicTitle = req.body.musicTitle || title || "Untitled";
         const artistName = req.body.artistName || Object.values(audios)[0]?.artist || "Unknown Artist";
         const description = req.body.description || caption || content || "";
-        const hashTag = req.body.hashTag || "";
+        // Nếu là post, yêu cầu hashTag (nếu không có thì dùng mặc định)
+        let hashTag = req.body.hashTag;
+        if (!hashTag || hashTag.trim() === "") {
+          hashTag = "#music";
+        }
         const musicPurchaseLink = req.body.musicPurchaseLink || "";
         const musicBackgroundImage = req.body.musicBackgroundImage || Object.values(audios)[0]?.thumbnail || "";
         const audioUrl = Object.values(audios)[0]?.url || "";
@@ -130,7 +142,7 @@ class PostController {
           normalizedEntityType = "Account"; // customer, account, or any other -> Account
         }
 
-        // Create music entry in musics collection (English fields)
+        // Create music entry in musics collection (English fields) - CHỈ CHO POST
         const musicData = {
           details: description,
           hashTag: hashTag,
@@ -158,9 +170,10 @@ class PostController {
           entityAccountId: postEntityAccountId, // Primary field
           entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
           entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
-          musicId: music._id,
-          songId: null,// Link to music
-          mediaIds: [],
+          musicId: music._id, // CHỈ POST MỚI CÓ musicId
+          songId: null,
+          mediaIds: mediaIds || [],
+          repostedFromId: repostedFromId || null, // Reference đến post gốc nếu là repost
           expiredAt: expiredAt ? new Date(expiredAt) : null,
           type: type || "post"
         };
@@ -233,21 +246,37 @@ class PostController {
           const mediaItem = allMedias[key];
           return {
             url: mediaItem.url || mediaItem,
-            caption: mediaItem.caption || caption || ""
+            caption: mediaItem.caption || "" // Chỉ dùng caption của media, không fallback sang post.content
           };
         });
 
         // Create post entry in posts collection
+        // Story có thể không có content (caption), nên dùng empty string nếu không có
+        // Post thì bắt buộc phải có content
+        let postContent = (caption || content || "").trim();
+        if (type !== "story" && !postContent) {
+          // Post phải có content, nếu không có thì báo lỗi
+          return res.status(400).json({
+            success: false,
+            message: "Post content is required"
+          });
+        }
+        // Story có thể không có content, dùng empty string nếu không có
+        if (!postContent) {
+          postContent = "";
+        }
         const postData = {
           title,
-          content: caption || content,
+          content: postContent,
           accountId: authorId, // Keep for backward compatibility
           entityAccountId: postEntityAccountId, // Primary field
           entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
           entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
-          musicId: req.body.musicId || null, // ✅ Thêm dòng này
+          // Story chỉ dùng songId, Post có thể dùng cả musicId và songId
+          musicId: (type === "story") ? null : (req.body.musicId || null),
           songId: req.body.songId || null,
-          mediaIds: [],
+          mediaIds: mediaIds || [],
+          repostedFromId: repostedFromId || null, // Reference đến post gốc nếu là repost
           expiredAt: expiredAt ? new Date(expiredAt) : null,
           type: type || "post"
         };
@@ -312,20 +341,35 @@ class PostController {
 
       } else {
         // Create basic text post (no images/videos/audios)
+        // Story có thể không có content (caption), nên dùng empty string nếu không có
+        // Post thì bắt buộc phải có content
+        let postContent = (caption || content || "").trim();
+        if (type !== "story" && !postContent) {
+          // Post phải có content, nếu không có thì báo lỗi
+          return res.status(400).json({
+            success: false,
+            message: "Post content is required"
+          });
+        }
+        // Story có thể không có content, dùng empty string nếu không có
+        if (!postContent) {
+          postContent = "";
+        }
 
         const postData = {
           title,
-          content,
+          content: postContent,
           accountId: authorId, // Keep for backward compatibility
           entityAccountId: postEntityAccountId, // Primary field
           entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
           entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
+          // Story chỉ dùng songId, Post có thể dùng cả musicId và songId
+          musicId: (type === "story") ? null : (req.body.musicId || null),
+          songId: req.body.songId || null,
           mediaIds: [],
           images: typeof images === "string" ? images : "",
           expiredAt: expiredAt ? new Date(expiredAt) : null,
-          type: type || "post",
-          musicId: req.body.musicId || null, 
-          songId: req.body.songId || null,
+          type: type || "post"
         };
 
         if (req.body.songId) {
@@ -414,18 +458,25 @@ class PostController {
     try {
       const { id } = req.params;
       const { includeMedias, includeMusic } = req.query;
+      
+      console.log('[PostController] getPostById - postId:', id, 'includeMedias:', includeMedias, 'includeMusic:', includeMusic);
+      
       const result = await postService.getPostById(
         id,
         String(includeMedias) === 'true',
         String(includeMusic) === 'true'
       );
 
+      console.log('[PostController] getPostById - result.success:', result.success);
+      
       if (result.success) {
         res.status(200).json(result);
       } else {
+        console.log('[PostController] getPostById - Post not found:', result.message);
         res.status(404).json(result);
       }
     } catch (error) {
+      console.error('[PostController] getPostById - Error:', error);
       res.status(500).json({
         success: false,
         message: "Internal server error",
@@ -1222,11 +1273,20 @@ class PostController {
       const entityAccountId = req.query.entityAccountId || authorId;
       
       // Build query - chỉ tìm theo entityAccountId hoặc entityId và status = "active"
+      // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
       const query = {
         status: "active", // Chỉ lấy posts chưa trash, chưa xóa
         $or: [
           { entityAccountId: entityAccountId },
           { entityId: authorId } // Có thể authorId là entityId
+        ],
+        $and: [
+          {
+            $or: [
+              { type: "post" },
+              { type: { $exists: false } } // Backward compatibility: posts cũ có thể không có field type
+            ]
+          }
         ]
       };
 

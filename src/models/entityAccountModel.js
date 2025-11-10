@@ -149,4 +149,52 @@ async function getEntitiesByAccountId(accountId) {
     ...businessAccountsResult.recordset.map(r => ({ type: "BusinessAccount", ...r }))
   ];
 }
-module.exports = {getEntitiesByAccountId , createEntityAccount, getEntityAccountIdByAccountId };
+/**
+ * Verify và lấy thông tin chi tiết của EntityAccountId
+ * @param {string} entityAccountId - EntityAccountId cần verify
+ * @returns {Promise<Object|null>} { EntityAccountId, EntityType, EntityId, AccountId } hoặc null nếu không tồn tại
+ */
+async function verifyEntityAccountId(entityAccountId) {
+  try {
+    if (!entityAccountId) {
+      return null;
+    }
+    
+    const pool = await getPool();
+    const result = await pool.request()
+      .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+      .query(`
+        SELECT 
+          EntityAccountId,
+          EntityType,
+          EntityId,
+          AccountId,
+          created_at
+        FROM EntityAccounts 
+        WHERE EntityAccountId = @EntityAccountId
+      `);
+    
+    if (result.recordset.length > 0) {
+      const record = result.recordset[0];
+      return {
+        EntityAccountId: String(record.EntityAccountId),
+        EntityType: record.EntityType,
+        EntityId: String(record.EntityId),
+        AccountId: String(record.AccountId),
+        created_at: record.created_at
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('❌ Error in verifyEntityAccountId:', error.message);
+    return null;
+  }
+}
+
+module.exports = {
+  getEntitiesByAccountId,
+  createEntityAccount,
+  getEntityAccountIdByAccountId,
+  verifyEntityAccountId
+};

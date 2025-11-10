@@ -35,6 +35,57 @@ async function getBarPageByAccountId(accountId) {
 }
 
 /**
+ * Lấy danh sách BarPage nổi bật kèm rating trung bình và số lượng đánh giá
+ * @param {number} limit - số lượng bar cần lấy
+ * @returns {Promise<Array>}
+ */
+async function getFeaturedBarPages(limit = 6) {
+  const pool = await getPool();
+  const result = await pool
+    .request()
+    .input("limit", sql.Int, limit)
+    .query(`
+      SELECT TOP (@limit)
+        bp.BarPageId,
+        bp.AccountId,
+        bp.BarName,
+        bp.Avatar,
+        bp.Background,
+        bp.Address,
+        bp.PhoneNumber,
+        bp.Email,
+        bp.Role,
+        bp.created_at,
+        ea.EntityAccountId,
+        COUNT(br.BarReviewId) AS ReviewCount,
+        AVG(CAST(br.Star AS FLOAT)) AS AverageRating
+      FROM BarPages bp
+      LEFT JOIN EntityAccounts ea 
+        ON ea.EntityType = 'BarPage' AND ea.EntityId = bp.BarPageId
+      LEFT JOIN BarReviews br 
+        ON br.BarId = bp.BarPageId
+      GROUP BY 
+        bp.BarPageId,
+        bp.AccountId,
+        bp.BarName,
+        bp.Avatar,
+        bp.Background,
+        bp.Address,
+        bp.PhoneNumber,
+        bp.Email,
+        bp.Role,
+        bp.created_at,
+        ea.EntityAccountId
+      ORDER BY 
+        COALESCE(AVG(CAST(br.Star AS FLOAT)), 0) DESC,
+        COUNT(br.BarReviewId) DESC,
+        bp.created_at DESC
+    `);
+
+  return result.recordset || [];
+}
+
+/**
  * Tạo mới BarPage
  */
 async function createBarPage({
@@ -117,4 +168,5 @@ module.exports = {
   createBarPage,
   updateBarPage,
   deleteBarPage,
+  getFeaturedBarPages,
 };

@@ -8,7 +8,8 @@ const songSchema = new mongoose.Schema({
   },
   description:{
     type: String,
-    required: true,
+    required: false,
+    default: "",
     trim: true,
   },
   artistName: {
@@ -18,7 +19,8 @@ const songSchema = new mongoose.Schema({
   },
   album: {
     type: String,
-    required: true,
+    required: false,
+    default: "",
     trim: true,
   },
   song: {
@@ -50,6 +52,14 @@ const songSchema = new mongoose.Schema({
     enum: ["Account", "BarPage", "BusinessAccount"],
     default: null,
     index: true,
+  },
+  audioStartOffset: {
+    type: Number, // Thời điểm bắt đầu cắt nhạc (giây)
+    default: 0,
+  },
+  audioDuration: {
+    type: Number, // Độ dài đoạn nhạc đã cắt (giây) - tối đa 30s
+    default: null,
   },
 }, {
   timestamps: true,
