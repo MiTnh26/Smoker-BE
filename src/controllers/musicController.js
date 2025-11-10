@@ -1,5 +1,7 @@
 const Music = require("../models/musicModel");
 const mongoose = require("mongoose");
+const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
+const { getPool, sql } = require("../db/sqlserver");
 
 // Helpers
 const toObjectIdIfValid = (id) =>
@@ -21,7 +23,10 @@ exports.createMusic = async (req, res) => {
       coverUrl,
       uploaderId,       // optional: provided by frontend/session
       uploaderName,
-      uploaderAvatar
+      uploaderAvatar,
+      entityAccountId,
+      entityId,
+      entityType
     } = req.body;
 
     // Basic validation
@@ -33,6 +38,55 @@ exports.createMusic = async (req, res) => {
     }
 
     const finalUploaderId = uploaderId || req.user?.id || null;
+    
+    // Lấy entityAccountId, entityId, entityType từ request body hoặc từ activeEntity
+    let musicEntityAccountId = entityAccountId;
+    let musicEntityId = entityId;
+    let musicEntityType = entityType;
+    
+    // Nếu chưa có entityAccountId, cố gắng lấy từ uploaderId
+    if (!musicEntityAccountId && finalUploaderId) {
+      try {
+        musicEntityAccountId = await getEntityAccountIdByAccountId(finalUploaderId);
+        if (musicEntityAccountId && !musicEntityId) {
+          musicEntityId = String(finalUploaderId);
+          musicEntityType = "Account";
+        }
+      } catch (err) {
+        console.warn("[MUSIC] Could not get EntityAccountId:", err);
+      }
+    }
+    
+    // Nếu có entityId và entityType, tìm EntityAccountId tương ứng
+    if (!musicEntityAccountId && musicEntityId && musicEntityType) {
+      try {
+        const pool = await getPool();
+        const normalizedEntityType = musicEntityType === "Business" ? "BusinessAccount" : 
+                         musicEntityType === "Bar" || musicEntityType === "BarPage" ? "BarPage" : "Account";
+        musicEntityType = normalizedEntityType;
+        
+        const result = await pool.request()
+          .input("AccountId", sql.UniqueIdentifier, finalUploaderId)
+          .input("EntityType", sql.NVarChar, normalizedEntityType)
+          .input("EntityId", sql.UniqueIdentifier, musicEntityId)
+          .query(`SELECT TOP 1 EntityAccountId FROM EntityAccounts 
+                  WHERE AccountId = @AccountId AND EntityType = @EntityType AND EntityId = @EntityId`);
+        
+        if (result.recordset.length > 0) {
+          musicEntityAccountId = String(result.recordset[0].EntityAccountId);
+        }
+      } catch (err) {
+        console.warn("[MUSIC] Could not get EntityAccountId from entityId:", err);
+      }
+    }
+    
+    // Nếu vẫn không có entityAccountId, báo lỗi
+    if (!musicEntityAccountId) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required field: entityAccountId"
+      });
+    }
 
     const musicData = {
       title,
@@ -43,6 +97,9 @@ exports.createMusic = async (req, res) => {
       audioUrl,
       coverUrl,
       uploaderId: finalUploaderId ? toObjectIdIfValid(finalUploaderId) : undefined,
+      entityAccountId: musicEntityAccountId, // Primary field
+      entityId: musicEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
+      entityType: musicEntityType, // Entity Type (Account, BarPage, BusinessAccount)
       uploaderName: uploaderName || req.user?.name || "",
       uploaderAvatar: uploaderAvatar || req.user?.avatar || ""
     };

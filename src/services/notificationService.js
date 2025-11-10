@@ -1,10 +1,73 @@
 const Notification = require("../models/notificationModel");
+const { getPool, sql } = require("../db/sqlserver");
 
 /**
  * Notification Service
  * Helper functions to create notifications for various actions
  */
 class NotificationService {
+  /**
+   * Get user name from entityAccountId
+   * @param {String} entityAccountId - EntityAccountId to get name for
+   * @returns {Promise<String>} User name or "Someone" as fallback
+   */
+  async getUserNameFromEntityAccountId(entityAccountId) {
+    try {
+      if (!entityAccountId) return "Someone";
+      
+      const pool = await getPool();
+      let ea;
+      try {
+        ea = await pool.request()
+          .input("id", sql.UniqueIdentifier, entityAccountId)
+          .query("SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @id");
+      } catch (queryError) {
+        try {
+          ea = await pool.request()
+            .input("id", sql.NVarChar(50), entityAccountId)
+            .query("SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE LOWER(CAST(EntityAccountId AS NVARCHAR(50))) = LOWER(@id)");
+        } catch (stringError) {
+          console.warn("[NotificationService] Error querying EntityAccountId:", stringError.message);
+          return "Someone";
+        }
+      }
+      
+      if (ea.recordset.length === 0) {
+        return "Someone";
+      }
+      
+      const { EntityType, EntityId } = ea.recordset[0];
+      
+      if (EntityType === 'BarPage') {
+        const r = await pool.request()
+          .input("eid", sql.UniqueIdentifier, EntityId)
+          .query("SELECT TOP 1 BarName AS name FROM BarPages WHERE BarPageId = @eid");
+        if (r.recordset.length > 0 && r.recordset[0].name) {
+          return r.recordset[0].name;
+        }
+      } else if (EntityType === 'BusinessAccount') {
+        const r = await pool.request()
+          .input("eid", sql.UniqueIdentifier, EntityId)
+          .query("SELECT TOP 1 UserName AS name FROM BussinessAccounts WHERE BussinessAccountId = @eid");
+        if (r.recordset.length > 0 && r.recordset[0].name) {
+          return r.recordset[0].name;
+        }
+      } else {
+        // Default Account
+        const r = await pool.request()
+          .input("eid", sql.UniqueIdentifier, EntityId)
+          .query("SELECT TOP 1 UserName AS name FROM Accounts WHERE AccountId = @eid");
+        if (r.recordset.length > 0 && r.recordset[0].name) {
+          return r.recordset[0].name;
+        }
+      }
+      
+      return "Someone";
+    } catch (error) {
+      console.error("[NotificationService] Error getting userName from entityAccountId:", error);
+      return "Someone";
+    }
+  }
   /**
    * Create a notification
    * @param {Object} data - Notification data
@@ -66,59 +129,211 @@ class NotificationService {
 
   /**
    * Create a like notification
-   * @param {String|ObjectId} senderId - ID of user who liked
-   * @param {String|ObjectId} receiverId - ID of user receiving notification
-   * @param {String} postId - ID of the liked post
-   * @param {String} senderName - Name of the user who liked
+   * @param {Object} options - Notification options
+   * @param {String|ObjectId} options.sender - AccountId of user who liked (backward compatibility)
+   * @param {String} options.senderEntityAccountId - EntityAccountId of sender (required)
+   * @param {String} options.senderEntityId - EntityId of sender (optional)
+   * @param {String} options.senderEntityType - EntityType of sender (optional)
+   * @param {String|ObjectId} options.receiver - AccountId of receiver (backward compatibility)
+   * @param {String} options.receiverEntityAccountId - EntityAccountId of receiver (required)
+   * @param {String} options.receiverEntityId - EntityId of receiver (optional)
+   * @param {String} options.receiverEntityType - EntityType of receiver (optional)
+   * @param {String} options.postId - ID of the liked post/story
+   * @param {String} options.isStory - Whether it's a story (default: false)
+   * @param {String} options.senderName - Name of the user who liked (optional, will be fetched if not provided)
    * @returns {Promise<Object>} Created notification
    */
-  async createLikeNotification(senderId, receiverId, postId, senderName = "Someone") {
+  async createLikeNotification({
+    sender,
+    senderEntityAccountId,
+    senderEntityId,
+    senderEntityType,
+    receiver,
+    receiverEntityAccountId,
+    receiverEntityId,
+    receiverEntityType,
+    postId,
+    isStory = false,
+    senderName = null
+  }) {
+    // Get sender name if not provided
+    let finalSenderName = senderName;
+    if (!finalSenderName && senderEntityAccountId) {
+      finalSenderName = await this.getUserNameFromEntityAccountId(senderEntityAccountId);
+    }
+    
+    const content = isStory 
+      ? `${finalSenderName} đã thích story của bạn`
+      : `${finalSenderName} đã thích bài viết của bạn`;
+    const link = isStory ? `/stories/${postId}` : `/posts/${postId}`;
+    
     return this.createNotification({
       type: "Like",
-      sender: senderId,
-      receiver: receiverId,
-      content: `${senderName} liked your post`,
-      link: `/posts/${postId}`,
+      sender,
+      senderEntityAccountId,
+      senderEntityId,
+      senderEntityType,
+      receiver,
+      receiverEntityAccountId,
+      receiverEntityId,
+      receiverEntityType,
+      content,
+      link,
     });
   }
 
   /**
    * Create a comment notification
-   * @param {String|ObjectId} senderId - ID of user who commented
-   * @param {String|ObjectId} receiverId - ID of user receiving notification
-   * @param {String} postId - ID of the commented post
-   * @param {String} senderName - Name of the user who commented
-   * @param {String} commentPreview - Preview of the comment (optional)
+   * @param {Object} options - Notification options
+   * @param {String|ObjectId} options.sender - AccountId of user who commented (backward compatibility)
+   * @param {String} options.senderEntityAccountId - EntityAccountId of sender (required)
+   * @param {String} options.senderEntityId - EntityId of sender (optional)
+   * @param {String} options.senderEntityType - EntityType of sender (optional)
+   * @param {String|ObjectId} options.receiver - AccountId of receiver (backward compatibility)
+   * @param {String} options.receiverEntityAccountId - EntityAccountId of receiver (required)
+   * @param {String} options.receiverEntityId - EntityId of receiver (optional)
+   * @param {String} options.receiverEntityType - EntityType of receiver (optional)
+   * @param {String} options.postId - ID of the commented post
+   * @param {String} options.senderName - Name of the user who commented (optional, will be fetched if not provided)
    * @returns {Promise<Object>} Created notification
    */
-  async createCommentNotification(senderId, receiverId, postId, senderName = "Someone", commentPreview = "") {
-    const content = commentPreview
-      ? `${senderName} commented: ${commentPreview.substring(0, 50)}${commentPreview.length > 50 ? "..." : ""}`
-      : `${senderName} commented on your post`;
+  async createCommentNotification({
+    sender,
+    senderEntityAccountId,
+    senderEntityId,
+    senderEntityType,
+    receiver,
+    receiverEntityAccountId,
+    receiverEntityId,
+    receiverEntityType,
+    postId,
+    senderName = null
+  }) {
+    // Get sender name if not provided
+    let finalSenderName = senderName;
+    if (!finalSenderName && senderEntityAccountId) {
+      finalSenderName = await this.getUserNameFromEntityAccountId(senderEntityAccountId);
+    }
+    
+    const content = `${finalSenderName} đã bình luận bài viết của bạn`;
     
     return this.createNotification({
       type: "Comment",
-      sender: senderId,
-      receiver: receiverId,
+      sender,
+      senderEntityAccountId,
+      senderEntityId,
+      senderEntityType,
+      receiver,
+      receiverEntityAccountId,
+      receiverEntityId,
+      receiverEntityType,
       content,
       link: `/posts/${postId}`,
     });
   }
 
   /**
-   * Create a follow notification
-   * @param {String|ObjectId} senderId - ID of user who followed
-   * @param {String|ObjectId} receiverId - ID of user receiving notification
-   * @param {String} senderName - Name of the user who followed
+   * Create a reply notification (for comment/reply replies)
+   * @param {Object} options - Notification options
+   * @param {String|ObjectId} options.sender - AccountId of user who replied (backward compatibility)
+   * @param {String} options.senderEntityAccountId - EntityAccountId of sender (required)
+   * @param {String} options.senderEntityId - EntityId of sender (optional)
+   * @param {String} options.senderEntityType - EntityType of sender (optional)
+   * @param {String|ObjectId} options.receiver - AccountId of receiver (backward compatibility)
+   * @param {String} options.receiverEntityAccountId - EntityAccountId of receiver (required)
+   * @param {String} options.receiverEntityId - EntityId of receiver (optional)
+   * @param {String} options.receiverEntityType - EntityType of receiver (optional)
+   * @param {String} options.postId - ID of the post
+   * @param {String} options.senderName - Name of the user who replied (optional, will be fetched if not provided)
    * @returns {Promise<Object>} Created notification
    */
-  async createFollowNotification(senderId, receiverId, senderName = "Someone") {
+  async createReplyNotification({
+    sender,
+    senderEntityAccountId,
+    senderEntityId,
+    senderEntityType,
+    receiver,
+    receiverEntityAccountId,
+    receiverEntityId,
+    receiverEntityType,
+    postId,
+    commentId = null, // commentId to scroll to (the comment/reply that was replied to)
+    senderName = null
+  }) {
+    // Get sender name if not provided
+    let finalSenderName = senderName;
+    if (!finalSenderName && senderEntityAccountId) {
+      finalSenderName = await this.getUserNameFromEntityAccountId(senderEntityAccountId);
+    }
+    
+    const content = `${finalSenderName} đã trả lời bình luận của bạn`;
+    
+    // Build link with commentId if provided
+    let link = `/posts/${postId}`;
+    if (commentId) {
+      link = `/posts/${postId}?commentId=${commentId}`;
+    }
+    
+    return this.createNotification({
+      type: "Comment", // Use Comment type for replies
+      sender,
+      senderEntityAccountId,
+      senderEntityId,
+      senderEntityType,
+      receiver,
+      receiverEntityAccountId,
+      receiverEntityId,
+      receiverEntityType,
+      content,
+      link,
+    });
+  }
+
+  /**
+   * Create a follow notification
+   * @param {Object} options - Notification options
+   * @param {String|ObjectId} options.sender - AccountId of user who followed (backward compatibility)
+   * @param {String} options.senderEntityAccountId - EntityAccountId of sender (required)
+   * @param {String} options.senderEntityId - EntityId of sender (optional)
+   * @param {String} options.senderEntityType - EntityType of sender (optional)
+   * @param {String|ObjectId} options.receiver - AccountId of receiver (backward compatibility)
+   * @param {String} options.receiverEntityAccountId - EntityAccountId of receiver (required)
+   * @param {String} options.receiverEntityId - EntityId of receiver (optional)
+   * @param {String} options.receiverEntityType - EntityType of receiver (optional)
+   * @param {String} options.senderName - Name of the user who followed (optional, will be fetched if not provided)
+   * @returns {Promise<Object>} Created notification
+   */
+  async createFollowNotification({
+    sender,
+    senderEntityAccountId,
+    senderEntityId,
+    senderEntityType,
+    receiver,
+    receiverEntityAccountId,
+    receiverEntityId,
+    receiverEntityType,
+    senderName = null
+  }) {
+    // Get sender name if not provided
+    let finalSenderName = senderName;
+    if (!finalSenderName && senderEntityAccountId) {
+      finalSenderName = await this.getUserNameFromEntityAccountId(senderEntityAccountId);
+    }
+    
+    const content = `${finalSenderName} đã bắt đầu theo dõi bạn`;
+    
     return this.createNotification({
       type: "Follow",
-      sender: senderId,
-      receiver: receiverId,
-      content: `${senderName} started following you`,
-      link: `/profile/${senderId}`,
+      sender,
+      senderEntityAccountId,
+      senderEntityId,
+      senderEntityType,
+      receiver,
+      receiverEntityAccountId,
+      receiverEntityId,
+      receiverEntityType,
+      content,
+      link: `/profile/${senderEntityAccountId}`,
     });
   }
 

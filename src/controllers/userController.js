@@ -254,10 +254,28 @@ module.exports.getByEntityId = async (req, res) => {
     const { entityAccountId } = req.params;
     console.log('[getByEntityId] Requested EntityAccountId:', entityAccountId);
     
+    if (!entityAccountId) {
+      return res.status(400).json({ success: false, message: "EntityAccountId is required" });
+    }
+    
     const pool = await getPool();
-    const ea = await pool.request()
-      .input("id", sql.UniqueIdentifier, entityAccountId)
-      .query("SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @id");
+    let ea;
+    try {
+      ea = await pool.request()
+        .input("id", sql.UniqueIdentifier, entityAccountId)
+        .query("SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @id");
+    } catch (queryError) {
+      // Nếu lỗi format UniqueIdentifier, thử query với string
+      console.warn('[getByEntityId] Error querying with UniqueIdentifier, trying with string:', queryError.message);
+      try {
+        ea = await pool.request()
+          .input("id", sql.NVarChar(50), entityAccountId)
+          .query("SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE LOWER(CAST(EntityAccountId AS NVARCHAR(50))) = LOWER(@id)");
+      } catch (stringError) {
+        console.error('[getByEntityId] Error querying with string:', stringError.message);
+        return res.status(400).json({ success: false, message: "Invalid EntityAccountId format", error: stringError.message });
+      }
+    }
     
     console.log('[getByEntityId] Query result count:', ea.recordset.length);
     

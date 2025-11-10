@@ -1,6 +1,8 @@
 const { success, error } = require("../utils/response");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 const FollowModel = require("../models/followModel");
+const notificationService = require("./notificationService");
+const { getPool, sql } = require("../db/sqlserver");
 
 exports.followEntity = async ({ followerId, followingId, followingType }) => {
 	try {
@@ -14,6 +16,66 @@ exports.followEntity = async ({ followerId, followingId, followingType }) => {
 		console.log("Resolved followerEntityAccountId:", followerEntityAccountId);
 		console.log("Resolved followingEntityAccountId:", followingEntityAccountId);
 		await FollowModel.followEntity({ followerId: followerEntityAccountId, followingId: followingEntityAccountId, followingType });
+		
+		// Tạo notification cho người được follow (không gửi nếu follow chính mình - đã check ở trên)
+		try {
+			// Lấy sender và receiver accountIds cho backward compatibility
+			const senderAccountId = followerId;
+			const receiverAccountId = followingId;
+			
+			// Lấy entity info từ SQL Server
+			let senderEntityId = null;
+			let senderEntityType = null;
+			let receiverEntityId = null;
+			let receiverEntityType = null;
+			
+			// Get sender entity info
+			if (followerEntityAccountId) {
+				try {
+					const pool = await getPool();
+					const result = await pool.request()
+						.input("EntityAccountId", sql.UniqueIdentifier, followerEntityAccountId)
+						.query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+					if (result.recordset.length > 0) {
+						senderEntityType = result.recordset[0].EntityType;
+						senderEntityId = String(result.recordset[0].EntityId);
+					}
+				} catch (err) {
+					console.warn("[FollowService] Could not get sender entity info:", err);
+				}
+			}
+			
+			// Get receiver entity info
+			if (followingEntityAccountId) {
+				try {
+					const pool = await getPool();
+					const result = await pool.request()
+						.input("EntityAccountId", sql.UniqueIdentifier, followingEntityAccountId)
+						.query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+					if (result.recordset.length > 0) {
+						receiverEntityType = result.recordset[0].EntityType;
+						receiverEntityId = String(result.recordset[0].EntityId);
+					}
+				} catch (err) {
+					console.warn("[FollowService] Could not get receiver entity info:", err);
+				}
+			}
+			
+			await notificationService.createFollowNotification({
+				sender: senderAccountId,
+				senderEntityAccountId: String(followerEntityAccountId),
+				senderEntityId: senderEntityId,
+				senderEntityType: senderEntityType,
+				receiver: receiverAccountId,
+				receiverEntityAccountId: String(followingEntityAccountId),
+				receiverEntityId: receiverEntityId,
+				receiverEntityType: receiverEntityType
+			});
+		} catch (notifError) {
+			// Log error but don't fail the follow operation
+			console.error("[FollowService] Error creating follow notification:", notifError);
+		}
+		
 		return success("Followed successfully.");
 	} catch (err) {
 		if (err.message && err.message.includes("UQ_Follow")) {

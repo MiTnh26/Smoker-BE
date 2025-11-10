@@ -5,6 +5,7 @@ const {
     getBarPageById,
     getBarPageByAccountId,
     deleteBarPage,
+    getFeaturedBarPages,
   } = require("../models/barPageModel");
 const { createEntityAccount } = require("../models/entityAccountModel");
   
@@ -122,6 +123,63 @@ const { createEntityAccount } = require("../models/entityAccountModel");
       });
     } catch (err) {
       console.error("updateBarPageInfo error:", err);
+      return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
+    }
+  };
+
+  // Step 1b: HTTP handler - get featured bar pages for landing page
+  exports.getFeaturedBars = async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit, 10) : 6;
+      const bars = await getFeaturedBarPages(Number.isNaN(limit) ? 6 : limit);
+
+      const mapped = bars.map((bar) => {
+        let address = bar.Address || "";
+        let addressData = null;
+
+        if (address) {
+          try {
+            const parsed = JSON.parse(address);
+            if (parsed && typeof parsed === "object" && parsed.fullAddress !== undefined) {
+              addressData = {
+                provinceId: parsed.provinceId || null,
+                districtId: parsed.districtId || null,
+                wardId: parsed.wardId || null,
+                fullAddress: parsed.fullAddress || "",
+              };
+              address = parsed.fullAddress || parsed.detail || address;
+            }
+          } catch (e) {
+            address = bar.Address || "";
+          }
+        }
+
+        const averageRating = bar.AverageRating != null ? Number(bar.AverageRating.toFixed(1)) : null;
+
+        return {
+          barPageId: String(bar.BarPageId),
+          accountId: bar.AccountId ? String(bar.AccountId) : null,
+          barName: bar.BarName,
+          avatar: bar.Avatar,
+          background: bar.Background,
+          address,
+          addressData,
+          phoneNumber: bar.PhoneNumber,
+          email: bar.Email,
+          role: bar.Role,
+          reviewCount: bar.ReviewCount || 0,
+          averageRating,
+          entityAccountId: bar.EntityAccountId ? String(bar.EntityAccountId) : null,
+          createdAt: bar.created_at,
+        };
+      });
+
+      return res.status(200).json({
+        status: "success",
+        data: mapped,
+      });
+    } catch (err) {
+      console.error("getFeaturedBars error:", err);
       return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
     }
   };

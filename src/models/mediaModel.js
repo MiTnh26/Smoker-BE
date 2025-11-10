@@ -146,6 +146,10 @@ const mediaSchema = new mongoose.Schema(
       of: mediaLikeSchema,
       default: new Map(),
     },
+    shares: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,

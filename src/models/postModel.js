@@ -171,7 +171,8 @@ const postSchema = new mongoose.Schema(
     },
     content: {
       type: String,
-      required: true,
+      required: false, // Story được phép không có content (empty string)
+      default: "",
     },
     images: {
       type: String,
@@ -215,6 +216,12 @@ const postSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    repostedFromId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Post",
+      default: null,
+      index: true,
+    },
     status: {
       type: String,
       enum: ["active", "trashed", "deleted"], // active: hiển thị, trashed: đã trash (ẩn), deleted: đã xóa vĩnh viễn
@@ -228,6 +235,14 @@ const postSchema = new mongoose.Schema(
     },
     trashedBy: {
       type: String, // EntityAccountId của người trash
+      default: null,
+    },
+    audioDuration: {
+      type: Number, // Độ dài đoạn nhạc đã cắt (giây) - chỉ dùng cho story có audio
+      default: null,
+    },
+    audioStartOffset: {
+      type: Number, // Thời điểm bắt đầu cắt nhạc (giây) - chỉ dùng cho story có audio
       default: null,
     },
   },
