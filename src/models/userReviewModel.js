@@ -23,10 +23,11 @@ const UserReview = sequelize.define('UserReview', {
     type: DataTypes.INTEGER,
     allowNull: false,
   },
-     created_at: {
-        type: DataTypes.DATE,
-        allowNull: true,
-    },
+  created_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    defaultValue: DataTypes.NOW,
+  },
 }, {
   tableName: 'UserReviews',
   timestamps: false,

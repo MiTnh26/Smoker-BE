@@ -310,7 +310,22 @@ module.exports.getByEntityId = async (req, res) => {
         console.warn('[getByEntityId] ⚠️ BarPage BarName is NULL or empty for BarPageId:', EntityId);
       }
       
-      return res.json({ success: true, data: { entityId: entityAccountId, type: 'BAR', name: row.name, avatar: row.avatar, background: row.background, role: row.role || 'Bar', bio: '', contact: { email: row.Email || null, phone: row.phone || null } } });
+      return res.json({
+        success: true,
+        data: {
+          entityId: entityAccountId,
+          entityAccountId,
+          targetId: EntityId,
+          targetType: EntityType,
+          type: 'BAR',
+          name: row.name,
+          avatar: row.avatar,
+          background: row.background,
+          role: row.role || 'Bar',
+          bio: '',
+          contact: { email: row.Email || null, phone: row.phone || null },
+        },
+      });
     }
     if (EntityType === 'BusinessAccount') {
       // Query without Bio first to avoid column error
@@ -345,7 +360,22 @@ module.exports.getByEntityId = async (req, res) => {
       }
       // Bio column may not exist in database, use empty string as default
       const bio = '';
-      return res.json({ success: true, data: { entityId: entityAccountId, type: (row.role || '').toUpperCase() || 'USER', name: row.name, avatar: row.avatar, background: row.background, role: row.role, bio: bio, contact: { email: null, phone: row.Phone || null, address } } });
+      return res.json({
+        success: true,
+        data: {
+          entityId: entityAccountId,
+          entityAccountId,
+          targetId: EntityId,
+          targetType: EntityType,
+          type: (row.role || '').toUpperCase() || 'USER',
+          name: row.name,
+          avatar: row.avatar,
+          background: row.background,
+          role: row.role,
+          bio: bio,
+          contact: { email: null, phone: row.Phone || null, address },
+        },
+      });
     }
     // Default Account
     const r = await pool.request().input("eid", sql.UniqueIdentifier, EntityId).query(
@@ -377,7 +407,22 @@ module.exports.getByEntityId = async (req, res) => {
         address = parsed?.fullAddress || parsed?.detail || address;
       } catch {}
     }
-    return res.json({ success: true, data: { entityId: entityAccountId, type: 'USER', name: row.name, avatar: row.avatar, background: row.background, role: row.role, bio: row.Bio || '', contact: { email: row.Email || null, phone: row.Phone || null, address } } });
+    return res.json({
+      success: true,
+      data: {
+        entityId: entityAccountId,
+        entityAccountId,
+        targetId: EntityId,
+        targetType: EntityType,
+        type: 'USER',
+        name: row.name,
+        avatar: row.avatar,
+        background: row.background,
+        role: row.role,
+        bio: row.Bio || '',
+        contact: { email: row.Email || null, phone: row.Phone || null, address },
+      },
+    });
   } catch (e) {
     return res.status(500).json({ success: false, message: 'Server error', error: e.message });
   }
