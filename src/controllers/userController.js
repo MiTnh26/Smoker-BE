@@ -128,7 +128,7 @@ async function updateProfile(req, res) {
     }
 
     gender = gender?.toLowerCase() || null;
-    if (gender && !["male", "female"].includes(gender))
+    if (gender && !["male", "female", "other"].includes(gender))
       return res.status(400).json(error("Giới tính không hợp lệ"));
 
 
