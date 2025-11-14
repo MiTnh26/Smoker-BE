@@ -260,5 +260,7 @@ postSchema.index({ mediaIds: 1 });
 postSchema.index({ trendingScore: -1 }); // Index cho trending score để sort nhanh
 postSchema.index({ entityAccountId: 1 }); // Index cho entityAccountId
 postSchema.index({ entityType: 1, entityId: 1 }); // Composite index cho entityType và entityId
+// Composite index để tối ưu sort order: trendingScore DESC, createdAt DESC (ưu tiên trendingScore)
+postSchema.index({ trendingScore: -1, createdAt: -1 });
 
 module.exports = mongoose.model("Post", postSchema, "posts");

@@ -431,13 +431,49 @@ class PostController {
   // Lấy tất cả posts
   async getAllPosts(req, res) {
     try {
-      const { page = 1, limit = 10, includeMedias, includeMusic } = req.query;
+      const { page, limit = 10, includeMedias, includeMusic, cursor } = req.query;
+      
+      // Parse cursor if provided (cursor-based pagination takes priority)
+      // If cursor is provided, ignore page parameter
+      const parsedPage = cursor ? null : (page ? parseInt(page) : 1);
+      const parsedLimit = parseInt(limit);
+      
+      // Log query params for debugging
+      console.log('[PostController] getAllPosts called with:', {
+        page: parsedPage,
+        limit: parsedLimit,
+        includeMedias: String(includeMedias) === 'true',
+        includeMusic: String(includeMusic) === 'true',
+        cursor: cursor ? 'present' : 'null',
+        timestamp: new Date().toISOString()
+      });
+      
       const result = await postService.getAllPosts(
-        parseInt(page),
-        parseInt(limit),
+        parsedPage,
+        parsedLimit,
         String(includeMedias) === 'true',
-        String(includeMusic) === 'true'
+        String(includeMusic) === 'true',
+        cursor || null // Pass cursor string directly, service will parse it
       );
+      
+      // Log result summary for debugging
+      if (result && result.success && result.data) {
+        console.log('[PostController] getAllPosts result:', {
+          count: result.data.length,
+          firstPost: result.data[0] ? {
+            _id: result.data[0]._id,
+            createdAt: result.data[0].createdAt,
+            trendingScore: result.data[0].trendingScore
+          } : null,
+          lastPost: result.data[result.data.length - 1] ? {
+            _id: result.data[result.data.length - 1]._id,
+            createdAt: result.data[result.data.length - 1].createdAt,
+            trendingScore: result.data[result.data.length - 1].trendingScore
+          } : null,
+          hasMore: result.hasMore,
+          nextCursor: result.nextCursor ? 'present' : 'null'
+        });
+      }
 
       if (result.success) {
         res.status(200).json(result);

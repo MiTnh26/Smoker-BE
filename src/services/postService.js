@@ -65,22 +65,115 @@ class PostService {
     }
   }
 
-  // Lấy tất cả posts
-  async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false) {
+  // Helper function để parse composite cursor
+  parseCursor(cursorString) {
+    if (!cursorString) return null;
     try {
-      const skip = (page - 1) * limit;
+      // Try base64 decode first
+      const decoded = Buffer.from(cursorString, 'base64').toString('utf-8');
+      const parsed = JSON.parse(decoded);
+      if (parsed.createdAt && parsed.trendingScore !== undefined && parsed._id) {
+        return {
+          createdAt: new Date(parsed.createdAt),
+          trendingScore: Number(parsed.trendingScore),
+          _id: mongoose.Types.ObjectId.isValid(parsed._id) ? new mongoose.Types.ObjectId(parsed._id) : parsed._id
+        };
+      }
+    } catch (err) {
+      // If base64 decode fails, try direct JSON parse
+      try {
+        const parsed = JSON.parse(cursorString);
+        if (parsed.createdAt && parsed.trendingScore !== undefined && parsed._id) {
+          return {
+            createdAt: new Date(parsed.createdAt),
+            trendingScore: Number(parsed.trendingScore),
+            _id: mongoose.Types.ObjectId.isValid(parsed._id) ? new mongoose.Types.ObjectId(parsed._id) : parsed._id
+          };
+        }
+      } catch (err2) {
+        console.warn('[PostService] Failed to parse cursor:', err2.message);
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // Helper function để tạo composite cursor từ post
+  createCursor(post) {
+    if (!post || !post.createdAt || post.trendingScore === undefined || !post._id) {
+      return null;
+    }
+    return {
+      createdAt: post.createdAt instanceof Date ? post.createdAt.toISOString() : new Date(post.createdAt).toISOString(),
+      trendingScore: Number(post.trendingScore || 0),
+      _id: String(post._id)
+    };
+  }
+
+  // Lấy tất cả posts
+  async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null) {
+    try {
       // Filter posts đã trash: chỉ lấy posts có status = "active" (chưa trash, chưa xóa)
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
-      const query = Post.find({ 
+      const baseFilter = {
         status: "active",
         $or: [
           { type: "post" },
           { type: { $exists: false } } // Backward compatibility: posts cũ có thể không có field type
         ]
-      })
-        .sort({ trendingScore: -1, createdAt: -1 }) // Sort theo trending score, sau đó theo thời gian
-        .skip(skip)
-        .limit(limit);
+      };
+
+      // Parse cursor nếu có
+      const parsedCursor = typeof cursor === 'string' ? this.parseCursor(cursor) : cursor;
+      
+      // Build query filter
+      let queryFilter = { ...baseFilter };
+      
+      if (parsedCursor) {
+        // Cursor-based pagination: query posts before cursor
+        // Sort order: trendingScore DESC, createdAt DESC
+        // So sánh trendingScore trước, sau đó createdAt, cuối cùng _id
+        queryFilter = {
+          $and: [
+            baseFilter,
+            {
+              $or: [
+                { trendingScore: { $lt: parsedCursor.trendingScore } },
+                {
+                  $and: [
+                    { trendingScore: parsedCursor.trendingScore },
+                    { createdAt: { $lt: parsedCursor.createdAt } }
+                  ]
+                },
+                {
+                  $and: [
+                    { trendingScore: parsedCursor.trendingScore },
+                    { createdAt: parsedCursor.createdAt },
+                    { _id: { $lt: parsedCursor._id } }
+                  ]
+                }
+              ]
+            }
+          ]
+        };
+      }
+      // If no cursor, use baseFilter as-is (for backward compatibility with page-based)
+
+      const query = Post.find(queryFilter)
+        // Sort ưu tiên trendingScore: sort theo trendingScore trước, sau đó mới sort theo createdAt
+        // Điều này đảm bảo posts có trendingScore cao hơn luôn hiển thị trước, sau đó mới sắp xếp theo thời gian
+        // Posts trending sẽ được ưu tiên hiển thị, bất kể thời gian tạo
+        .sort({ trendingScore: -1, createdAt: -1 })
+        .lean(); // Use lean() to get plain JavaScript objects, bypass Mongoose cache
+
+      // Apply skip/limit for backward compatibility (only if no cursor)
+      if (!parsedCursor && page && page > 0) {
+        const skip = (page - 1) * limit;
+        query.skip(skip);
+      }
+      
+      // Always apply limit
+      query.limit(limit + 1); // Fetch one extra to check if there are more posts
 
       if (includeMedias) query.populate('mediaIds');
       if (includeMusic) {
@@ -90,9 +183,13 @@ class PostService {
 
       const posts = await query;
       
+      // Check if there are more posts (we fetched limit + 1)
+      const hasMore = posts.length > limit;
+      const postsToReturn = hasMore ? posts.slice(0, limit) : posts;
+      
       // Convert Mongoose documents to plain objects BEFORE enriching
       // This ensures that fields added by enrichPostsWithAuthorInfo are included in JSON response
-      const postsPlain = posts.map(p => {
+      const postsPlain = postsToReturn.map(p => {
         const plain = p.toObject ? p.toObject({ flattenMaps: true }) : p;
         // Ensure likes and comments Maps are properly converted to objects
         if (plain.likes instanceof Map) {
@@ -174,16 +271,31 @@ class PostService {
       // Enrich comments and replies with author information
       await this.enrichCommentsWithAuthorInfo(postsPlain);
 
-      const total = await Post.countDocuments();
+      // Create next cursor from last post
+      let nextCursor = null;
+      if (postsPlain.length > 0) {
+        const lastPost = postsPlain[postsPlain.length - 1];
+        nextCursor = this.createCursor(lastPost);
+      }
+
+      // For backward compatibility, calculate total and pages (only if not using cursor)
+      let total = null;
+      let pages = null;
+      if (!parsedCursor && page && page > 0) {
+        total = await Post.countDocuments(baseFilter);
+        pages = Math.ceil(total / limit);
+      }
 
       return {
         success: true,
         data: postsPlain, // Return plain objects instead of Mongoose documents
+        nextCursor: nextCursor ? Buffer.from(JSON.stringify(nextCursor)).toString('base64') : null,
+        hasMore: hasMore,
         pagination: {
-          page,
+          page: parsedCursor ? null : page,
           limit,
           total,
-          pages: Math.ceil(total / limit)
+          pages
         }
       };
     } catch (error) {
