@@ -1,4 +1,3 @@
-
 const authService = require("../services/authService");
 const { OAuth2Client } = require("google-auth-library");
 const jwt = require("jsonwebtoken");
@@ -45,7 +44,7 @@ async function login(req, res) {
     return res.status(401).json({ message: err.message || "Đăng nhập thất bại" });
   }
 }
-console.log("authService object:", authService); 
+console.log("authService object:", authService);
 
 async function googleOAuthLogin(req, res) {
   try {
@@ -78,7 +77,105 @@ async function googleOAuthLogin(req, res) {
   }
 }
 
+async function forgotPassword(req, res) {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: "Email là bắt buộc" });
+    }
+
+    const result = await authService.forgotPasswordService(email);
+    return res.json({ message: "Đã gửi email khôi phục mật khẩu" });
+  } catch (err) {
+    return res.status(400).json({ message: err.message || "Khôi phục mật khẩu thất bại" });
+  }
+}
+
+async function changePassword(req, res) {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+    const userId = req.user.id; // Lấy từ token auth middleware
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({ message: "Thiếu thông tin bắt buộc" });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Mật khẩu mới không khớp" });
+    }
+
+    await authService.changePasswordService(userId, currentPassword, newPassword);
+    return res.json({ message: "Đổi mật khẩu thành công" });
+  } catch (err) {
+    return res.status(400).json({ message: err.message || "Đổi mật khẩu thất bại" });
+  }
+}
+
+async function facebookOAuthLogin(req, res) {
+  try {
+    const { accessToken } = req.body;
+    if (!accessToken) {
+      return res.status(400).json({ message: "Thiếu Facebook access token" });
+    }
+
+    const result = await authService.facebookLoginService(accessToken);
+    return res.json({
+      message: "Đăng nhập Facebook thành công",
+      token: result.token,
+      needProfile: !result.profileComplete,
+      user: result.user,
+    });
+  } catch (err) {
+    console.error("Facebook OAuth error:", err);
+    res
+      .status(err.code || 401)
+      .json({ message: err.message || "Xác thực Facebook thất bại" });
+  }
+}
+
+async function facebookRegister(req, res) {
+  try {
+    const { email } = req.body;
+    const data = await authService.facebookRegisterService({ email });
+    return res.status(201).json(data);
+  } catch (err) {
+    const status = err.code === 409 ? 409 : 400;
+    const message = err.message || "Đăng ký thất bại";
+    return res.status(status).json({ message });
+  }
+}
+
+async function verifyOtp(req, res) {
+  try {
+    const { email, otp } = req.body;
+    await authService.verifyOtpService(email, otp);
+    return res.json({ message: "Xác thực OTP thành công" });
+  } catch (err) {
+    return res.status(400).json({ message: err.message || "Xác thực OTP thất bại" });
+  }
+}
 
 
+async function resetPassword(req, res) {
+  try {
+    const { email, newPassword, confirmPassword } = req.body;
+    await authService.resetPasswordService(email, newPassword, confirmPassword);
+    return res.json({ message: "Đổi mật khẩu thành công" });
+  } catch (err) {
+    return res.status(400).json({ message: err.message || "Đổi mật khẩu thất bại" });
+  }
+}
 
-module.exports = { register, googleRegister, login, googleOAuthLogin };
+
+module.exports = {
+  register,
+  googleRegister,
+  login,
+  googleOAuthLogin,
+  forgotPassword,
+  changePassword,
+  facebookOAuthLogin,
+  facebookRegister,
+  verifyOtp,
+  resetPassword
+};
