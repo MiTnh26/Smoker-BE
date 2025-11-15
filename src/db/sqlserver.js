@@ -11,8 +11,10 @@ async function initSQLConnection() {
         return pool;
       })
       .catch(err => {
-        console.error("❌ SQL Connection failed:", err);
-        throw err;
+        console.error("❌ SQL Connection failed:", err.message || err);
+        console.error("⚠️  Server will continue running, but SQL Server features may not work");
+        // Don't throw error, just return null so server can continue
+        return null;
       });
   }
   return poolPromise;
@@ -20,7 +22,11 @@ async function initSQLConnection() {
 
 async function getPool() {
   if (!poolPromise) await initSQLConnection();
-  return poolPromise;
+  const pool = await poolPromise;
+  if (!pool) {
+    throw new Error("SQL Server connection is not available. Please check your database configuration.");
+  }
+  return pool;
 }
 
 module.exports = { sql, initSQLConnection, getPool };
