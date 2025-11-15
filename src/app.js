@@ -3,7 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 const { initSQLConnection } = require("./db/sqlserver");
-const { authRoutes, userRoutes, businessRoutes, postRoutes } = require("./routes");
+const { authRoutes, userRoutes, businessRoutes, postRoutes, bookingRoutes } = require("./routes");
 
 const app = express();
 
@@ -35,6 +35,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/business", businessRoutes);
 app.use("/api/posts", postRoutes);
+app.use("/api/bookings", bookingRoutes);
 
 app.get("/", (req, res) => {
   res.json({ 
