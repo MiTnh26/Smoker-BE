@@ -1,126 +1,166 @@
-const { getPool } = require("../db/sqlserver");
-const sql = require("mssql");
-const { success, error: errorResp } = require("../utils/response") || {
-  success: (res, data, message) => res.status(200).json({ success: true, data, message }),
-  error: (res, message, code = 500) => res.status(code).json({ success: false, message })
-};
+const bookingService = require("../services/bookingService");
 
 class BookingController {
-  // POST /booking/request
-  async createRequest(req, res) {
+  async createBooking(req, res) {
     try {
-      const accountId = req.user?.id;
-      if (!accountId) return res.status(401).json({ success: false, message: "Unauthorized" });
-
       const {
-        requesterEntityAccountId,
-        requesterRole, // "Bar" | "Customer"
-        performerEntityAccountId,
-        performerRole, // "DJ" | "DANCER"
-        date, // yyyy-mm-dd (optional if using start/end)
-        startTime, // ISO string
-        endTime, // ISO string
-        location,
-        note,
-        offeredPrice
-      } = req.body || {};
+        bookerId,
+        receiverId,
+        type,
+        totalAmount,
+        paymentStatus,
+        scheduleStatus,
+        bookingDate,
+        startTime,
+        endTime,
+        mongoDetailId
+      } = req.body;
 
-      if (!requesterEntityAccountId || !performerEntityAccountId) {
-        return res.status(400).json({ success: false, message: "Missing requester/performer" });
+      if (!bookerId || !receiverId || !type) {
+        return res.status(400).json({
+          success: false,
+          message: "bookerId, receiverId and type are required"
+        });
       }
-      if (String(requesterEntityAccountId).toLowerCase().trim() === String(performerEntityAccountId).toLowerCase().trim()) {
-        return res.status(400).json({ success: false, message: "Cannot book yourself" });
-      }
 
-      const pool = await getPool();
-      // Insert BookedSchedules
-      const result = await pool.request()
-        .input("BookerId", sql.UniqueIdentifier, requesterEntityAccountId)
-        .input("ReceiverId", sql.UniqueIdentifier, performerEntityAccountId)
-        .input("Type", sql.NVarChar, "Personal booking")
-        .input("TotalAmount", sql.Int, offeredPrice || 0)
-        .input("PaymentStatus", sql.NVarChar, "Pending")
-        .input("ScheduleStatus", sql.NVarChar, "Upcoming")
-        .input("BookingDate", sql.DateTime, date ? new Date(date) : new Date(startTime || Date.now()))
-        .input("StartTime", sql.DateTime, startTime ? new Date(startTime) : new Date())
-        .input("EndTime", sql.DateTime, endTime ? new Date(endTime) : new Date())
-        .input("MongoDetailId", sql.NVarChar, note || null)
-        .query(`
-          INSERT INTO BookedSchedules
-          (BookerId, ReceiverId, Type, TotalAmount, PaymentStatus, ScheduleStatus, BookingDate, StartTime, EndTime, MongoDetailId)
-          OUTPUT inserted.BookedScheduleId
-          VALUES (@BookerId, @ReceiverId, @Type, @TotalAmount, @PaymentStatus, @ScheduleStatus, @BookingDate, @StartTime, @EndTime, @MongoDetailId)
-        `);
+      const bookingData = {
+        bookerId,
+        receiverId,
+        type,
+        totalAmount: totalAmount ?? 0,
+        paymentStatus: paymentStatus || "Pending",
+        scheduleStatus: scheduleStatus || "Pending",
+        bookingDate,
+        startTime,
+        endTime,
+        mongoDetailId
+      };
 
-      const bookingId = result.recordset?.[0]?.BookedScheduleId;
-      return res.status(201).json({ success: true, data: { id: bookingId }, message: "Booking created" });
-    } catch (e) {
-      console.error("[Booking] createRequest error:", e);
-      return res.status(500).json({ success: false, message: "Internal server error" });
+      const result = await bookingService.createBooking(bookingData);
+
+      return res.status(201).json({
+        success: true,
+        data: result,
+        message: "Booked schedule created successfully"
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Error creating booked schedule",
+        error: error.message
+      });
     }
   }
 
-  // GET /booking/my?as=requester|performer&status=...
-  async getMyBookings(req, res) {
+  async confirmBooking(req, res) {
     try {
-      const accountId = req.user?.id;
-      if (!accountId) return res.status(401).json({ success: false, message: "Unauthorized" });
+      const { id } = req.params;
+      const userId = req.user?.id;
 
-      const as = (req.query?.as || "requester").toLowerCase(); // requester | performer
-      const status = req.query?.status;
-      const entityAccountId = req.query?.entityAccountId;
-      if (!entityAccountId) {
-        return res.status(400).json({ success: false, message: "Missing entityAccountId" });
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
       }
-      const pool = await getPool();
-      const col = as === "performer" ? "ReceiverId" : "BookerId";
 
-      let query = `
-        SELECT * FROM BookedSchedules
-        WHERE ${col} = @EntityAccountId
-      `;
-      if (status) {
-        query += ` AND ScheduleStatus = @Status`;
+      const result = await bookingService.confirmBookingSchedule(id, userId);
+
+      if (result.success) {
+        return res.status(200).json(result);
       }
-      query += ` ORDER BY created_at DESC`;
 
-      const request = pool.request()
-        .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId);
-      if (status) request.input("Status", sql.NVarChar, status);
-
-      const rs = await request.query(query);
-      return res.status(200).json({ success: true, data: rs.recordset || [] });
-    } catch (e) {
-      console.error("[Booking] getMyBookings error:", e);
-      return res.status(500).json({ success: false, message: "Internal server error" });
+      return res.status(400).json(result);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Error confirming schedule",
+        error: error.message
+      });
     }
   }
 
-  // POST /booking/:id/accept|decline|cancel
-  async updateStatus(req, res) {
+  async cancelBooking(req, res) {
     try {
-      const id = req.params?.id;
-      const action = (req.params?.action || "").toLowerCase(); // accept|decline|cancel
-      if (!id || !["accept", "decline", "cancel"].includes(action)) {
-        return res.status(400).json({ success: false, message: "Invalid parameters" });
+      const { id } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
       }
-      const mapping = { accept: "Accepted", decline: "Declined", cancel: "Cancelled" };
-      const status = mapping[action];
-      const pool = await getPool();
-      await pool.request()
-        .input("Id", sql.UniqueIdentifier, id)
-        .input("Status", sql.NVarChar, status)
-        .query(`
-          UPDATE BookedSchedules SET ScheduleStatus = @Status WHERE BookedScheduleId = @Id
-        `);
-      return res.status(200).json({ success: true, message: "Status updated" });
-    } catch (e) {
-      console.error("[Booking] updateStatus error:", e);
-      return res.status(500).json({ success: false, message: "Internal server error" });
+
+      const result = await bookingService.cancelBookingSchedule(id, userId);
+
+      if (result.success) {
+        return res.status(200).json(result);
+      }
+
+      return res.status(400).json(result);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Error canceling schedule",
+        error: error.message
+      });
+    }
+  }
+
+  async getByBooker(req, res) {
+    try {
+      const { bookerId } = req.params;
+      const { limit = 50, offset = 0 } = req.query;
+
+      if (!bookerId) {
+        return res.status(400).json({ success: false, message: "bookerId is required" });
+      }
+
+      const result = await bookingService.getBookingsByBooker(bookerId, {
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      });
+
+      if (result.success) {
+        return res.status(200).json(result);
+      }
+      return res.status(400).json(result);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching schedules by booker",
+        error: error.message
+      });
+    }
+  }
+
+  async getByReceiver(req, res) {
+    try {
+      const { receiverId } = req.params;
+      const { limit = 50, offset = 0 } = req.query;
+
+      if (!receiverId) {
+        return res.status(400).json({ success: false, message: "receiverId is required" });
+      }
+
+      const result = await bookingService.getBookingsByReceiver(receiverId, {
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      });
+
+      if (result.success) {
+        return res.status(200).json(result);
+      }
+      return res.status(400).json(result);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching schedules by receiver",
+        error: error.message
+      });
     }
   }
 }
 
 module.exports = new BookingController();
-
-
