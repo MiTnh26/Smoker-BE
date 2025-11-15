@@ -4,7 +4,6 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const { initSQLConnection } = require("./db/sqlserver");
 const connectDB = require("./db/mongodb");
-
 const {
   authRoutes,
   userRoutes,
@@ -30,6 +29,7 @@ const {
   mediaRoutes,
   bookingRoutes,
 } = require("./routes");
+
 
 const userReviewRoutes = require('./routes/userReviewRoutes');
 const barReviewRoutes = require('./routes/barReviewRoutes');
@@ -113,6 +113,9 @@ app.use("/api/business", businessRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/stories", storyRoutes);
+app.use("/api/bookings", bookingRoutes);
+
+app.use("/api/events",eventRoutes)
 app.use("/api/music", musicRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
