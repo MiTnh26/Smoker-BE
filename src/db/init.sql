@@ -34,8 +34,9 @@ CREATE TABLE dbo.Accounts (
     Avatar NVARCHAR(1000) NULL,
     Background NVARCHAR(1000) NULL,
     Phone NVARCHAR(20) NULL,
-    Address NVARCHAR(255) NULL,
+    Address NVARCHAR(MAX) NULL,  -- Changed to MAX to support JSON structured address data
     Bio NVARCHAR(500) NULL,
+    Gender NVARCHAR(20) NULL,
     Status NVARCHAR(20) NOT NULL DEFAULT 'active',
     LastLogin DATETIME2 NULL
 );
@@ -48,7 +49,7 @@ CREATE TABLE dbo.BussinessAccounts (
     UserName NVARCHAR(100) NOT NULL,
     Role NVARCHAR(50) NOT NULL,
     Phone NVARCHAR(50) NULL,
-    Address NVARCHAR(255) NULL,
+    Address NVARCHAR(MAX) NULL,  -- Changed to MAX to support JSON structured address data
     Bio NVARCHAR(MAX) NULL,
     Avatar NVARCHAR(1000) NULL,
     Background NVARCHAR(1000) NULL,
@@ -127,8 +128,10 @@ CREATE OR ALTER PROCEDURE dbo.sp_UpdateAccountInfo
     @avatar NVARCHAR(1000) = NULL,
     @background NVARCHAR(1000) = NULL,
     @bio NVARCHAR(500) = NULL,
-    @address NVARCHAR(255) = NULL,
-    @phone NVARCHAR(20) = NULL
+    @address NVARCHAR(MAX) = NULL,  -- Changed to MAX to support JSON structured address data
+    @phone NVARCHAR(20) = NULL,
+    @gender NVARCHAR(20) = NULL,
+    @status NVARCHAR(20) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -138,10 +141,12 @@ BEGIN
         Background = ISNULL(@background, Background),
         Bio = ISNULL(@bio, Bio),
         Address = ISNULL(@address, Address),
-        Phone = ISNULL(@phone, Phone)
+        Phone = ISNULL(@phone, Phone),
+        Gender = ISNULL(@gender, Gender),
+        Status = ISNULL(@status, Status)
     WHERE AccountId = @accountId;
 
-    SELECT TOP 1 AccountId, Email, Role, UserName, Avatar, Background, Phone, Address, Bio, Status, LastLogin
+    SELECT TOP 1 AccountId, Email, Role, UserName, Avatar, Background, Phone, Address, Bio, Gender, Status, LastLogin
     FROM dbo.Accounts
     WHERE AccountId = @accountId;
 END
@@ -155,7 +160,7 @@ CREATE OR ALTER PROCEDURE dbo.sp_CreateBusinessAccount
     @userName NVARCHAR(100),
     @role NVARCHAR(50),
     @phone NVARCHAR(50) = NULL,
-    @address NVARCHAR(255) = NULL,
+    @address NVARCHAR(MAX) = NULL,  -- Changed to MAX to support JSON structured address data
     @bio NVARCHAR(MAX) = NULL,
     @avatar NVARCHAR(1000) = NULL,
     @background NVARCHAR(1000) = NULL,

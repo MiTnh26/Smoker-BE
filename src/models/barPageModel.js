@@ -18,6 +18,7 @@ async function getBarPageById(barPageId) {
 
 /**
  * Lấy BarPage theo AccountId (vì mỗi account chỉ có 1 bar page)
+ * JOIN với EntityAccounts để lấy EntityAccountId
  */
 async function getBarPageByAccountId(accountId) {
   const pool = await getPool();
@@ -25,11 +26,63 @@ async function getBarPageByAccountId(accountId) {
     .request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
     .query(`
-      SELECT BarPageId, AccountId, BarName, Avatar, Background, Address, PhoneNumber, Role, Email, created_at
-      FROM BarPages
-      WHERE AccountId = @AccountId
+      SELECT b.BarPageId, b.AccountId, b.BarName, b.Avatar, b.Background, b.Address, b.PhoneNumber, b.Role, b.Email, b.created_at, ea.EntityAccountId
+      FROM BarPages b
+      LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = b.BarPageId
+      WHERE b.AccountId = @AccountId
     `);
   return result.recordset[0] || null;
+}
+
+/**
+ * Lấy danh sách BarPage nổi bật kèm rating trung bình và số lượng đánh giá
+ * @param {number} limit - số lượng bar cần lấy
+ * @returns {Promise<Array>}
+ */
+async function getFeaturedBarPages(limit = 6) {
+  const pool = await getPool();
+  const result = await pool
+    .request()
+    .input("limit", sql.Int, limit)
+    .query(`
+      SELECT TOP (@limit)
+        bp.BarPageId,
+        bp.AccountId,
+        bp.BarName,
+        bp.Avatar,
+        bp.Background,
+        bp.Address,
+        bp.PhoneNumber,
+        bp.Email,
+        bp.Role,
+        bp.created_at,
+        ea.EntityAccountId,
+        COUNT(br.BarReviewId) AS ReviewCount,
+        AVG(CAST(br.Star AS FLOAT)) AS AverageRating
+      FROM BarPages bp
+      LEFT JOIN EntityAccounts ea 
+        ON ea.EntityType = 'BarPage' AND ea.EntityId = bp.BarPageId
+      LEFT JOIN BarReviews br 
+        ON br.BarId = bp.BarPageId
+      GROUP BY 
+        bp.BarPageId,
+        bp.AccountId,
+        bp.BarName,
+        bp.Avatar,
+        bp.Background,
+        bp.Address,
+        bp.PhoneNumber,
+        bp.Email,
+        bp.Role,
+        bp.created_at,
+        ea.EntityAccountId
+      ORDER BY 
+        COALESCE(AVG(CAST(br.Star AS FLOAT)), 0) DESC,
+        COUNT(br.BarReviewId) DESC,
+        bp.created_at DESC
+    `);
+
+  return result.recordset || [];
 }
 
 /**
@@ -115,4 +168,5 @@ module.exports = {
   createBarPage,
   updateBarPage,
   deleteBarPage,
+  getFeaturedBarPages,
 };

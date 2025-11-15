@@ -2,10 +2,13 @@
 const express = require("express");
 const router = express.Router();
 const { barPageController } = require("../controllers");
-const createCloudinaryUpload = require("../middleware/uploadCloudinary");
+const { createCloudinaryUpload } = require("../middleware/uploadCloudinary");
 
 // 1) Tạo mới trang Bar (có thể có hoặc không upload file)
 router.post("/register", barPageController.registerBarPage);
+
+// Landing page - featured bars
+router.get("/", barPageController.getFeaturedBars);
 
 // 2) Lấy danh sách hoặc thông tin chi tiết
 router.get("/account/:accountId", barPageController.getBarPageByAccountId);
