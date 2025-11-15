@@ -77,4 +77,4 @@ notificationSchema.index({ senderEntityAccountId: 1 }); // Index cho senderEntit
 notificationSchema.index({ receiverEntityType: 1, receiverEntityId: 1 }); // Composite index
 notificationSchema.index({ senderEntityType: 1, senderEntityId: 1 }); // Composite index
 
-module.exports = mongoose.model("Notification", notificationSchema, "notifaications");
+module.exports = mongoose.model("Notification", notificationSchema, "notifications");
