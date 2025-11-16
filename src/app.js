@@ -75,54 +75,63 @@ console.log('   RENDER:', process.env.RENDER || 'not set');
 console.log('   FRONTEND_URL:', process.env.FRONTEND_URL || 'not set');
 console.log('🌐 CORS Allowed Origins:', allowedOrigins);
 
-// Handle preflight OPTIONS requests FIRST - before CORS middleware
+// Helper function to check if origin is allowed
+const isOriginAllowed = (origin) => {
+  if (!origin) return true; // Allow requests with no origin
+  if (allowedOrigins.includes('*')) return true;
+  return allowedOrigins.includes(origin);
+};
+
+// Helper function to set CORS headers
+const setCorsHeaders = (req, res) => {
+  const origin = req.headers.origin;
+  
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (allowedOrigins.includes('*')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (allowedOrigins.length > 0) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigins[0]);
+  }
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
+};
+
+// Handle preflight OPTIONS requests FIRST - before everything else
 app.use((req, res, next) => {
+  // Set CORS headers for all requests
+  setCorsHeaders(req, res);
+  
+  // Handle OPTIONS preflight requests
   if (req.method === 'OPTIONS') {
     const origin = req.headers.origin;
     console.log(`🔍 OPTIONS preflight request from origin: ${origin}`);
     
-    // Check if origin is allowed
-    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-      // Set CORS headers
-      if (origin) {
-        res.header('Access-Control-Allow-Origin', origin);
-        console.log(`✅ OPTIONS allowed for origin: ${origin}`);
-      } else if (allowedOrigins.includes('*')) {
-        res.header('Access-Control-Allow-Origin', '*');
-      } else {
-        res.header('Access-Control-Allow-Origin', allowedOrigins[0]);
-      }
-      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
-      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
-      res.header('Access-Control-Allow-Credentials', 'true');
-      res.header('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
-      return res.sendStatus(204);
+    if (isOriginAllowed(origin)) {
+      console.log(`✅ OPTIONS allowed for origin: ${origin}`);
+      return res.status(204).end(); // Use .end() instead of sendStatus for better compatibility
     } else {
       console.warn(`❌ OPTIONS request blocked for origin: ${origin}`);
       console.warn(`   Allowed origins: ${allowedOrigins.join(', ')}`);
-      return res.sendStatus(403);
+      return res.status(403).end();
     }
   }
   next();
 });
 
-// CORS middleware with proper preflight handling
+// CORS middleware for actual requests (non-OPTIONS)
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps, Postman, or curl requests)
-      if (!origin) {
-        return callback(null, true);
-      }
-      
-      // Check if origin is in allowed list
-      if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-        console.log(`✅ CORS allowed for origin: ${origin}`);
+      if (isOriginAllowed(origin)) {
+        console.log(`✅ CORS allowed for origin: ${origin || 'no origin'}`);
         return callback(null, true);
       } else {
         console.warn(`❌ CORS blocked origin: ${origin}`);
         console.warn(`   Allowed origins: ${allowedOrigins.join(', ')}`);
-        // Reject the request if origin is not allowed
         return callback(new Error('Not allowed by CORS'));
       }
     },
