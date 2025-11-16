@@ -2,6 +2,7 @@ const { getPool, sql } = require("../db/sqlserver");
 
 /**
  * Lấy thông tin BarPage theo ID
+ * JOIN với EntityAccounts để lấy EntityAccountId
  */
 async function getBarPageById(barPageId) {
   const pool = await getPool();
@@ -9,9 +10,10 @@ async function getBarPageById(barPageId) {
     .request()
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
     .query(`
-      SELECT BarPageId, AccountId, BarName, Avatar, Background, Address, PhoneNumber, Role, Email, created_at
-      FROM BarPages
-      WHERE BarPageId = @BarPageId
+      SELECT b.BarPageId, b.AccountId, b.BarName, b.Avatar, b.Background, b.Address, b.PhoneNumber, b.Role, b.Email, b.created_at, ea.EntityAccountId
+      FROM BarPages b
+      LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = b.BarPageId
+      WHERE b.BarPageId = @BarPageId
     `);
   return result.recordset[0] || null;
 }

@@ -10,7 +10,7 @@ async function searchBars(pool, q, limit) {
     .input("limit", sql.Int, limit)
     .query(`
       SELECT TOP (@limit)
-        bp.BarPageId AS id,
+        COALESCE(ea.EntityAccountId, bp.BarPageId) AS id,
         bp.BarName AS name,
         bp.Avatar AS avatar,
         'BAR' AS type,

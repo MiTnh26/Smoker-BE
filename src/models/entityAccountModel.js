@@ -1,3 +1,6 @@
+// models/entityAccountModel.js
+const { getPool, sql } = require("../db/sqlserver");
+
 /**
  * Lấy EntityAccountId từ AccountId (chính chủ user)
  * Query theo AccountId (chủ sở hữu) thay vì EntityId để tìm EntityAccountId đúng
@@ -30,8 +33,25 @@ async function getEntityAccountIdByAccountId(accountId) {
       return entityAccountIdStr;
     }
     
-    // Nếu chưa có EntityAccount, tự động tạo (fallback)
-    console.log('⚠️ EntityAccount not found for AccountId:', accountId, '- Creating new one...');
+    // Nếu chưa có EntityAccount, kiểm tra AccountId có tồn tại trong Accounts trước khi tạo
+    console.log('⚠️ EntityAccount not found for AccountId:', accountId, '- Checking if Account exists...');
+    
+    // Kiểm tra AccountId có tồn tại trong bảng Accounts
+    const accountCheck = await pool.request()
+      .input("AccountId", sql.UniqueIdentifier, accountId)
+      .query(`
+        SELECT TOP 1 AccountId 
+        FROM Accounts 
+        WHERE AccountId = @AccountId
+      `);
+    
+    if (accountCheck.recordset.length === 0) {
+      console.error('❌ AccountId does not exist in Accounts table:', accountId);
+      console.error('❌ Cannot create EntityAccount - AccountId is invalid');
+      return null;
+    }
+    
+    console.log('✅ AccountId exists in Accounts table, creating EntityAccount...');
     try {
       await createEntityAccount("Account", accountId, accountId);
       console.log('✅ Created EntityAccount for AccountId:', accountId);
@@ -56,7 +76,10 @@ async function getEntityAccountIdByAccountId(accountId) {
       console.error('❌ Failed to retrieve newly created EntityAccountId');
     } catch (createError) {
       // Nếu đã tồn tại (UNIQUE constraint) thì query lại
-      if (createError.code === 'EREQUEST' || createError.message?.includes('UNIQUE')) {
+      if (createError.code === 'EREQUEST' && (
+        createError.message?.includes('UNIQUE') || 
+        createError.message?.includes('duplicate')
+      )) {
         console.log('⚠️ EntityAccount already exists, querying again...');
         const result3 = await pool.request()
           .input("AccountId", sql.UniqueIdentifier, accountId)
@@ -75,6 +98,11 @@ async function getEntityAccountIdByAccountId(accountId) {
           return entityAccountIdStr;
         }
       }
+      // Nếu lỗi FOREIGN KEY constraint, AccountId không tồn tại
+      if (createError.message?.includes('FOREIGN KEY') || createError.message?.includes('FK__')) {
+        console.error('❌ FOREIGN KEY constraint error - AccountId does not exist in Accounts:', accountId);
+        return null;
+      }
       console.error('❌ Error creating EntityAccount:', createError.message);
     }
     
@@ -86,8 +114,6 @@ async function getEntityAccountIdByAccountId(accountId) {
     return null;
   }
 }
-// models/entityAccountModel.js
-const { getPool, sql } = require("../db/sqlserver");
 
 /**
  * Tạo bản ghi EntityAccount mới
@@ -192,9 +218,107 @@ async function verifyEntityAccountId(entityAccountId) {
   }
 }
 
+/**
+ * Validate if a string is a valid UUID format
+ * @param {string} str - String to validate
+ * @returns {boolean} True if valid UUID format
+ */
+function isValidUUID(str) {
+  if (!str || typeof str !== 'string') return false;
+  const uuidRegex = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+  return uuidRegex.test(str.trim());
+}
+
+/**
+ * Normalize any ID type to EntityAccountId
+ * This is the single source of truth for ID normalization
+ * Handles: EntityAccountId, EntityId, AccountId, BarPageId, BusinessAccountId
+ * 
+ * @param {string} id - Any type of ID (EntityAccountId, EntityId, AccountId, etc.)
+ * @returns {Promise<string|null>} EntityAccountId or null if not found
+ */
+async function normalizeToEntityAccountId(id) {
+  if (!id) return null;
+  
+  // Convert to string and trim
+  const idStr = String(id).trim();
+  if (!idStr) return null;
+  
+  // Validate UUID format before attempting SQL queries
+  // This prevents SQL Server errors when trying to convert invalid formats
+  if (!isValidUUID(idStr)) {
+    console.warn('⚠️ normalizeToEntityAccountId - Invalid UUID format:', idStr);
+    return null;
+  }
+  
+  try {
+    const pool = await getPool();
+    
+    // Strategy 1: Check if it's already an EntityAccountId (most common case)
+    // This handles cases where frontend already sends EntityAccountId
+    try {
+      const asEntityAccountId = await pool.request()
+        .input("EntityAccountId", sql.UniqueIdentifier, idStr)
+        .query(`
+          SELECT TOP 1 EntityAccountId 
+          FROM EntityAccounts 
+          WHERE EntityAccountId = @EntityAccountId
+        `);
+      
+      if (asEntityAccountId.recordset.length > 0) {
+        const result = asEntityAccountId.recordset[0].EntityAccountId;
+        return result ? String(result) : null;
+      }
+    } catch (err) {
+      // If conversion fails, ID is not a valid UUID format
+      // Continue to next strategy - this is expected behavior
+      console.warn('⚠️ normalizeToEntityAccountId - Strategy 1 failed:', err.message);
+    }
+    
+    // Strategy 2: Check if it's an EntityId (for any EntityType: Account, BarPage, BusinessAccount)
+    // This handles cases where frontend sends BarPageId, BusinessAccountId, etc.
+    try {
+      const asEntityId = await pool.request()
+        .input("EntityId", sql.UniqueIdentifier, idStr)
+        .query(`
+          SELECT TOP 1 EntityAccountId 
+          FROM EntityAccounts 
+          WHERE EntityId = @EntityId
+        `);
+      
+      if (asEntityId.recordset.length > 0) {
+        const result = asEntityId.recordset[0].EntityAccountId;
+        return result ? String(result) : null;
+      }
+    } catch (err) {
+      // If conversion fails, continue to next strategy - this is expected behavior
+      console.warn('⚠️ normalizeToEntityAccountId - Strategy 2 failed:', err.message);
+    }
+    
+    // Strategy 3: Check if it's an AccountId (for Account type only)
+    // This handles cases where frontend sends AccountId of a user
+    try {
+      const accountResult = await getEntityAccountIdByAccountId(idStr);
+      if (accountResult) {
+        return accountResult;
+      }
+    } catch (accountError) {
+      // Ignore error, continue - this is expected behavior for non-Account IDs
+      console.warn('⚠️ normalizeToEntityAccountId - Strategy 3 failed:', accountError.message);
+    }
+    
+    // If none of the strategies work, return null
+    return null;
+  } catch (error) {
+    console.error('❌ Error in normalizeToEntityAccountId:', error.message);
+    return null;
+  }
+}
+
 module.exports = {
   getEntitiesByAccountId,
   createEntityAccount,
   getEntityAccountIdByAccountId,
-  verifyEntityAccountId
+  verifyEntityAccountId,
+  normalizeToEntityAccountId
 };
