@@ -37,8 +37,7 @@ const barReviewRoutes = require('./routes/barReviewRoutes');
 
 const app = express();
 
-// CORS MUST be configured BEFORE express.json() to handle preflight OPTIONS requests properly
-// CORS configuration - support multiple origins
+// CORS configuration - MUST be before express.json() and routes
 // Default origins for local development
 const defaultOrigins = ['http://localhost:3000', 'http://localhost:5173'];
 
@@ -48,12 +47,20 @@ const productionFrontendUrl = 'https://smoker-fe-henna.vercel.app';
 // Get allowed origins from environment variable
 let allowedOrigins = defaultOrigins;
 
+// Check if we're in production
+const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
+
 if (process.env.FRONTEND_URL) {
   // If FRONTEND_URL is set, use it (can be comma-separated for multiple origins)
   allowedOrigins = process.env.FRONTEND_URL.split(',').map(url => url.trim());
+  
+  // In production, always ensure production frontend URL is included
+  if (isProduction && !allowedOrigins.includes(productionFrontendUrl)) {
+    allowedOrigins.push(productionFrontendUrl);
+    console.log('🔧 Added production frontend URL to allowed origins');
+  }
 } else {
-  // If not set, check if we're in production (Render sets NODE_ENV or PORT)
-  const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
+  // If not set, check if we're in production
   if (isProduction) {
     // In production, add the production frontend URL
     allowedOrigins = [...defaultOrigins, productionFrontendUrl];
@@ -67,6 +74,37 @@ console.log('   NODE_ENV:', process.env.NODE_ENV || 'not set');
 console.log('   RENDER:', process.env.RENDER || 'not set');
 console.log('   FRONTEND_URL:', process.env.FRONTEND_URL || 'not set');
 console.log('🌐 CORS Allowed Origins:', allowedOrigins);
+
+// Handle preflight OPTIONS requests FIRST - before CORS middleware
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    const origin = req.headers.origin;
+    console.log(`🔍 OPTIONS preflight request from origin: ${origin}`);
+    
+    // Check if origin is allowed
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      // Set CORS headers
+      if (origin) {
+        res.header('Access-Control-Allow-Origin', origin);
+        console.log(`✅ OPTIONS allowed for origin: ${origin}`);
+      } else if (allowedOrigins.includes('*')) {
+        res.header('Access-Control-Allow-Origin', '*');
+      } else {
+        res.header('Access-Control-Allow-Origin', allowedOrigins[0]);
+      }
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
+      res.header('Access-Control-Allow-Credentials', 'true');
+      res.header('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
+      return res.sendStatus(204);
+    } else {
+      console.warn(`❌ OPTIONS request blocked for origin: ${origin}`);
+      console.warn(`   Allowed origins: ${allowedOrigins.join(', ')}`);
+      return res.sendStatus(403);
+    }
+  }
+  next();
+});
 
 // CORS middleware with proper preflight handling
 app.use(
@@ -104,35 +142,6 @@ app.use(
     optionsSuccessStatus: 204
   })
 );
-
-// Handle preflight OPTIONS requests explicitly for all routes
-// Express 5.x doesn't support wildcard '*' in app.options, so we use middleware instead
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    const origin = req.headers.origin;
-    // Check if origin is allowed
-    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-      // If credentials is true, must set exact origin, not '*'
-      if (origin) {
-        res.header('Access-Control-Allow-Origin', origin);
-      } else if (allowedOrigins.includes('*')) {
-        res.header('Access-Control-Allow-Origin', '*');
-      } else {
-        // Default to first allowed origin if no origin header
-        res.header('Access-Control-Allow-Origin', allowedOrigins[0]);
-      }
-      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
-      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
-      res.header('Access-Control-Allow-Credentials', 'true');
-      res.header('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
-      return res.sendStatus(204);
-    } else {
-      console.warn(`❌ OPTIONS request blocked for origin: ${origin}`);
-      return res.sendStatus(403);
-    }
-  }
-  next();
-});
 
 // Now parse JSON body AFTER CORS is configured
 app.use(express.json());
@@ -190,9 +199,38 @@ app.use((req, res, next) => {
 // Khởi tạo kết nối SQL Server
 initSQLConnection();
 
-// Routes - All routes must have /api prefix
+// Routes
 
-// Health check endpoints
+app.use("/api/voucher-apply", voucherApplyRoutes);
+app.use("/api/voucher", voucherRoutes);
+app.use("/api/combo", comboRoutes);
+app.use("/api/bar", barPageRoutes);
+app.use("/api/table-classification", tableClassificationRoutes);
+app.use("/api/bar-table", barTableRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/user", userRoutes);
+app.use("/api/business", businessRoutes);
+app.use("/api/events", eventRoutes);
+app.use("/api/posts", postRoutes);
+app.use("/api/stories", storyRoutes);
+app.use("/api/bookings", bookingRoutes);
+
+app.use("/api/events",eventRoutes)
+app.use("/api/music", musicRoutes);
+app.use("/api/messages", messageRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/song", songRoutes);
+app.use("/api/follow", followRoutes);
+app.use("/api/search", searchRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/bank-info", bankInfoRoutes);
+app.use("/api/livestream", livestreamRoutes);
+app.use("/api/medias", mediaRoutes);
+app.use("/api/booking", bookingRoutes);
+
+// UserReview & BarReview APIs
+app.use("/api/user-reviews", userReviewRoutes);
+app.use("/api/bar-reviews", barReviewRoutes);
 app.get("/", (req, res) => {
   res.json({ 
     message: "Welcome to Smoker API 🚬",
@@ -204,63 +242,5 @@ app.get("/", (req, res) => {
     }
   });
 });
-
-app.get("/api", (req, res) => {
-  res.json({ 
-    message: "Welcome to Smoker API 🚬",
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    databases: {
-      sqlserver: "Attempting connection...", // SQL Server connection status
-      mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
-    }
-  });
-});
-
-// Authentication routes
-app.use("/api/auth", authRoutes);
-
-// User routes
-app.use("/api/user", userRoutes);
-app.use("/api/user-reviews", userReviewRoutes);
-
-// Business routes
-app.use("/api/business", businessRoutes);
-
-// Bar & Table routes
-app.use("/api/bar", barPageRoutes);
-app.use("/api/bar-table", barTableRoutes);
-app.use("/api/bar-reviews", barReviewRoutes);
-app.use("/api/table-classification", tableClassificationRoutes);
-
-// Booking routes
-app.use("/api/booking", bookingRoutes);
-app.use("/api/bookings", bookingRoutes);
-
-// Content routes
-app.use("/api/posts", postRoutes);
-app.use("/api/stories", storyRoutes);
-app.use("/api/events", eventRoutes);
-
-// Media routes
-app.use("/api/music", musicRoutes);
-app.use("/api/song", songRoutes);
-app.use("/api/medias", mediaRoutes);
-app.use("/api/livestream", livestreamRoutes);
-
-// Social features
-app.use("/api/messages", messageRoutes);
-app.use("/api/notifications", notificationRoutes);
-app.use("/api/follow", followRoutes);
-
-// Utility routes
-app.use("/api/search", searchRoutes);
-app.use("/api/reports", reportRoutes);
-app.use("/api/bank-info", bankInfoRoutes);
-
-// Product routes
-app.use("/api/voucher", voucherRoutes);
-app.use("/api/voucher-apply", voucherApplyRoutes);
-app.use("/api/combo", comboRoutes);
 
 module.exports = app;
