@@ -3,8 +3,8 @@ require("dotenv").config();
 const http = require("http");
 const app = require("./src/app");
 
-const port = process.env.PORT;
-const host = process.env.HOSTNAME;
+const port = process.env.PORT || 9999;
+const host = process.env.HOST || "0.0.0.0";
 
 // Create HTTP server for Socket.io
 const server = http.createServer(app);
