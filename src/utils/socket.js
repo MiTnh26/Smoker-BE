@@ -6,6 +6,7 @@ let ioInstance = null;
 function initSocket(server) {
     const { Server } = require('socket.io');
     ioInstance = new Server(server, {
+        path: '/api/socket.io', 
         cors: {
             origin: '*', // Cấu hình lại cho phù hợp với frontend
             methods: ['GET', 'POST']
