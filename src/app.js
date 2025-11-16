@@ -39,13 +39,12 @@ const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
-const allowOrigins = ["http://localhost:3000", "https://smoker-fe-henna.vercel.app"];
 app.use(
   cors({
-    origin: allowOrigins,
-    credentials: true,
+    origin: "*",
   })
 );
+
 // Khởi tạo kết nối MongoDB
 connectDB();
 
@@ -141,50 +140,6 @@ app.get("/", (req, res) => {
       sqlserver: "Attempting connection...", // SQL Server connection status
       mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
     }
-  });
-});
-
-// ERROR HANDLER - MUST be after all routes
-// This ensures CORS headers are set even when errors occur
-app.use((err, req, res, next) => {
-  // Set CORS headers even for errors
-  setCorsHeaders(req, res);
-  
-  console.error('❌ Error:', err.message);
-  if (err.stack) {
-    console.error('Stack:', err.stack);
-  }
-  
-  // Don't send response if headers already sent
-  if (res.headersSent) {
-    return next(err);
-  }
-  
-  // CORS error handling
-  if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({
-      status: 'error',
-      message: 'CORS: Origin not allowed',
-      origin: req.headers.origin
-    });
-  }
-  
-  res.status(err.status || 500).json({
-    status: 'error',
-    message: err.message || 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-  });
-});
-
-// 404 Handler - also needs CORS headers
-app.use((req, res) => {
-  // Set CORS headers for 404 responses
-  setCorsHeaders(req, res);
-  
-  res.status(404).json({
-    status: 'error',
-    message: 'Route not found',
-    path: req.path
   });
 });
 
