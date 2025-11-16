@@ -86,17 +86,29 @@ const isOriginAllowed = (origin) => {
 const setCorsHeaders = (req, res) => {
   const origin = req.headers.origin;
   
+  // Always set CORS headers based on origin
   if (origin && isOriginAllowed(origin)) {
+    // If origin is in allowed list, use it directly
     res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
   } else if (allowedOrigins.includes('*')) {
     res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (isProduction && origin === productionFrontendUrl) {
+    // In production, always allow production frontend URL
+    res.setHeader('Access-Control-Allow-Origin', productionFrontendUrl);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  } else if (allowedOrigins.length > 0 && isProduction) {
+    // In production, default to production URL
+    res.setHeader('Access-Control-Allow-Origin', productionFrontendUrl);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
   } else if (allowedOrigins.length > 0) {
+    // Fallback to first allowed origin
     res.setHeader('Access-Control-Allow-Origin', allowedOrigins[0]);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
   }
   
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
 };
 
@@ -249,6 +261,50 @@ app.get("/", (req, res) => {
       sqlserver: "Attempting connection...", // SQL Server connection status
       mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
     }
+  });
+});
+
+// ERROR HANDLER - MUST be after all routes
+// This ensures CORS headers are set even when errors occur
+app.use((err, req, res, next) => {
+  // Set CORS headers even for errors
+  setCorsHeaders(req, res);
+  
+  console.error('❌ Error:', err.message);
+  if (err.stack) {
+    console.error('Stack:', err.stack);
+  }
+  
+  // Don't send response if headers already sent
+  if (res.headersSent) {
+    return next(err);
+  }
+  
+  // CORS error handling
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      status: 'error',
+      message: 'CORS: Origin not allowed',
+      origin: req.headers.origin
+    });
+  }
+  
+  res.status(err.status || 500).json({
+    status: 'error',
+    message: err.message || 'Internal server error',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
+});
+
+// 404 Handler - also needs CORS headers
+app.use((req, res) => {
+  // Set CORS headers for 404 responses
+  setCorsHeaders(req, res);
+  
+  res.status(404).json({
+    status: 'error',
+    message: 'Route not found',
+    path: req.path
   });
 });
 
