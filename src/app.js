@@ -106,28 +106,32 @@ app.use(
 );
 
 // Handle preflight OPTIONS requests explicitly for all routes
-app.options('*', (req, res) => {
-  const origin = req.headers.origin;
-  // Check if origin is allowed
-  if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-    // If credentials is true, must set exact origin, not '*'
-    if (origin) {
-      res.header('Access-Control-Allow-Origin', origin);
-    } else if (allowedOrigins.includes('*')) {
-      res.header('Access-Control-Allow-Origin', '*');
+// Express 5.x doesn't support wildcard '*' in app.options, so we use middleware instead
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    const origin = req.headers.origin;
+    // Check if origin is allowed
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      // If credentials is true, must set exact origin, not '*'
+      if (origin) {
+        res.header('Access-Control-Allow-Origin', origin);
+      } else if (allowedOrigins.includes('*')) {
+        res.header('Access-Control-Allow-Origin', '*');
+      } else {
+        // Default to first allowed origin if no origin header
+        res.header('Access-Control-Allow-Origin', allowedOrigins[0]);
+      }
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
+      res.header('Access-Control-Allow-Credentials', 'true');
+      res.header('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
+      return res.sendStatus(204);
     } else {
-      // Default to first allowed origin if no origin header
-      res.header('Access-Control-Allow-Origin', allowedOrigins[0]);
+      console.warn(`❌ OPTIONS request blocked for origin: ${origin}`);
+      return res.sendStatus(403);
     }
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
-    res.sendStatus(204);
-  } else {
-    console.warn(`❌ OPTIONS request blocked for origin: ${origin}`);
-    res.sendStatus(403);
   }
+  next();
 });
 
 // Now parse JSON body AFTER CORS is configured
