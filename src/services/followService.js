@@ -1,20 +1,37 @@
 const { success, error } = require("../utils/response");
-const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
+const { normalizeToEntityAccountId } = require("../models/entityAccountModel");
 const FollowModel = require("../models/followModel");
 const notificationService = require("./notificationService");
 const { getPool, sql } = require("../db/sqlserver");
 
 exports.followEntity = async ({ followerId, followingId, followingType }) => {
 	try {
-		// Nếu followerId/followingId là accountId (UUID user), lấy EntityAccountId
-		let followerEntityAccountId = await getEntityAccountIdByAccountId(followerId) || followerId;
-		let followingEntityAccountId = await getEntityAccountIdByAccountId(followingId) || followingId;
-	// Prevent self-follow
-	if (followerEntityAccountId === followingEntityAccountId) {
-		return error("Cannot follow yourself.", 400);
-	}
-		console.log("Resolved followerEntityAccountId:", followerEntityAccountId);
-		console.log("Resolved followingEntityAccountId:", followingEntityAccountId);
+		if (!followerId || !followingId) {
+			return error("followerId and followingId are required.", 400);
+		}
+		
+		// Normalize IDs to EntityAccountId (handles all entity types)
+		let followerEntityAccountId = await normalizeToEntityAccountId(followerId);
+		let followingEntityAccountId = await normalizeToEntityAccountId(followingId);
+		
+		// If normalization failed, return error instead of using original ID
+		// This prevents SQL errors when IDs are invalid
+		if (!followerEntityAccountId) {
+			console.error("❌ Failed to normalize followerId:", followerId);
+			return error("Invalid followerId. Could not resolve to EntityAccountId.", 400);
+		}
+		if (!followingEntityAccountId) {
+			console.error("❌ Failed to normalize followingId:", followingId);
+			return error("Invalid followingId. Could not resolve to EntityAccountId.", 400);
+		}
+		
+		// Prevent self-follow
+		if (followerEntityAccountId === followingEntityAccountId) {
+			return error("Cannot follow yourself.", 400);
+		}
+		
+		console.log("✅ Resolved followerEntityAccountId:", followerEntityAccountId);
+		console.log("✅ Resolved followingEntityAccountId:", followingEntityAccountId);
 		await FollowModel.followEntity({ followerId: followerEntityAccountId, followingId: followingEntityAccountId, followingType });
 		
 		// Tạo notification cho người được follow (không gửi nếu follow chính mình - đã check ở trên)
@@ -87,8 +104,24 @@ exports.followEntity = async ({ followerId, followingId, followingType }) => {
 
 exports.unfollowEntity = async ({ followerId, followingId }) => {
 	try {
-		let followerEntityAccountId = await getEntityAccountIdByAccountId(followerId) || followerId;
-		let followingEntityAccountId = await getEntityAccountIdByAccountId(followingId) || followingId;
+		if (!followerId || !followingId) {
+			return error("followerId and followingId are required.", 400);
+		}
+		
+		// Normalize IDs to EntityAccountId (handles all entity types)
+		let followerEntityAccountId = await normalizeToEntityAccountId(followerId);
+		let followingEntityAccountId = await normalizeToEntityAccountId(followingId);
+		
+		// If normalization failed, return error instead of using original ID
+		if (!followerEntityAccountId) {
+			console.error("❌ Failed to normalize followerId:", followerId);
+			return error("Invalid followerId. Could not resolve to EntityAccountId.", 400);
+		}
+		if (!followingEntityAccountId) {
+			console.error("❌ Failed to normalize followingId:", followingId);
+			return error("Invalid followingId. Could not resolve to EntityAccountId.", 400);
+		}
+		
 		const affected = await FollowModel.unfollowEntity({ followerId: followerEntityAccountId, followingId: followingEntityAccountId });
 		if (affected === 0) {
 			return error("Follow relationship not found.", 404);
@@ -99,9 +132,24 @@ exports.unfollowEntity = async ({ followerId, followingId }) => {
 	}
 };
 
-exports.getFollowers = async (entityId) => {
+/**
+ * Get followers of an entity
+ * @param {string} id - Any type of ID (EntityAccountId, EntityId, AccountId, BarPageId, BusinessAccountId)
+ *                      Will be normalized to EntityAccountId internally
+ * @returns {Promise<Object>} Success response with followers array
+ */
+exports.getFollowers = async (id) => {
 	try {
-        const entityAccountId = await getEntityAccountIdByAccountId(entityId) || entityId;
+		if (!id) {
+			return error("id is required.", 400);
+		}
+		
+		// Normalize ID to EntityAccountId (handles all entity types)
+        const entityAccountId = await normalizeToEntityAccountId(id);
+        if (!entityAccountId) {
+			console.error("❌ Failed to normalize id:", id);
+			return error("Invalid id. Could not resolve to EntityAccountId.", 400);
+		}
         const followers = await FollowModel.getFollowers(entityAccountId);
 		return success("Fetched followers.", followers);
 	} catch (err) {
@@ -109,9 +157,24 @@ exports.getFollowers = async (entityId) => {
 	}
 };
 
-exports.getFollowing = async (entityId) => {
+/**
+ * Get following list of an entity
+ * @param {string} id - Any type of ID (EntityAccountId, EntityId, AccountId, BarPageId, BusinessAccountId)
+ *                      Will be normalized to EntityAccountId internally
+ * @returns {Promise<Object>} Success response with following array
+ */
+exports.getFollowing = async (id) => {
 	try {
-        const entityAccountId = await getEntityAccountIdByAccountId(entityId) || entityId;
+		if (!id) {
+			return error("id is required.", 400);
+		}
+		
+		// Normalize ID to EntityAccountId (handles all entity types)
+        const entityAccountId = await normalizeToEntityAccountId(id);
+        if (!entityAccountId) {
+			console.error("❌ Failed to normalize id:", id);
+			return error("Invalid id. Could not resolve to EntityAccountId.", 400);
+		}
         const following = await FollowModel.getFollowing(entityAccountId);
 		return success("Fetched following list.", following);
 	} catch (err) {
@@ -121,11 +184,29 @@ exports.getFollowing = async (entityId) => {
 
 exports.checkFollowing = async ({ followerId, followingId }) => {
 	try {
-		let followerEntityAccountId = await getEntityAccountIdByAccountId(followerId) || followerId;
-		let followingEntityAccountId = await getEntityAccountIdByAccountId(followingId) || followingId;
-		const isFollowing = await FollowModel.checkFollowing({ followerId: followerEntityAccountId, followingId: followingEntityAccountId });
+		if (!followerId || !followingId) {
+			return success("Checked follow status.", { isFollowing: false });
+		}
+		
+		// Normalize IDs to EntityAccountId (handles all entity types)
+		let followerEntityAccountId = await normalizeToEntityAccountId(followerId);
+		let followingEntityAccountId = await normalizeToEntityAccountId(followingId);
+		
+		// If normalization failed for either ID, return false (not following)
+		// This prevents SQL errors when IDs are invalid or cannot be resolved
+		if (!followerEntityAccountId || !followingEntityAccountId) {
+			return success("Checked follow status.", { isFollowing: false });
+		}
+		
+		const isFollowing = await FollowModel.checkFollowing({ 
+			followerId: followerEntityAccountId, 
+			followingId: followingEntityAccountId 
+		});
 		return success("Checked follow status.", { isFollowing });
 	} catch (err) {
-		return error("Error checking follow status: " + err.message, 500);
+		// Return false instead of error to prevent frontend crashes
+		// Log error for debugging
+		console.error('❌ Error in checkFollowing:', err.message);
+		return success("Checked follow status.", { isFollowing: false });
 	}
 };
