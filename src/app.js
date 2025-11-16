@@ -37,135 +37,15 @@ const barReviewRoutes = require('./routes/barReviewRoutes');
 
 const app = express();
 
-// CORS configuration - MUST be before express.json() and routes
-// Default origins for local development
-const defaultOrigins = ['http://localhost:3000', 'http://localhost:5173'];
-
-// Production frontend URL
-const productionFrontendUrl = 'https://smoker-fe-henna.vercel.app';
-
-// Get allowed origins from environment variable
-let allowedOrigins = defaultOrigins;
-
-// Check if we're in production
-const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
-
-if (process.env.FRONTEND_URL) {
-  // If FRONTEND_URL is set, use it (can be comma-separated for multiple origins)
-  allowedOrigins = process.env.FRONTEND_URL.split(',').map(url => url.trim());
-  
-  // In production, always ensure production frontend URL is included
-  if (isProduction && !allowedOrigins.includes(productionFrontendUrl)) {
-    allowedOrigins.push(productionFrontendUrl);
-    console.log('🔧 Added production frontend URL to allowed origins');
-  }
-} else {
-  // If not set, check if we're in production
-  if (isProduction) {
-    // In production, add the production frontend URL
-    allowedOrigins = [...defaultOrigins, productionFrontendUrl];
-    console.warn('⚠️  FRONTEND_URL not set in environment, using fallback:', allowedOrigins);
-  }
-}
-
-// Log environment info for debugging
-console.log('🔍 Environment check:');
-console.log('   NODE_ENV:', process.env.NODE_ENV || 'not set');
-console.log('   RENDER:', process.env.RENDER || 'not set');
-console.log('   FRONTEND_URL:', process.env.FRONTEND_URL || 'not set');
-console.log('🌐 CORS Allowed Origins:', allowedOrigins);
-
-// Helper function to check if origin is allowed
-const isOriginAllowed = (origin) => {
-  if (!origin) return true; // Allow requests with no origin
-  if (allowedOrigins.includes('*')) return true;
-  return allowedOrigins.includes(origin);
-};
-
-// Helper function to set CORS headers
-const setCorsHeaders = (req, res) => {
-  const origin = req.headers.origin;
-  
-  // Always set CORS headers based on origin
-  if (origin && isOriginAllowed(origin)) {
-    // If origin is in allowed list, use it directly
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  } else if (allowedOrigins.includes('*')) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  } else if (isProduction && origin === productionFrontendUrl) {
-    // In production, always allow production frontend URL
-    res.setHeader('Access-Control-Allow-Origin', productionFrontendUrl);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  } else if (allowedOrigins.length > 0 && isProduction) {
-    // In production, default to production URL
-    res.setHeader('Access-Control-Allow-Origin', productionFrontendUrl);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  } else if (allowedOrigins.length > 0) {
-    // Fallback to first allowed origin
-    res.setHeader('Access-Control-Allow-Origin', allowedOrigins[0]);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  }
-  
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
-  res.setHeader('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
-};
-
-// Handle preflight OPTIONS requests FIRST - before everything else
-app.use((req, res, next) => {
-  // Set CORS headers for all requests
-  setCorsHeaders(req, res);
-  
-  // Handle OPTIONS preflight requests
-  if (req.method === 'OPTIONS') {
-    const origin = req.headers.origin;
-    console.log(`🔍 OPTIONS preflight request from origin: ${origin}`);
-    
-    if (isOriginAllowed(origin)) {
-      console.log(`✅ OPTIONS allowed for origin: ${origin}`);
-      return res.status(204).end(); // Use .end() instead of sendStatus for better compatibility
-    } else {
-      console.warn(`❌ OPTIONS request blocked for origin: ${origin}`);
-      console.warn(`   Allowed origins: ${allowedOrigins.join(', ')}`);
-      return res.status(403).end();
-    }
-  }
-  next();
-});
-
-// CORS middleware for actual requests (non-OPTIONS)
+app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+const allowOrigins = ["http://localhost:3000", "https://smoker-fe-henna.vercel.app"];
 app.use(
   cors({
-    origin: function (origin, callback) {
-      if (isOriginAllowed(origin)) {
-        console.log(`✅ CORS allowed for origin: ${origin || 'no origin'}`);
-        return callback(null, true);
-      } else {
-        console.warn(`❌ CORS blocked origin: ${origin}`);
-        console.warn(`   Allowed origins: ${allowedOrigins.join(', ')}`);
-        return callback(new Error('Not allowed by CORS'));
-      }
-    },
+    origin: allowOrigins,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
-    allowedHeaders: [
-      'Content-Type', 
-      'Authorization', 
-      'X-Requested-With',
-      'Accept',
-      'Origin',
-      'Access-Control-Request-Method',
-      'Access-Control-Request-Headers'
-    ],
-    exposedHeaders: ['Authorization'],
-    preflightContinue: false,
-    optionsSuccessStatus: 204
   })
 );
-
-// Now parse JSON body AFTER CORS is configured
-app.use(express.json());
 // Khởi tạo kết nối MongoDB
 connectDB();
 
