@@ -1,10 +1,105 @@
-
 const Message = require("../models/messageDocument");
 const mongoose = require("mongoose");
 const { getIO } = require('../utils/socket');
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 const { getPool } = require("../db/sqlserver");
 const sql = require('mssql');
+
+// Helper function to check if an entity is banned
+async function checkEntityBanned(pool, entityAccountId) {
+  try {
+    if (!entityAccountId) return false;
+
+    // Check BusinessAccount
+    const businessCheck = await pool.request()
+      .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+      .query(`
+        SELECT TOP 1 ba.Status 
+        FROM BussinessAccounts ba
+        INNER JOIN EntityAccounts ea ON ea.EntityId = ba.BussinessAccountId AND ea.EntityType = 'BusinessAccount'
+        WHERE ea.EntityAccountId = @EntityAccountId AND ba.Status = 'banned'
+      `);
+    if (businessCheck.recordset.length > 0) return true;
+    
+    // Check BarPage
+    const barCheck = await pool.request()
+      .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+      .query(`
+        SELECT TOP 1 bp.Status 
+        FROM BarPages bp
+        INNER JOIN EntityAccounts ea ON ea.EntityId = bp.BarPageId AND ea.EntityType = 'BarPage'
+        WHERE ea.EntityAccountId = @EntityAccountId AND bp.Status = 'banned'
+      `);
+    if (barCheck.recordset.length > 0) return true;
+    
+    // Check Account (Customer)
+    const accountCheck = await pool.request()
+      .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+      .query(`
+        SELECT TOP 1 a.Status 
+        FROM Accounts a
+        INNER JOIN EntityAccounts ea ON ea.EntityId = a.AccountId AND ea.EntityType = 'Account'
+        WHERE ea.EntityAccountId = @EntityAccountId AND a.Status = 'banned'
+      `);
+    if (accountCheck.recordset.length > 0) return true;
+    
+    return false;
+  } catch (err) {
+    console.error("[checkEntityBanned] Error:", err);
+    return false; // Fail safe
+  }
+}
+
+// Helper function to get entity status
+async function getEntityStatus(pool, entityAccountId) {
+  try {
+    if (!entityAccountId) return 'active';
+
+    // Check BusinessAccount
+    const businessCheck = await pool.request()
+      .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+      .query(`
+        SELECT TOP 1 ba.Status 
+        FROM BussinessAccounts ba
+        INNER JOIN EntityAccounts ea ON ea.EntityId = ba.BussinessAccountId AND ea.EntityType = 'BusinessAccount'
+        WHERE ea.EntityAccountId = @EntityAccountId
+      `);
+    if (businessCheck.recordset.length > 0) {
+      return businessCheck.recordset[0].Status;
+    }
+    
+    // Check BarPage
+    const barCheck = await pool.request()
+      .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+      .query(`
+        SELECT TOP 1 bp.Status 
+        FROM BarPages bp
+        INNER JOIN EntityAccounts ea ON ea.EntityId = bp.BarPageId AND ea.EntityType = 'BarPage'
+        WHERE ea.EntityAccountId = @EntityAccountId
+      `);
+    if (barCheck.recordset.length > 0) {
+      return barCheck.recordset[0].Status;
+    }
+    
+    // Check Account (Customer)
+    const accountCheck = await pool.request()
+      .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+      .query(`
+        SELECT TOP 1 a.Status 
+        FROM Accounts a
+        INNER JOIN EntityAccounts ea ON ea.EntityId = a.AccountId AND ea.EntityType = 'Account'
+        WHERE ea.EntityAccountId = @EntityAccountId
+      `);
+    if (accountCheck.recordset.length > 0) {
+      return accountCheck.recordset[0].Status;
+    }
+    
+    return 'active'; // Default
+  } catch (err) {
+    console.error("[getEntityStatus] Error:", err);
+    return 'active'; // Fail safe
+  }
+}
 
 class MessageController {
   // Tạo hoặc lấy cuộc trò chuyện giữa 2 user
@@ -15,16 +110,26 @@ class MessageController {
         return res.status(400).json({ success: false, message: "Missing participant ids" });
       }
       
-      // Prevent self-messaging: check if both participants are the same
+      // Prevent self-messaging
       const p1 = String(participant1Id).toLowerCase().trim();
       const p2 = String(participant2Id).toLowerCase().trim();
       if (p1 === p2) {
         return res.status(400).json({ success: false, message: "Cannot create conversation with yourself" });
       }
       
-      console.log('=== CREATE CONVERSATION DEBUG ===');
-      console.log('Participant 1 (from frontend):', participant1Id);
-      console.log('Participant 2 (from frontend):', participant2Id);
+      // Check if either participant is banned
+      const pool = await getPool();
+      const [p1Banned, p2Banned] = await Promise.all([
+        checkEntityBanned(pool, participant1Id),
+        checkEntityBanned(pool, participant2Id)
+      ]);
+
+      if (p1Banned || p2Banned) {
+        return res.status(403).json({ 
+          success: false, 
+          message: "Không thể tạo cuộc trò chuyện với tài khoản này" 
+        });
+      }
       
       let conversation = await Message.findOne({
         $or: [
@@ -39,11 +144,7 @@ class MessageController {
           "Cuộc Trò Chuyện": {}
         });
         await conversation.save();
-        console.log('Created new conversation with IDs:', String(participant1Id), String(participant2Id));
-      } else {
-        console.log('Found existing conversation');
       }
-      console.log('========================');
       res.status(200).json({ success: true, data: conversation, message: "Conversation found/created" });
     } catch (error) {
       console.error('Error in getOrCreateConversation:', error);
@@ -59,43 +160,83 @@ class MessageController {
         return res.status(401).json({ success: false, message: "Unauthorized" });
       }
       
-      // Get EntityAccountId from query param if provided (for specific role)
       const requestedEntityAccountId = req.query?.entityAccountId;
-      
       let entityAccountIds = [];
       
+      const pool = await getPool();
+      
       if (requestedEntityAccountId) {
-        // If specific EntityAccountId is requested, use only that one
         entityAccountIds = [requestedEntityAccountId];
       } else {
-        // Otherwise, get all EntityAccountIds for this AccountId (all roles)
-        const { getPool, sql } = require("../db/sqlserver");
-        const pool = await getPool();
         const allEntityAccounts = await pool.request()
           .input("AccountId", sql.UniqueIdentifier, accountId)
-          .query(`
-            SELECT EntityAccountId 
-            FROM EntityAccounts 
-            WHERE AccountId = @AccountId
-          `);
+          .query(`SELECT EntityAccountId FROM EntityAccounts WHERE AccountId = @AccountId`);
         entityAccountIds = allEntityAccounts.recordset.map(r => String(r.EntityAccountId));
       }
       
       if (entityAccountIds.length === 0) {
-        // Fallback to Account EntityAccountId
         const accountEntityAccountId = await getEntityAccountIdByAccountId(accountId) || accountId;
         entityAccountIds = [accountEntityAccountId];
       }
       
-      // Query conversations for all EntityAccountIds
       const conversations = await Message.find({
         $or: [
           { "Người 1": { $in: entityAccountIds } },
           { "Người 2": { $in: entityAccountIds } }
         ]
-      }).sort({ updatedAt: -1 });
+      }).sort({ updatedAt: -1 }).lean();
       
-      res.status(200).json({ success: true, data: conversations, message: "Conversations retrieved successfully" });
+      // Enrich conversations with participant status
+      const enrichedConversations = await Promise.all(
+        conversations.map(async (conv) => {
+          const participant1Id = conv["Người 1"];
+          const participant2Id = conv["Người 2"];
+          
+          const [p1Status, p2Status] = await Promise.all([
+            getEntityStatus(pool, participant1Id),
+            getEntityStatus(pool, participant2Id)
+          ]);
+          
+          // Convert Map to plain object for JSON serialization
+          const convObj = {
+            ...conv,
+            participant1Status: p1Status,
+            participant2Status: p2Status
+          };
+          
+          // Ensure "Cuộc Trò Chuyện" is properly serialized
+          // MongoDB Map serializes to object with message IDs as keys
+          // Convert to array of messages for easier frontend processing
+          if (conv["Cuộc Trò Chuyện"]) {
+            let messagesArray = [];
+            
+            if (conv["Cuộc Trò Chuyện"] instanceof Map) {
+              // Convert Map to array
+              messagesArray = Array.from(conv["Cuộc Trò Chuyện"].values());
+            } else if (Array.isArray(conv["Cuộc Trò Chuyện"])) {
+              // Already an array
+              messagesArray = conv["Cuộc Trò Chuyện"];
+            } else if (typeof conv["Cuộc Trò Chuyện"] === 'object') {
+              // Object with message IDs as keys - convert to array
+              messagesArray = Object.values(conv["Cuộc Trò Chuyện"]);
+            }
+            
+            // Sort by time (newest first) and keep as array
+            messagesArray.sort((a, b) => {
+              const timeA = a && a["Gửi Lúc"] ? new Date(a["Gửi Lúc"]).getTime() : 0;
+              const timeB = b && b["Gửi Lúc"] ? new Date(b["Gửi Lúc"]).getTime() : 0;
+              return timeB - timeA;
+            });
+            
+            // Store as array for easier frontend access
+            convObj["Cuộc Trò Chuyện"] = messagesArray;
+          }
+          
+          return convObj;
+        })
+      );
+      
+      res.status(200).json({ success: true, data: enrichedConversations, message: "Conversations retrieved successfully" });
     } catch (error) {
       res.status(500).json({ success: false, message: "Internal server error", error: error.message });
     }
@@ -110,155 +251,95 @@ class MessageController {
         return res.status(400).json({ success: false, message: "Missing required fields" });
       }
       
-      // Lấy conversation trước để biết participants
       let conversation = await Message.findById(conversationId);
       if (!conversation) {
         return res.status(404).json({ success: false, message: "Conversation not found" });
       }
       
-      // Tìm đúng EntityAccountId từ conversation (hỗ trợ cả Account và role như BarPage/BusinessAccount)
-      // Priority: Use entityType + entityId (or just entityId) to find EntityAccountId > Use senderEntityAccountId from request > Find from conversation > Fallback to Account EntityAccountId
       let senderEntityAccountId = null;
+      const pool = await getPool();
       
-      // Priority 1: If frontend provided entityType and/or entityId, use them to find EntityAccountId
       if (entityType || entityId) {
         try {
-          const pool = await getPool();
-          
-          // If both entityType and entityId provided, use both (most accurate)
           if (entityType && entityId) {
-            // Map entityType to EntityType in database
             let dbEntityType = entityType;
-            if (entityType === "Business") {
-              dbEntityType = "BusinessAccount";
-            } else if (entityType === "Account") {
-              dbEntityType = "Account";
-            } else if (entityType === "BarPage") {
-              dbEntityType = "BarPage";
-            }
+            if (entityType === "Business") dbEntityType = "BusinessAccount";
+            else if (entityType === "Account") dbEntityType = "Account";
+            else if (entityType === "BarPage") dbEntityType = "BarPage";
             
             const entityAccountQuery = await pool.request()
               .input("AccountId", sql.UniqueIdentifier, accountId)
               .input("EntityType", sql.NVarChar, dbEntityType)
               .input("EntityId", sql.UniqueIdentifier, entityId)
-              .query(`
-                SELECT EntityAccountId 
-                FROM EntityAccounts 
-                WHERE AccountId = @AccountId AND EntityType = @EntityType AND EntityId = @EntityId
-              `);
+              .query(`SELECT EntityAccountId FROM EntityAccounts WHERE AccountId = @AccountId AND EntityType = @EntityType AND EntityId = @EntityId`);
             
             if (entityAccountQuery.recordset.length > 0) {
               senderEntityAccountId = String(entityAccountQuery.recordset[0].EntityAccountId);
-              console.log('✅ Using EntityAccountId from entityType + entityId:', senderEntityAccountId, 'for', entityType, entityId);
             }
-          }
-          // If only entityId provided, find by AccountId + EntityId (EntityId is unique per AccountId)
-          else if (entityId) {
+          } else if (entityId) {
             const entityAccountQuery = await pool.request()
               .input("AccountId", sql.UniqueIdentifier, accountId)
               .input("EntityId", sql.UniqueIdentifier, entityId)
-              .query(`
-                SELECT EntityAccountId 
-                FROM EntityAccounts 
-                WHERE AccountId = @AccountId AND EntityId = @EntityId
-              `);
+              .query(`SELECT EntityAccountId FROM EntityAccounts WHERE AccountId = @AccountId AND EntityId = @EntityId`);
             
             if (entityAccountQuery.recordset.length > 0) {
               senderEntityAccountId = String(entityAccountQuery.recordset[0].EntityAccountId);
-              console.log('✅ Using EntityAccountId from entityId:', senderEntityAccountId, 'for entityId:', entityId);
             }
-          }
-          // If only entityType provided, find first matching EntityAccountId (less accurate, but better than nothing)
-          else if (entityType) {
+          } else if (entityType) {
             let dbEntityType = entityType;
-            if (entityType === "Business") {
-              dbEntityType = "BusinessAccount";
-            } else if (entityType === "Account") {
-              dbEntityType = "Account";
-            } else if (entityType === "BarPage") {
-              dbEntityType = "BarPage";
-            }
+            if (entityType === "Business") dbEntityType = "BusinessAccount";
+            else if (entityType === "Account") dbEntityType = "Account";
+            else if (entityType === "BarPage") dbEntityType = "BarPage";
             
             const entityAccountQuery = await pool.request()
               .input("AccountId", sql.UniqueIdentifier, accountId)
               .input("EntityType", sql.NVarChar, dbEntityType)
-              .query(`
-                SELECT TOP 1 EntityAccountId 
-                FROM EntityAccounts 
-                WHERE AccountId = @AccountId AND EntityType = @EntityType
-              `);
+              .query(`SELECT TOP 1 EntityAccountId FROM EntityAccounts WHERE AccountId = @AccountId AND EntityType = @EntityType`);
             
             if (entityAccountQuery.recordset.length > 0) {
               senderEntityAccountId = String(entityAccountQuery.recordset[0].EntityAccountId);
-              console.log('✅ Using EntityAccountId from entityType (first match):', senderEntityAccountId, 'for entityType:', entityType);
             }
-          }
-          
-          if (!senderEntityAccountId) {
-            console.warn('⚠️ EntityAccountId not found with provided entityType/entityId, will try other methods');
           }
         } catch (error) {
           console.error('Error finding EntityAccountId from entityType/entityId:', error);
         }
       }
       
-      // Priority 2: If frontend provided senderEntityAccountId, validate it belongs to this AccountId
       if (!senderEntityAccountId && requestedSenderEntityAccountId) {
         try {
-          const pool = await getPool();
           const validationQuery = await pool.request()
             .input("AccountId", sql.UniqueIdentifier, accountId)
             .input("EntityAccountId", sql.UniqueIdentifier, requestedSenderEntityAccountId)
-            .query(`
-              SELECT EntityAccountId 
-              FROM EntityAccounts 
-              WHERE AccountId = @AccountId AND EntityAccountId = @EntityAccountId
-            `);
+            .query(`SELECT EntityAccountId FROM EntityAccounts WHERE AccountId = @AccountId AND EntityAccountId = @EntityAccountId`);
           
           if (validationQuery.recordset.length > 0) {
-            // Valid: senderEntityAccountId belongs to this AccountId
             senderEntityAccountId = String(requestedSenderEntityAccountId);
-            console.log('✅ Using senderEntityAccountId from request (validated):', senderEntityAccountId);
-          } else {
-            console.warn('⚠️ Requested senderEntityAccountId does not belong to this AccountId, will find from conversation');
           }
         } catch (error) {
           console.error('Error validating senderEntityAccountId from request:', error);
         }
       }
       
-      // If not provided or invalid, find from conversation (fallback)
       if (!senderEntityAccountId) {
         try {
-          const pool = await getPool();
           const allEntityAccounts = await pool.request()
             .input("AccountId", sql.UniqueIdentifier, accountId)
-            .query(`
-              SELECT EntityAccountId 
-              FROM EntityAccounts 
-              WHERE AccountId = @AccountId
-            `);
+            .query(`SELECT EntityAccountId FROM EntityAccounts WHERE AccountId = @AccountId`);
           
           const allEntityAccountIds = allEntityAccounts.recordset.map(r => String(r.EntityAccountId));
           const participant1 = String(conversation["Người 1"]).toLowerCase().trim();
           const participant2 = String(conversation["Người 2"]).toLowerCase().trim();
           
-          // Tìm EntityAccountId nào khớp với participant trong conversation
           senderEntityAccountId = allEntityAccountIds.find(eaId => {
             const eaIdNormalized = String(eaId).toLowerCase().trim();
             return eaIdNormalized === participant1 || eaIdNormalized === participant2;
           });
           
-          // Nếu không tìm thấy, fallback về Account EntityAccountId
           if (!senderEntityAccountId) {
             senderEntityAccountId = await getEntityAccountIdByAccountId(accountId) || accountId;
-            console.log('⚠️ No matching EntityAccountId found in conversation, using Account EntityAccountId:', senderEntityAccountId);
-          } else {
-            console.log('✅ Found matching EntityAccountId from conversation:', senderEntityAccountId);
           }
         } catch (error) {
           console.error('Error finding EntityAccountId from conversation, using fallback:', error);
-          // Fallback về Account EntityAccountId nếu có lỗi
           senderEntityAccountId = await getEntityAccountIdByAccountId(accountId) || accountId;
         }
       }
@@ -267,45 +348,41 @@ class MessageController {
       const message = {
         "Nội Dung Tin Nhắn": content,
         "Gửi Lúc": new Date(),
-        "Người Gửi": senderEntityAccountId, // Lưu EntityAccountId
+        "Người Gửi": senderEntityAccountId,
         "Loại": messageType
       };
+      
+      // Add metadata if provided (e.g., story reply metadata)
+      if (req.body.isStoryReply) {
+        message.isStoryReply = true;
+        if (req.body.storyId) message.storyId = req.body.storyId;
+        if (req.body.storyUrl) message.storyUrl = req.body.storyUrl;
+      }
       
       conversation["Cuộc Trò Chuyện"].set(messageId, message);
       await conversation.save();
 
-      // Xác định receiverId (đã là EntityAccountId trong conversation)
-      let receiverId = null;
-      if (String(conversation["Người 1"]) === String(senderEntityAccountId)) {
-        receiverId = conversation["Người 2"];
-      } else {
-        receiverId = conversation["Người 1"];
-      }
+      let receiverId = (String(conversation["Người 1"]) === String(senderEntityAccountId)) ? conversation["Người 2"] : conversation["Người 1"];
       
-      console.log('📤 Message sent - Sender:', senderEntityAccountId, '| Receiver:', receiverId);
-
-      // Gửi realtime qua socket.io (giống Messenger: emit đến conversation room)
       try {
         const io = getIO();
         const receiverIdStr = String(receiverId);
         const conversationRoom = `conversation:${conversationId}`;
         
-        const messagePayload = {
-          conversationId,
-          messageId,
-          ...message
+        const messagePayload = { 
+          conversationId, 
+          messageId, 
+          ...message,
+          // Include metadata in socket payload
+          isStoryReply: message.isStoryReply || false,
+          storyId: message.storyId || null,
+          storyUrl: message.storyUrl || null
         };
         
-        // Emit đến conversation room (cả sender và receiver đều nhận nếu đang mở conversation)
         io.to(conversationRoom).emit('new_message', messagePayload);
-        
-        // Cũng emit đến receiver room để notify khi không mở conversation
         io.to(receiverIdStr).emit('new_message', messagePayload);
-        
-        console.log('📤 Message emitted to conversation room:', conversationRoom, 'and receiver room:', receiverIdStr);
       } catch (e) {
         console.error('Error emitting socket message:', e);
-        // Nếu socket chưa init thì bỏ qua, không crash
       }
 
       res.status(201).json({ success: true, data: { messageId, content, senderId: senderEntityAccountId, messageType }, message: "Message sent" });
@@ -318,120 +395,36 @@ class MessageController {
   async getMessages(req, res) {
     try {
       const { conversationId } = req.params;
-      const accountId = req.user?.id; // AccountId từ JWT
+      const accountId = req.user?.id;
       if (!accountId) {
         return res.status(401).json({ success: false, message: "Unauthorized" });
       }
-      // Convert AccountId to EntityAccountId (vì conversation lưu EntityAccountId)
-      const entityAccountId = await getEntityAccountIdByAccountId(accountId);
-      
-      console.log('=== GET MESSAGES DEBUG ===');
-      console.log('AccountId from JWT:', accountId);
-      console.log('EntityAccountId converted:', entityAccountId);
       
       const conversation = await Message.findById(conversationId);
       if (!conversation) {
         return res.status(404).json({ success: false, message: "Conversation not found" });
       }
       
-      // Normalize IDs to string and lowercase for comparison
-      const participant1 = String(conversation["Người 1"]).toLowerCase().trim();
-      const participant2 = String(conversation["Người 2"]).toLowerCase().trim();
-      const userEntityId = entityAccountId ? String(entityAccountId).toLowerCase().trim() : null;
-      
-      console.log('Conversation Participant 1 (raw):', conversation["Người 1"]);
-      console.log('Conversation Participant 2 (raw):', conversation["Người 2"]);
-      console.log('Conversation Participant 1 (normalized):', participant1);
-      console.log('Conversation Participant 2 (normalized):', participant2);
-      console.log('User EntityAccountId (normalized):', userEntityId);
-      
-      // Verify user is participant
-      // Conversation có thể lưu EntityAccountId hoặc AccountId (do frontend có thể gửi sai)
       let isParticipant = false;
-      const accountIdNormalized = String(accountId).toLowerCase().trim();
-      
-      // Check 1: So sánh với EntityAccountId
-      if (userEntityId) {
-        isParticipant = participant1 === userEntityId || participant2 === userEntityId;
-        console.log('Check 1 - EntityAccountId match:', isParticipant);
-      }
-      
-      // Check 2: So sánh với AccountId (fallback nếu conversation lưu AccountId)
-      if (!isParticipant) {
-        isParticipant = participant1 === accountIdNormalized || participant2 === accountIdNormalized;
-        console.log('Check 2 - AccountId match:', isParticipant);
-      }
-      
-      // Check 3: Query tất cả EntityAccountId của AccountId để tìm match
-      if (!isParticipant && accountId) {
-        console.log('Check 3 - Querying all EntityAccountIds for AccountId...');
         try {
           const pool = await getPool();
           const allEntityAccounts = await pool.request()
             .input("AccountId", sql.UniqueIdentifier, accountId)
-            .query(`
-              SELECT EntityAccountId 
-              FROM EntityAccounts 
-              WHERE AccountId = @AccountId
-            `);
+          .query(`SELECT EntityAccountId FROM EntityAccounts WHERE AccountId = @AccountId`);
           
           const allEntityAccountIds = allEntityAccounts.recordset.map(r => String(r.EntityAccountId).toLowerCase().trim());
-          console.log('All EntityAccountIds for AccountId:', allEntityAccountIds);
-          
-          // Check if any EntityAccountId matches participants
-          isParticipant = allEntityAccountIds.some(eaId => 
-            participant1 === eaId || participant2 === eaId
-          );
-          
-          if (isParticipant) {
-            console.log('✅ Found matching EntityAccountId in all EntityAccounts!');
-          }
+        const participant1 = String(conversation["Người 1"]).toLowerCase().trim();
+        const participant2 = String(conversation["Người 2"]).toLowerCase().trim();
+
+        isParticipant = allEntityAccountIds.some(eaId => participant1 === eaId || participant2 === eaId);
         } catch (error) {
           console.error('Error querying all EntityAccountIds:', error);
         }
-      }
-      
-      console.log('Is participant:', isParticipant);
-      if (!isParticipant) {
-        console.error('❌ PARTICIPANT MISMATCH - ACCESS DENIED!');
-        console.error('📋 Conversation ID:', conversationId);
-        console.error('👤 AccountId from JWT:', accountId);
-        console.error('🆔 EntityAccountId converted:', entityAccountId);
-        console.error('📝 Conversation Participant 1 (raw):', conversation["Người 1"], '| Type:', typeof conversation["Người 1"]);
-        console.error('📝 Conversation Participant 2 (raw):', conversation["Người 2"], '| Type:', typeof conversation["Người 2"]);
-        console.error('📝 Conversation Participant 1 (normalized):', participant1);
-        console.error('📝 Conversation Participant 2 (normalized):', participant2);
-        console.error('👤 User EntityAccountId (normalized):', userEntityId);
-        console.error('🔍 Comparison results:');
-        console.error('   - participant1 === userEntityId:', participant1 === userEntityId);
-        console.error('   - participant2 === userEntityId:', participant2 === userEntityId);
-        if (userEntityId) {
-          console.error('   - participant1 length:', participant1.length, '| userEntityId length:', userEntityId.length);
-          console.error('   - participant2 length:', participant2.length, '| userEntityId length:', userEntityId.length);
-          console.error('   - participant1 startsWith userEntityId:', participant1.startsWith(userEntityId));
-          console.error('   - participant2 startsWith userEntityId:', participant2.startsWith(userEntityId));
-          console.error('   - userEntityId startsWith participant1:', userEntityId.startsWith(participant1));
-          console.error('   - userEntityId startsWith participant2:', userEntityId.startsWith(participant2));
-        }
-        console.error('❌ REASON: User EntityAccountId does not match any participant in conversation');
-      }
-      console.log('========================');
       
       if (!isParticipant) {
-        return res.status(403).json({ 
-          success: false, 
-          message: "Access denied",
-          debug: {
-            accountId,
-            entityAccountId,
-            participant1: conversation["Người 1"],
-            participant2: conversation["Người 2"],
-            userEntityId,
-            reason: "User EntityAccountId does not match any participant in conversation"
-          }
-        });
+        return res.status(403).json({ success: false, message: "Access denied" });
       }
-      // Trả về mảng tin nhắn (convert từ Map sang Array)
+
       const messages = Array.from(conversation["Cuộc Trò Chuyện"].values());
       res.status(200).json({ success: true, data: messages, message: "Messages retrieved" });
     } catch (error) {
@@ -444,52 +437,42 @@ class MessageController {
   async markMessagesRead(req, res) {
     try {
       const { conversationId } = req.body;
-      const accountId = req.user?.id; // AccountId từ JWT
+      const accountId = req.user?.id;
       if (!accountId || !conversationId) {
         return res.status(400).json({ success: false, message: "Missing required fields" });
       }
       
-      // Lấy conversation trước để biết participants
       const conversation = await Message.findById(conversationId);
       if (!conversation) {
         return res.status(404).json({ success: false, message: "Conversation not found" });
       }
       
-      // Tìm đúng EntityAccountId từ conversation (hỗ trợ cả Account và role như BarPage/BusinessAccount)
       let entityAccountId = null;
       try {
         const pool = await getPool();
         const allEntityAccounts = await pool.request()
           .input("AccountId", sql.UniqueIdentifier, accountId)
-          .query(`
-            SELECT EntityAccountId 
-            FROM EntityAccounts 
-            WHERE AccountId = @AccountId
-          `);
+          .query(`SELECT EntityAccountId FROM EntityAccounts WHERE AccountId = @AccountId`);
         
         const allEntityAccountIds = allEntityAccounts.recordset.map(r => String(r.EntityAccountId));
         const participant1 = String(conversation["Người 1"]).toLowerCase().trim();
         const participant2 = String(conversation["Người 2"]).toLowerCase().trim();
         
-        // Tìm EntityAccountId nào khớp với participant trong conversation
         entityAccountId = allEntityAccountIds.find(eaId => {
           const eaIdNormalized = String(eaId).toLowerCase().trim();
           return eaIdNormalized === participant1 || eaIdNormalized === participant2;
         });
         
-        // Nếu không tìm thấy, fallback về Account EntityAccountId
         if (!entityAccountId) {
           entityAccountId = await getEntityAccountIdByAccountId(accountId) || accountId;
         }
       } catch (error) {
         console.error('Error finding EntityAccountId from conversation, using fallback:', error);
-        // Fallback về Account EntityAccountId nếu có lỗi
         entityAccountId = await getEntityAccountIdByAccountId(accountId) || accountId;
       }
       
       let updated = false;
       conversation["Cuộc Trò Chuyện"].forEach((msg, key) => {
-        // So sánh với EntityAccountId (vì msg["Người Gửi"] là EntityAccountId)
         if (String(msg["Người Gửi"]) !== String(entityAccountId) && !msg["Đã Đọc"]) {
           msg["Đã Đọc"] = true;
           conversation["Cuộc Trò Chuyện"].set(key, msg);

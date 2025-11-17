@@ -131,6 +131,58 @@ async function updatePassword(accountId, hashedPassword) {
     .query(`UPDATE Accounts SET Password = @Password WHERE AccountId = @AccountId`);
 }
 
+// Admin listing with filters and pagination
+async function listAccounts({ query = "", role = "", status = "", page = 1, pageSize = 20 }) {
+  const pool = await getPool();
+  const q = `%${query}%`;
+  const offset = (page - 1) * pageSize;
+
+  // Build dynamic WHERE
+  let where = "WHERE 1=1";
+  if (query) where += " AND (Email LIKE @q OR UserName LIKE @q)";
+  if (role) where += " AND Role = @Role";
+  if (status) where += " AND Status = @Status";
+
+  const countSql = `SELECT COUNT(1) AS total FROM Accounts ${where}`;
+  const dataSql = `SELECT AccountId, Email, UserName, Role, Status, Avatar, created_at
+                   FROM Accounts ${where}
+                   ORDER BY created_at DESC
+                   OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY`;
+
+  const request = pool.request()
+    .input("q", sql.NVarChar(200), q)
+    .input("Role", sql.NVarChar(50), role || null)
+    .input("Status", sql.NVarChar(20), status || null)
+    .input("offset", sql.Int, offset)
+    .input("pageSize", sql.Int, pageSize);
+
+  const [countRs, dataRs] = await Promise.all([
+    request.query(countSql),
+    request.query(dataSql)
+  ]);
+
+  const total = countRs.recordset?.[0]?.total || 0;
+  return { total, items: dataRs.recordset };
+}
+
+async function updateAccountStatus(accountId, status) {
+  const pool = await getPool();
+  const rs = await pool.request()
+    .input("AccountId", sql.UniqueIdentifier, accountId)
+    .input("Status", sql.NVarChar(20), status)
+    .query("UPDATE Accounts SET Status = @Status WHERE AccountId = @AccountId; SELECT AccountId, Email, UserName, Role, Status FROM Accounts WHERE AccountId = @AccountId");
+  return rs.recordset?.[0] || null;
+}
+
+async function updateAccountRole(accountId, role) {
+  const pool = await getPool();
+  const rs = await pool.request()
+    .input("AccountId", sql.UniqueIdentifier, accountId)
+    .input("Role", sql.NVarChar(50), role)
+    .query("UPDATE Accounts SET Role = @Role WHERE AccountId = @AccountId; SELECT AccountId, Email, UserName, Role, Status FROM Accounts WHERE AccountId = @AccountId");
+  return rs.recordset?.[0] || null;
+}
+
 module.exports = {
   findAccountByEmail,
   getAccountById,
@@ -138,5 +190,8 @@ module.exports = {
   updateLastLogin,
   updateAccountInfo,
   hasProfileComplete,
-  updatePassword
+  updatePassword,
+  listAccounts,
+  updateAccountStatus,
+  updateAccountRole
 };

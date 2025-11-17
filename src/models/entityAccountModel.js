@@ -148,17 +148,17 @@ async function getEntitiesByAccountId(accountId) {
   // 1. Lấy BarPages kèm EntityAccountId
   const barPagesResult = await pool.request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
-    .query(`SELECT b.BarPageId AS id, b.BarName AS name, b.Avatar AS avatar, b.Role AS role, ea.EntityAccountId
+    .query(`SELECT b.BarPageId AS id, b.BarName AS name, b.Avatar AS avatar, b.Role AS role, b.Status AS status, ea.EntityAccountId
             FROM BarPages b
-            JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = b.BarPageId
+            LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = b.BarPageId
             WHERE b.AccountId = @AccountId`);
 
   // 2. Lấy BusinessAccounts kèm EntityAccountId
   const businessAccountsResult = await pool.request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
-    .query(`SELECT ba.BussinessAccountId AS id, ba.UserName AS name, ba.Avatar AS avatar, ba.Role AS role, ea.EntityAccountId
+    .query(`SELECT ba.BussinessAccountId AS id, ba.UserName AS name, ba.Avatar AS avatar, ba.Role AS role, ba.Status AS status, ea.EntityAccountId
             FROM BussinessAccounts ba
-            JOIN EntityAccounts ea ON ea.EntityType = 'BusinessAccount' AND ea.EntityId = ba.BussinessAccountId
+            LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BusinessAccount' AND ea.EntityId = ba.BussinessAccountId
             WHERE ba.AccountId = @AccountId`);
 
   // 3. Lấy Account chính kèm EntityAccountId
