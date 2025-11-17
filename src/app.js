@@ -28,6 +28,7 @@ const {
   livestreamRoutes,
   mediaRoutes,
   bookingRoutes,
+  adminRoutes,
 } = require("./routes");
 
 
@@ -127,6 +128,7 @@ app.use("/api/bank-info", bankInfoRoutes);
 app.use("/api/livestream", livestreamRoutes);
 app.use("/api/medias", mediaRoutes);
 app.use("/api/booking", bookingRoutes);
+app.use("/api/admin", adminRoutes);
 
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);

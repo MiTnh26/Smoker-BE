@@ -17,7 +17,7 @@ async function searchBars(pool, q, limit) {
         ea.EntityAccountId AS entityAccountId
       FROM BarPages bp
       LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = bp.BarPageId
-      WHERE bp.BarName LIKE @q
+      WHERE bp.BarName LIKE @q AND (bp.Status IS NULL OR bp.Status != 'banned')
       ORDER BY bp.created_at DESC
     `);
   return result.recordset;
@@ -35,7 +35,7 @@ async function searchBusiness(pool, q, limit) {
         CASE WHEN UPPER(ba.Role) = 'DJ' THEN 'DJ' ELSE 'DANCER' END AS type
       FROM BussinessAccounts ba
       JOIN EntityAccounts ea ON ea.EntityType = 'BusinessAccount' AND ea.EntityId = ba.BussinessAccountId
-      WHERE ba.UserName LIKE @q
+      WHERE ba.UserName LIKE @q AND (ba.Status IS NULL OR ba.Status != 'banned')
       ORDER BY ba.created_at DESC
     `);
   return result.recordset;
@@ -53,7 +53,7 @@ async function searchUsers(pool, q, limit) {
         'USER' AS type
       FROM Accounts a
       JOIN EntityAccounts ea ON ea.EntityType = 'Account' AND ea.EntityId = a.AccountId
-      WHERE a.UserName LIKE @q
+      WHERE a.UserName LIKE @q AND (a.Status IS NULL OR a.Status != 'banned')
       ORDER BY a.created_at DESC
     `);
   return result.recordset;
@@ -70,5 +70,3 @@ exports.searchAll = async (q, limit = 10) => {
   const dancers = performers.filter(p => String(p.type).toUpperCase() === 'DANCER');
   return { users, bars, djs, dancers };
 };
-
-
