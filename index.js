@@ -11,14 +11,14 @@ app.use(
     credentials: true, // nếu bạn dùng cookie, token hoặc session
   })
 );
-//Ket noi voi mongodb
-// const mongoose = require("mongoose");
-// mongoose
-//   .connect(`${process.env.URL}${process.env.DBNAME}`)
-//   .then(() => console.log("Connecting to mongodb using mongoose"))
-//   .catch((err) => console.log(`Connect fail:${err}`));
 
-// //Cho server Khoi dong
+ const mongoose = require("mongoose");
+ mongoose
+   .connect(`${process.env.URL}${process.env.DBNAME}`)
+  .then(() => console.log("Connecting to mongodb using mongoose"))
+  .catch((err) => console.log(`Connect fail:${err}`));
+
+ //Cho server Khoi dong
 
 const port = process.env.PORT || 9999;
 app.listen(port, () => {
