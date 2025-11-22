@@ -6,7 +6,7 @@ module.exports = {
     port: Number.parseInt(process.env.MSSQL_PORT, 10) || 1433,
     options: {
       encrypt: true,
-      trustServerCertificate: false,
+      trustServerCertificate: true,
     },
   };
   
