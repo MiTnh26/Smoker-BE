@@ -97,8 +97,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Khởi tạo kết nối SQL Server
-initSQLConnection();
+// Khởi tạo kết nối SQL Server và tự động tạo admin account khi server khởi động
+const { initializeAdmin } = require("./utils/adminSetup");
+initSQLConnection().then(() => {
+  initializeAdmin();
+}).catch(err => {
+  console.error("⚠️  SQL connection failed, skipping admin initialization");
+});
 
 // Routes
 
