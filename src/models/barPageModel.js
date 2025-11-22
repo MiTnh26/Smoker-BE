@@ -2,6 +2,7 @@ const { getPool, sql } = require("../db/sqlserver");
 
 /**
  * Lấy thông tin BarPage theo ID
+ * JOIN với EntityAccounts để lấy EntityAccountId
  */
 async function getBarPageById(barPageId) {
   const pool = await getPool();
@@ -9,9 +10,10 @@ async function getBarPageById(barPageId) {
     .request()
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
     .query(`
-      SELECT BarPageId, AccountId, BarName, Avatar, Background, Address, PhoneNumber, Role, Email, created_at
-      FROM BarPages
-      WHERE BarPageId = @BarPageId
+      SELECT b.BarPageId, b.AccountId, b.BarName, b.Avatar, b.Background, b.Address, b.PhoneNumber, b.Role, b.Email, b.Status, b.created_at, ea.EntityAccountId
+      FROM BarPages b
+      LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = b.BarPageId
+      WHERE b.BarPageId = @BarPageId
     `);
   return result.recordset[0] || null;
 }
@@ -26,7 +28,7 @@ async function getBarPageByAccountId(accountId) {
     .request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
     .query(`
-      SELECT b.BarPageId, b.AccountId, b.BarName, b.Avatar, b.Background, b.Address, b.PhoneNumber, b.Role, b.Email, b.created_at, ea.EntityAccountId
+      SELECT b.BarPageId, b.AccountId, b.BarName, b.Avatar, b.Background, b.Address, b.PhoneNumber, b.Role, b.Email, b.Status, b.created_at, ea.EntityAccountId
       FROM BarPages b
       LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = b.BarPageId
       WHERE b.AccountId = @AccountId
@@ -55,6 +57,7 @@ async function getFeaturedBarPages(limit = 6) {
         bp.PhoneNumber,
         bp.Email,
         bp.Role,
+        bp.Status,
         bp.created_at,
         ea.EntityAccountId,
         COUNT(br.BarReviewId) AS ReviewCount,
@@ -74,6 +77,7 @@ async function getFeaturedBarPages(limit = 6) {
         bp.PhoneNumber,
         bp.Email,
         bp.Role,
+        bp.Status,
         bp.created_at,
         ea.EntityAccountId
       ORDER BY 
@@ -96,7 +100,8 @@ async function createBarPage({
   address = null,
   phoneNumber = null,
   role = "Bar",
-  email = null
+  email = null,
+  status = "pending"
 }) {
   const pool = await getPool();
   const result = await pool
@@ -109,10 +114,11 @@ async function createBarPage({
     .input("PhoneNumber", sql.NVarChar(15), phoneNumber)
     .input("Role", sql.NVarChar(15), role)
     .input("Email", sql.NVarChar(50), email)
+    .input("Status", sql.NVarChar(20), status)
     .query(`
-      INSERT INTO BarPages (AccountId, BarName, Avatar, Background, Address, PhoneNumber, Role, Email)
-      OUTPUT inserted.BarPageId, inserted.AccountId, inserted.BarName, inserted.Role, inserted.Email
-      VALUES (@AccountId, @BarName, @Avatar, @Background, @Address, @PhoneNumber, @Role, @Email)
+      INSERT INTO BarPages (AccountId, BarName, Avatar, Background, Address, PhoneNumber, Role, Email, Status)
+      OUTPUT inserted.BarPageId, inserted.AccountId, inserted.BarName, inserted.Role, inserted.Email, inserted.Status
+      VALUES (@AccountId, @BarName, @Avatar, @Background, @Address, @PhoneNumber, @Role, @Email, @Status)
     `);
 
   return result.recordset[0];
@@ -121,7 +127,7 @@ async function createBarPage({
 /**
  * Cập nhật thông tin BarPage
  */
-async function updateBarPage(barPageId, { barName, avatar, background, address, phoneNumber, email }) {
+async function updateBarPage(barPageId, { barName, avatar, background, address, phoneNumber, email, status }) {
   const pool = await getPool();
   const request = pool.request()
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
@@ -130,7 +136,8 @@ async function updateBarPage(barPageId, { barName, avatar, background, address, 
     .input("Background", sql.NVarChar(sql.MAX), background || null) 
     .input("Address", sql.NVarChar(255), address || null)
     .input("PhoneNumber", sql.NVarChar(15), phoneNumber || null)
-    .input("Email", sql.NVarChar(50), email || null);
+    .input("Email", sql.NVarChar(50), email || null)
+    .input("Status", sql.NVarChar(20), status || null);
 
   const result = await request.query(`
     UPDATE BarPages
@@ -140,10 +147,11 @@ async function updateBarPage(barPageId, { barName, avatar, background, address, 
       Background = COALESCE(@Background, Background),
       Address = COALESCE(@Address, Address),
       PhoneNumber = COALESCE(@PhoneNumber, PhoneNumber),
-      Email = COALESCE(@Email, Email)
+      Email = COALESCE(@Email, Email),
+      Status = COALESCE(@Status, Status)
     WHERE BarPageId = @BarPageId;
 
-    SELECT BarPageId, AccountId, BarName, Avatar, Background, Address, PhoneNumber, Role, Email, created_at
+    SELECT BarPageId, AccountId, BarName, Avatar, Background, Address, PhoneNumber, Role, Email, Status, created_at
     FROM BarPages WHERE BarPageId = @BarPageId;
   `);
 
