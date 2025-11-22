@@ -114,6 +114,29 @@ class NotificationService {
       });
 
       await notification.save();
+      
+      // Emit socket event to receiver
+      try {
+        const { getIO } = require("../utils/socket");
+        const io = getIO();
+        const receiverId = receiverEntityAccountId || receiver;
+        const receiverRoom = String(receiverId);
+        
+        // Get unread count
+        const unreadResult = await this.getUnreadCount(receiverId);
+        const unreadCount = unreadResult.success ? unreadResult.data?.count || 0 : 0;
+        
+        // Emit to room
+        io.to(receiverRoom).emit("new_notification", {
+          notification: notification.toObject(),
+          unreadCount: unreadCount
+        });
+        console.log(`[NotificationService] Emitted notification to room: ${receiverRoom}, unreadCount: ${unreadCount}`);
+      } catch (socketError) {
+        console.warn("[NotificationService] Failed to emit socket event:", socketError.message);
+        // Don't fail the notification creation if socket fails
+      }
+      
       return {
         success: true,
         data: notification,
@@ -444,13 +467,17 @@ class NotificationService {
 
   /**
    * Get unread count for a user
-   * @param {String|ObjectId} userId - User ID
+   * @param {String|ObjectId} userId - User ID (AccountId or EntityAccountId)
    * @returns {Promise<Object>} Unread count
    */
   async getUnreadCount(userId) {
     try {
+      // Try to find by receiverEntityAccountId first, then fallback to receiver (AccountId)
       const count = await Notification.countDocuments({
-        receiver: userId,
+        $or: [
+          { receiverEntityAccountId: userId },
+          { receiver: userId }
+        ],
         status: "Unread",
       });
 
