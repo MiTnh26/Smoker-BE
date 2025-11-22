@@ -42,10 +42,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
-    credentials: true,
+    origin: "*",
   })
 );
+
 // Khởi tạo kết nối MongoDB
 connectDB();
 
