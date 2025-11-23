@@ -26,6 +26,8 @@ const {
   bankInfoRoutes,
   livestreamRoutes,
   mediaRoutes,
+  bookingTableRoutes
+ 
 } = require("./routes");
 
 
@@ -63,20 +65,23 @@ app.use("/api/bar-table", barTableRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/business", businessRoutes);
-app.use("/api/events",eventRoutes)
+app.use("/api/events", eventRoutes)
 app.use("/api/posts", postRoutes);
 app.use("/api/stories", storyRoutes);
 app.use("/api/music", musicRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
-
-app.use("/api/events",eventRoutes)
 app.use("/api/song", songRoutes);
 app.use("/api/follow", followRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/bank-info", bankInfoRoutes);
 app.use("/api/livestream", livestreamRoutes);
 app.use("/api/medias", mediaRoutes);
+app.use("/api/bookingtable",bookingTableRoutes)
+
+
+
+
 app.get("/", (req, res) => {
   res.json({ 
     message: "Welcome to Smoker API 🚬",
