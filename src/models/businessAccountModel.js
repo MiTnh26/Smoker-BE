@@ -118,9 +118,22 @@ async function updateBusinessAccountFiles(BussinessAccountId, updates) {
   return result.recordset[0] || null;
 }
 
+async function updateBusinessStatus(id, status){
+  const pool = await getPool();
+  const rs = await pool.request()
+    .input("id", sql.UniqueIdentifier, id)
+    .input("Status", sql.NVarChar(20), status)
+    .query(`
+      UPDATE BussinessAccounts SET Status=@Status WHERE BussinessAccountId=@id;
+      SELECT BussinessAccountId, UserName, Role, Status FROM BussinessAccounts WHERE BussinessAccountId=@id;
+    `);
+  return rs.recordset?.[0] || null;
+}
+
 module.exports = {
   getBusinessAccountById,
   getBusinessAccountsByAccountId,
   createBusinessAccount,
-  updateBusinessAccountFiles
+  updateBusinessAccountFiles,
+  updateBusinessStatus
 };

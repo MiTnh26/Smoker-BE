@@ -1327,16 +1327,96 @@ class PostController {
       };
 
       const skip = (page - 1) * limit;
-      const posts = await Post.find(query)
+      let postsQuery = Post.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit));
 
+      // Populate medias and music
+      postsQuery.populate('mediaIds');
+      postsQuery.populate('musicId');
+      postsQuery.populate('songId');
+
+      const posts = await postsQuery;
       const total = await Post.countDocuments(query);
+
+      // Convert Mongoose documents to plain objects
+      const postsPlain = posts.map(p => {
+        const plain = p.toObject ? p.toObject({ flattenMaps: true }) : p;
+        // Convert Maps to objects
+        if (plain.likes instanceof Map) {
+          const likesObj = {};
+          plain.likes.forEach((value, key) => {
+            likesObj[key] = value;
+          });
+          plain.likes = likesObj;
+        }
+        if (plain.comments instanceof Map) {
+          const commentsObj = {};
+          plain.comments.forEach((value, key) => {
+            const commentObj = value instanceof Map ? Object.fromEntries(value) : value;
+            if (commentObj && commentObj.replies instanceof Map) {
+              const repliesObj = {};
+              commentObj.replies.forEach((replyValue, replyKey) => {
+                repliesObj[replyKey] = replyValue instanceof Map ? Object.fromEntries(replyValue) : replyValue;
+              });
+              commentObj.replies = repliesObj;
+            }
+            commentsObj[key] = commentObj;
+          });
+          plain.comments = commentsObj;
+        }
+        return plain;
+      });
+
+      // Transform populated mediaIds to medias array
+      for (const p of postsPlain) {
+        if (Array.isArray(p.mediaIds) && p.mediaIds.length > 0) {
+          p.medias = p.mediaIds.map(media => {
+            const mediaObj = media.toObject ? media.toObject() : media;
+            const url = (mediaObj.url || '').toLowerCase();
+            
+            // Detect type from URL extension
+            let detectedType = mediaObj.type;
+            if (url.includes('.mp4') || url.includes('.webm') || url.includes('.mov') || 
+                url.includes('.avi') || url.includes('.mkv') || url.includes('video')) {
+              detectedType = 'video';
+            } else if (url.includes('.mp3') || url.includes('.wav') || url.includes('.m4a') || 
+                       url.includes('.ogg') || url.includes('.aac') || url.includes('audio')) {
+              detectedType = 'audio';
+            } else if (!detectedType || detectedType === 'image') {
+              detectedType = detectedType || 'image';
+            }
+            
+            return {
+              _id: mediaObj._id,
+              id: mediaObj._id,
+              url: mediaObj.url,
+              caption: mediaObj.caption || "",
+              type: detectedType,
+              createdAt: mediaObj.createdAt,
+              uploadDate: mediaObj.createdAt
+            };
+          });
+        } else {
+          p.medias = [];
+        }
+        
+        // Transform music
+        if (p.musicId) {
+          p.music = p.musicId.toObject ? p.musicId.toObject() : p.musicId;
+        }
+        if (p.songId) {
+          p.song = p.songId.toObject ? p.songId.toObject() : p.songId;
+        }
+      }
+
+      // Enrich posts with author information
+      await postService.enrichPostsWithAuthorInfo(postsPlain);
 
       res.status(200).json({
         success: true,
-        data: posts,
+        data: postsPlain,
         pagination: {
           page,
           limit,

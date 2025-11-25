@@ -2,15 +2,16 @@ const express = require("express");
 const router = express.Router();
 const { businessController }= require("../controllers");
 const { createCloudinaryUpload } = require("../middleware/uploadCloudinary");
+const { verifyToken, requireActiveEntity } = require("../middleware/authMiddleware");
 
 // 1) Create business account (no file upload)
-router.post("/register", businessController.registerBusiness);
+router.post("/register", verifyToken, businessController.registerBusiness);
 
 // Create DJ account
-router.post("/register-dj", businessController.registerDJ);
+router.post("/register-dj", verifyToken, businessController.registerDJ);
 
 // Create Dancer account
-router.post("/register-dancer", businessController.registerDancer);
+router.post("/register-dancer", verifyToken, businessController.registerDancer);
 
 router.get("/all-businesses/:accountId", businessController.getBusinessesByAccountId);
 
@@ -20,6 +21,8 @@ router.get("/:businessId", businessController.getBusinessById);
 const uploadBusiness = createCloudinaryUpload("businesses");
 router.post(
   "/upload",
+  verifyToken,
+  requireActiveEntity,
   // Map entityId -> accountId so the upload factory puts files under correct folder
   (req, res, next) => {
     if (req.body?.entityId && !req.body.accountId) req.body.accountId = req.body.entityId;
