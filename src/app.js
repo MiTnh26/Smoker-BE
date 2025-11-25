@@ -27,7 +27,13 @@ const {
   bankInfoRoutes,
   livestreamRoutes,
   mediaRoutes,
+<<<<<<< HEAD
+  bookingTableRoutes
+ 
+=======
   bookingRoutes,
+  adminRoutes,
+>>>>>>> origin/main
   payosRoutes,
   adRoutes,
   adminAdRoutes,
@@ -99,8 +105,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Khởi tạo kết nối SQL Server
-initSQLConnection();
+// Khởi tạo kết nối SQL Server và tự động tạo admin account khi server khởi động
+const { initializeAdmin } = require("./utils/adminSetup");
+initSQLConnection().then(() => {
+  initializeAdmin();
+}).catch(err => {
+  console.error("⚠️  SQL connection failed, skipping admin initialization");
+});
 
 // Routes
 
@@ -113,7 +124,11 @@ app.use("/api/bar-table", barTableRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/business", businessRoutes);
+<<<<<<< HEAD
+app.use("/api/events", eventRoutes)
+=======
 app.use("/api/events", eventRoutes);
+>>>>>>> origin/main
 app.use("/api/posts", postRoutes);
 app.use("/api/stories", storyRoutes);
 app.use("/api/bookings", bookingRoutes);
@@ -129,6 +144,13 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/bank-info", bankInfoRoutes);
 app.use("/api/livestream", livestreamRoutes);
 app.use("/api/medias", mediaRoutes);
+<<<<<<< HEAD
+app.use("/api/bookingtable",bookingTableRoutes)
+
+
+
+
+=======
 app.use("/api/booking", bookingRoutes);
 app.use("/api/pay", payosRoutes);
 // UserReview & BarReview APIs
@@ -136,6 +158,12 @@ app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);
 app.use("/api/ads", adRoutes);
 app.use("/api/admin", adminAdRoutes);
+app.use("/api/admin", adminRoutes);
+
+// UserReview & BarReview APIs
+app.use("/api/user-reviews", userReviewRoutes);
+app.use("/api/bar-reviews", barReviewRoutes);
+>>>>>>> origin/main
 app.get("/", (req, res) => {
   res.json({ 
     message: "Welcome to Smoker API 🚬",

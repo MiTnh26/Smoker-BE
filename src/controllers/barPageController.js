@@ -35,6 +35,7 @@ const { createEntityAccount } = require("../models/entityAccountModel");
         phoneNumber,
         email,
         role: "Bar",
+        status: "pending",
       });
 
       // Create EntityAccount record for the bar

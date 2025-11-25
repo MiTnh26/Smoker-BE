@@ -21,6 +21,9 @@ const bookingRoutes = require("./bookingRoutes");
 const followRoutes = require("./followRoutes");
 const searchRoutes = require("./searchRoutes");
 const reportRoutes = require("./reportRoutes");
+const bookingTableRoutes = require("./bookingTableRoutes")
+
+const adminRoutes = require("./adminRoutes");
 const payosRoutes = require("./payosRoutes");
 const adRoutes = require("./adRoutes");
 const adminAdRoutes = require("./adminAdRoutes");
@@ -49,7 +52,10 @@ module.exports = {
   bankInfoRoutes,
   livestreamRoutes,
   mediaRoutes,
+  reportRoutes,
+  bookingTableRoutes,
   bookingRoutes,
   reportRoutes,
+  adminRoutes
   payosRoutes
 };
