@@ -1,6 +1,8 @@
 const livestreamModel = require("../models/livestreamModel");
 const agoraService = require("../services/agoraService");
 const { success, error } = require("../utils/response");
+const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
+const { getPool, sql } = require("../db/sqlserver");
 
 // POST /api/livestream/start - Create stream and return Agora token
 exports.startLivestream = async (req, res) => {
@@ -8,8 +10,8 @@ exports.startLivestream = async (req, res) => {
     console.log("🎬 Starting livestream...");
     console.log("🎬 Request body:", req.body);
     console.log("🎬 Request user:", req.user);
-    const { title, description } = req.body;
-    const hostAccountId = req.user?.id; // From JWT middleware
+    const { title, description, entityAccountId, entityId, entityType } = req.body;
+    const hostAccountId = req.user?.id; // AccountId from JWT middleware
     console.log("🎬 User ID:", hostAccountId, "Title:", title);
 
     // Validate required fields
@@ -22,10 +24,48 @@ exports.startLivestream = async (req, res) => {
       return res.status(400).json(error("Authentication required. Please login again."));
     }
 
+    // Lấy entityAccountId, entityId, entityType
+    let hostEntityAccountId = entityAccountId;
+    let hostEntityId = entityId;
+    let hostEntityType = entityType;
+
+    if (!hostEntityAccountId) {
+      // Fallback: lấy EntityAccountId của Account chính
+      try {
+        hostEntityAccountId = await getEntityAccountIdByAccountId(hostAccountId);
+        if (hostEntityAccountId && !hostEntityId) {
+          hostEntityId = String(hostAccountId);
+          hostEntityType = "Account";
+        }
+      } catch (err) {
+        console.error("[Livestream] Could not get EntityAccountId:", err);
+        return res.status(400).json(error("Could not determine EntityAccountId for livestream"));
+      }
+    }
+
+    // Nếu có entityAccountId nhưng chưa có entityType, query để lấy
+    if (hostEntityAccountId && !hostEntityType) {
+      try {
+        const pool = await getPool();
+        const result = await pool.request()
+          .input("EntityAccountId", sql.UniqueIdentifier, hostEntityAccountId)
+          .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+        
+        if (result.recordset.length > 0) {
+          hostEntityType = result.recordset[0].EntityType;
+          if (!hostEntityId) {
+            hostEntityId = String(result.recordset[0].EntityId);
+          }
+        }
+      } catch (err) {
+        console.warn("[Livestream] Could not get EntityType from EntityAccountId:", err);
+      }
+    }
+
     // Check if user already has an active stream and end it automatically
     const existingActiveStream = await livestreamModel.getAllActiveLivestreams();
     const userActiveStream = existingActiveStream.find(
-      (stream) => stream.hostAccountId === hostAccountId
+      (stream) => stream.hostEntityAccountId === hostEntityAccountId || stream.hostAccountId === hostAccountId
     );
 
     if (userActiveStream) {
@@ -42,7 +82,10 @@ exports.startLivestream = async (req, res) => {
 
     // Create livestream in database
     const livestreamData = {
-      hostAccountId,
+      hostAccountId, // Backward compatibility
+      hostEntityAccountId, // Primary field
+      hostEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
+      hostEntityType, // Entity Type (Account, BarPage, BusinessAccount)
       title,
       description: description || "",
       agoraChannelName: agoraCredentials.channelName,

@@ -1,31 +1,133 @@
 const jwt = require("jsonwebtoken");
+const { getPool, sql } = require("../db/sqlserver");
 
 function verifyToken(req, res, next) {
-  console.log("🔐 Auth Middleware - Starting verification");
-  console.log("🔐 Request headers:", req.headers);
-  
   const authHeader = req.headers.authorization || "";
-  console.log("🔐 Auth header:", authHeader);
-  
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  console.log("🔐 Extracted token:", token ? "Token exists" : "No token");
-  
-  if (!token) {
-    console.log("❌ No token found, returning 401");
-    return res.status(401).json({ status: "error", message: "Thiếu token" });
-  }
-  
-  console.log("🔐 JWT Secret exists:", !!process.env.JWT_SECRET);
-  
+  if (!token) return res.status(401).json({ status: "error", message: "Thiếu token" });
   jwt.verify(token, process.env.JWT_SECRET, (err, payload) => {
-    if (err) {
-      console.log("❌ Token verification failed:", err.message);
-      return res.status(403).json({ status: "error", message: "Token không hợp lệ" });
-    }
-    console.log("✅ Token verified successfully, payload:", payload);
-    req.user = payload; // { id, email, role }
+    if (err) return res.status(403).json({ status: "error", message: "Token không hợp lệ" });
+    req.user = payload; // { id, email, role, entityAccountId?, entityType?, entityId? }
     next();
   });
 }
 
-module.exports = { verifyToken };
+function requireAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ status: "error", message: "Unauthenticated" });
+  const role = String(req.user.role || "").toLowerCase();
+  if (role !== "admin") return res.status(403).json({ status: "error", message: "Admin only" });
+  next();
+}
+
+async function requireActiveEntity(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ status: "error", message: "Unauthorized" });
+    }
+
+    // Nếu là Account (Customer), cho phép luôn (không cần check status)
+    if (!req.user.entityAccountId || req.user.entityType === 'Account') {
+      // Kiểm tra Account status từ checkBannedStatus đã xử lý rồi
+      return next();
+    }
+
+    // Chỉ check status cho BusinessAccount và BarPage
+    const { entityAccountId, entityType } = req.user;
+    const pool = await getPool();
+    let result;
+
+    if (entityType === 'BusinessAccount') {
+      result = await pool.request()
+        .input("id", sql.UniqueIdentifier, entityAccountId)
+        .query(`SELECT Status FROM BussinessAccounts WHERE BussinessAccountId = (SELECT EntityId FROM EntityAccounts WHERE EntityAccountId = @id)`);
+    } else if (entityType === 'BarPage') {
+      result = await pool.request()
+        .input("id", sql.UniqueIdentifier, entityAccountId)
+        .query(`SELECT Status FROM BarPages WHERE BarPageId = (SELECT EntityId FROM EntityAccounts WHERE EntityAccountId = @id)`);
+    } else {
+      // Nếu không phải BusinessAccount, BarPage, hoặc Account thì không cho phép
+      return res.status(403).json({ status: "error", message: "Loại tài khoản không được hỗ trợ." });
+    }
+
+    const entity = result.recordset[0];
+    if (!entity) {
+        return res.status(404).json({ status: "error", message: "Không tìm thấy tài khoản kinh doanh tương ứng." });
+    }
+
+    if (entity.Status !== 'active') {
+      return res.status(403).json({ 
+        status: "error", 
+        message: "Tài khoản của bạn đang chờ duyệt hoặc đã bị khóa. Vui lòng liên hệ quản trị viên.",
+        code: "ENTITY_NOT_ACTIVE"
+      });
+    }
+
+    next();
+  } catch (err) {
+    console.error("[requireActiveEntity] Middleware error:", err);
+    return res.status(500).json({ status: "error", message: "Lỗi máy chủ khi xác thực." });
+  }
+}
+
+async function checkBannedStatus(req, res, next) {
+  try {
+    const accountId = req.user?.id;
+    if (!accountId) {
+      return res.status(401).json({ status: "error", message: "Unauthorized" });
+    }
+
+    const pool = await getPool();
+
+    // Check Account status first
+    const accountCheck = await pool.request()
+      .input("AccountId", sql.UniqueIdentifier, accountId)
+      .query(`SELECT Status FROM Accounts WHERE AccountId = @AccountId`);
+
+    if (accountCheck.recordset[0]?.Status === 'banned') {
+      return res.status(403).json({ 
+        status: "error", 
+        message: "Tài khoản của bạn đã bị cấm. Liên hệ smokerteam@gmail.com" 
+      });
+    }
+
+    // Check associated BusinessAccount status
+    const businessCheck = await pool.request()
+      .input("AccountId", sql.UniqueIdentifier, accountId)
+      .query(`
+        SELECT TOP 1 ba.Status 
+        FROM BussinessAccounts ba
+        INNER JOIN EntityAccounts ea ON ea.EntityId = ba.BussinessAccountId AND ea.EntityType = 'BusinessAccount'
+        WHERE ea.AccountId = @AccountId AND ba.Status = 'banned'
+      `);
+    if (businessCheck.recordset.length > 0) {
+      return res.status(403).json({ 
+        status: "error", 
+        message: "Tài khoản của bạn đã bị cấm. Liên hệ smokerteam@gmail.com" 
+      });
+    }
+
+    // Check associated BarPage status
+    const barCheck = await pool.request()
+      .input("AccountId", sql.UniqueIdentifier, accountId)
+      .query(`
+        SELECT TOP 1 bp.Status 
+        FROM BarPages bp
+        INNER JOIN EntityAccounts ea ON ea.EntityId = bp.BarPageId AND ea.EntityType = 'BarPage'
+        WHERE ea.AccountId = @AccountId AND bp.Status = 'banned'
+      `);
+    if (barCheck.recordset.length > 0) {
+      return res.status(403).json({ 
+        status: "error", 
+        message: "Tài khoản của bạn đã bị cấm. Liên hệ smokerteam@gmail.com" 
+      });
+    }
+
+    next();
+  } catch (err) {
+    console.error("[checkBannedStatus] Error:", err);
+    return res.status(500).json({ status: "error", message: "Lỗi kiểm tra trạng thái" });
+  }
+}
+
+
+module.exports = { verifyToken, requireAdmin, requireActiveEntity, checkBannedStatus };

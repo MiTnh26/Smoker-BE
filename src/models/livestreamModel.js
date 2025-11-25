@@ -10,8 +10,24 @@ const LivestreamSchema = new mongoose.Schema(
     },
     hostAccountId: {
       type: String,
-      required: true,
+      default: null, // Backward compatibility
       ref: "Account",
+    },
+    hostEntityAccountId: {
+      type: String, // Lưu EntityAccountId - ID của role/entity đang livestream
+      required: true,
+      index: true,
+    },
+    hostEntityId: {
+      type: String, // Lưu EntityId - ID của entity cụ thể (AccountId, BarPageId, BusinessAccountId)
+      default: null,
+      index: true,
+    },
+    hostEntityType: {
+      type: String, // Lưu EntityType - Loại entity: "Account", "BarPage", "BusinessAccount"
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+      index: true,
     },
     title: {
       type: String,
@@ -66,6 +82,8 @@ const LivestreamSchema = new mongoose.Schema(
 LivestreamSchema.index({ status: 1, startTime: -1 });
 LivestreamSchema.index({ hostAccountId: 1 });
 LivestreamSchema.index({ livestreamId: 1 });
+LivestreamSchema.index({ hostEntityAccountId: 1 }); // Index cho hostEntityAccountId
+LivestreamSchema.index({ hostEntityType: 1, hostEntityId: 1 }); // Composite index cho hostEntityType và hostEntityId
 
 const Livestream = mongoose.model("Livestream", LivestreamSchema);
 

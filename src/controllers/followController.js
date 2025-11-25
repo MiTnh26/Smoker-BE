@@ -5,13 +5,16 @@ const followService = require("../services/followService");
 // Follow an entity
 exports.followEntity = async (req, res) => {
     const { followerId, followingId, followingType } = req.body;
+    console.log("📥 Follow request:", { followerId, followingId, followingType });
     if (!followerId || !followingId || !followingType) {
         return res.status(400).json({ message: 'Missing required fields.' });
     }
     const result = await followService.followEntity({ followerId, followingId, followingType });
     if (result.status === "error") {
+        console.error("❌ Follow error:", result.message);
         return res.status(result.code || 500).json(result);
     }
+    console.log("✅ Follow success");
     res.status(201).json(result);
 };
 
@@ -55,9 +58,12 @@ exports.getFollowing = async (req, res) => {
 // Check if following
 exports.checkFollowing = async (req, res) => {
     const { followerId, followingId } = req.query;
+    console.log("🔍 Check following:", { followerId, followingId });
     const result = await followService.checkFollowing({ followerId, followingId });
     if (result.status === "error") {
+        console.error("❌ Check following error:", result.message);
         return res.status(result.code || 500).json(result);
     }
+    console.log("✅ Check following result:", result.data?.isFollowing);
     res.json(result);
 };

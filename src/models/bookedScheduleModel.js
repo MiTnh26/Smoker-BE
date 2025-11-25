@@ -1,4 +1,6 @@
+
 // src/models/bookedScheduleModel.js
+
 const { getPool, sql } = require("../db/sqlserver");
 
 function toDateOrNull(value) {
@@ -6,23 +8,22 @@ function toDateOrNull(value) {
   return value instanceof Date ? value : new Date(value);
 }
 
-// Tạo 1 booking mới
+// tạo booking mới
 async function createBookedSchedule({
   bookerId,
   receiverId,
   type,
   totalAmount = 0,
   paymentStatus = "Pending",
-  scheduleStatus = "Pending",
-  bookingDate,
-  startTime,
-  endTime,
-  mongoDetailId,
+  scheduleStatus = "Upcoming",
+  bookingDate = null,
+  startTime = null,
+  endTime = null,
+  mongoDetailId = null
 }) {
   const pool = await getPool();
+  const request = pool.request()
 
-  const result = await pool
-    .request()
     .input("BookerId", sql.UniqueIdentifier, bookerId)
     .input("ReceiverId", sql.UniqueIdentifier, receiverId)
     .input("Type", sql.NVarChar(100), type)
@@ -32,6 +33,7 @@ async function createBookedSchedule({
     .input("BookingDate", sql.DateTime, toDateOrNull(bookingDate))
     .input("StartTime", sql.DateTime, toDateOrNull(startTime))
     .input("EndTime", sql.DateTime, toDateOrNull(endTime))
+
     .input("MongoDetailId", sql.NVarChar(50), mongoDetailId || null)
     .query(`
       INSERT INTO BookedSchedules (
@@ -76,11 +78,9 @@ async function createBookedSchedule({
   return result.recordset[0];
 }
 
-// Lấy 1 booking theo ID
 async function getBookedScheduleById(bookedScheduleId) {
   const pool = await getPool();
-  const result = await pool
-    .request()
+  const result = await pool.request()
     .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
     .query(`
       SELECT
@@ -103,11 +103,9 @@ async function getBookedScheduleById(bookedScheduleId) {
   return result.recordset[0] || null;
 }
 
-// Lấy list theo người đặt
 async function getBookedSchedulesByBooker(bookerId, { limit = 50, offset = 0 } = {}) {
   const pool = await getPool();
-  const result = await pool
-    .request()
+  const result = await pool.request()
     .input("BookerId", sql.UniqueIdentifier, bookerId)
     .input("Limit", sql.Int, limit)
     .input("Offset", sql.Int, offset)
@@ -134,11 +132,9 @@ async function getBookedSchedulesByBooker(bookerId, { limit = 50, offset = 0 } =
   return result.recordset;
 }
 
-// Lấy list theo bar/receiver
 async function getBookedSchedulesByReceiver(receiverId, { limit = 50, offset = 0 } = {}) {
   const pool = await getPool();
-  const result = await pool
-    .request()
+  const result = await pool.request()
     .input("ReceiverId", sql.UniqueIdentifier, receiverId)
     .input("Limit", sql.Int, limit)
     .input("Offset", sql.Int, offset)
@@ -165,14 +161,14 @@ async function getBookedSchedulesByReceiver(receiverId, { limit = 50, offset = 0
   return result.recordset;
 }
 
-// Update trạng thái booking
 async function updateBookedScheduleStatuses(bookedScheduleId, { paymentStatus, scheduleStatus }) {
   if (paymentStatus === undefined && scheduleStatus === undefined) {
     throw new Error("At least one of paymentStatus or scheduleStatus must be provided");
   }
 
   const pool = await getPool();
-  const request = pool.request().input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId);
+  const request = pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId);
 
   const setClauses = [];
 
@@ -213,10 +209,64 @@ async function updateBookedScheduleStatuses(bookedScheduleId, { paymentStatus, s
   return result.recordset[0] || null;
 }
 
+async function updateBookedScheduleTiming(bookedScheduleId, { bookingDate, startTime, endTime }) {
+  if (bookingDate === undefined && startTime === undefined && endTime === undefined) {
+    throw new Error("At least one of bookingDate, startTime or endTime must be provided");
+  }
+
+  const pool = await getPool();
+  const request = pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId);
+
+  const setClauses = [];
+
+  if (bookingDate !== undefined) {
+    request.input("BookingDate", sql.DateTime, toDateOrNull(bookingDate));
+    setClauses.push("BookingDate = @BookingDate");
+  }
+
+  if (startTime !== undefined) {
+    request.input("StartTime", sql.DateTime, toDateOrNull(startTime));
+    setClauses.push("StartTime = @StartTime");
+  }
+
+  if (endTime !== undefined) {
+    request.input("EndTime", sql.DateTime, toDateOrNull(endTime));
+    setClauses.push("EndTime = @EndTime");
+  }
+
+  const setClause = setClauses.join(", ");
+
+  const result = await request.query(`
+    UPDATE BookedSchedules
+    SET ${setClause}
+    WHERE BookedScheduleId = @BookedScheduleId;
+
+    SELECT
+      BookedScheduleId,
+      BookerId,
+      ReceiverId,
+      Type,
+      TotalAmount,
+      PaymentStatus,
+      ScheduleStatus,
+      BookingDate,
+      StartTime,
+      EndTime,
+      MongoDetailId,
+      created_at
+    FROM BookedSchedules
+    WHERE BookedScheduleId = @BookedScheduleId;
+  `);
+
+  return result.recordset[0] || null;
+}
+
 module.exports = {
   createBookedSchedule,
   getBookedScheduleById,
   getBookedSchedulesByBooker,
   getBookedSchedulesByReceiver,
   updateBookedScheduleStatuses,
+  updateBookedScheduleTiming
 };
