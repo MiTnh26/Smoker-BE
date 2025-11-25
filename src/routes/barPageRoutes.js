@@ -3,9 +3,13 @@ const express = require("express");
 const router = express.Router();
 const { barPageController } = require("../controllers");
 const { createCloudinaryUpload } = require("../middleware/uploadCloudinary");
+const { verifyToken, requireActiveEntity } = require("../middleware/authMiddleware");
 
 // 1) Tạo mới trang Bar (có thể có hoặc không upload file)
-router.post("/register", barPageController.registerBarPage);
+router.post("/register", verifyToken, barPageController.registerBarPage);
+
+// Landing page - featured bars
+router.get("/", barPageController.getFeaturedBars);
 
 // 2) Lấy danh sách hoặc thông tin chi tiết
 router.get("/account/:accountId", barPageController.getBarPageByAccountId);
@@ -16,6 +20,8 @@ const uploadBarPage = createCloudinaryUpload("barpages");
 
 router.post(
   "/upload",
+  verifyToken,
+  requireActiveEntity,
   // Map entityId -> accountId nếu có, để xác định thư mục Cloudinary
   (req, res, next) => {
     if (req.body && req.body.entityId && !req.body.accountId)
@@ -37,6 +43,6 @@ router.post(
 );
 
 // 4) Xóa trang bar
-router.delete("/:barPageId", barPageController.deleteBarPage);
+router.delete("/:barPageId", verifyToken, requireActiveEntity, barPageController.deleteBarPage);
 
 module.exports = router;

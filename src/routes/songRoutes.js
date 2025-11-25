@@ -1,19 +1,17 @@
 const express = require("express");
 const multer = require("multer");
-const { streamSong, addSong, deleteSong, getSongs } = require("../controllers/songController.js");
+const { streamSong, streamSongById, addSong, deleteSong, getSongs } = require("../controllers/songController.js");
+const { verifyToken, requireAdmin } = require("../middleware/authMiddleware");
 
 const upload = multer({ storage: multer.memoryStorage() });
-// const upload = multer({ dest: "uploads/" });
 const router = express.Router();
 
-
-// Get all songs
+// Public: list and stream
 router.get("/", getSongs);
-
-// Stream a song file
 router.get("/stream/:filename", streamSong);
 
-router.post("/upload", upload.single("file"), addSong);
-router.delete("/delete/:id", deleteSong);
+// Admin only: upload and delete
+router.post("/upload", verifyToken, requireAdmin, upload.single("file"), addSong);
+router.delete("/delete/:id", verifyToken, requireAdmin, deleteSong);
 
 module.exports = router;

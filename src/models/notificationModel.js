@@ -1,50 +1,80 @@
 const mongoose = require("mongoose");
 
-// Schema chính cho Notification
+// Main Notification Schema
 const notificationSchema = new mongoose.Schema(
   {
-    "Gửi Lúc": {
-      type: Date,
-      required: true,
-    },
-    "Loại Thông Báo": {
+    type: {
       type: String,
       enum: ["Confirm", "Messages", "Like", "Comment", "Follow"],
       required: true,
     },
-    "Người Gửi Thông Báo": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
-      required: true,
+    sender: {
+      type: String, // UUID from SQL Server (backward compatibility - AccountId)
+      default: null,
     },
-    "Người Nhận Thông Báo": {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Account",
+    senderEntityAccountId: {
+      type: String, // EntityAccountId của người gửi
       required: true,
+      index: true,
     },
-    "Nội Dung": {
+    senderEntityId: {
+      type: String, // EntityId của người gửi
+      default: null,
+      index: true,
+    },
+    senderEntityType: {
+      type: String, // EntityType của người gửi
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+      index: true,
+    },
+    receiver: {
+      type: String, // UUID from SQL Server (backward compatibility - AccountId)
+      default: null,
+    },
+    receiverEntityAccountId: {
+      type: String, // EntityAccountId của người nhận
+      required: true,
+      index: true,
+    },
+    receiverEntityId: {
+      type: String, // EntityId của người nhận
+      default: null,
+      index: true,
+    },
+    receiverEntityType: {
+      type: String, // EntityType của người nhận
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+      index: true,
+    },
+    content: {
       type: String,
       required: true,
     },
-    "Trạng Thái": {
+    status: {
       type: String,
-      enum: ["Chưa Đọc", "Đã Đọc"],
-      default: "Chưa Đọc",
+      enum: ["Unread", "Read"],
+      default: "Unread",
     },
-    "Đường dẫn": {
+    link: {
       type: String,
       required: true,
     },
   },
   {
     timestamps: true,
-    collection: "notifaications", // Giữ nguyên tên collection từ JSON
+    collection: "notifaications", // Keep original collection name from JSON
   }
 );
 
-// Index để tối ưu hóa query
-notificationSchema.index({ "Người Nhận Thông Báo": 1 });
-notificationSchema.index({ "Trạng Thái": 1 });
+// Indexes for query optimization
+notificationSchema.index({ receiver: 1 });
+notificationSchema.index({ status: 1 });
 notificationSchema.index({ createdAt: -1 });
+notificationSchema.index({ receiverEntityAccountId: 1 }); // Index cho receiverEntityAccountId
+notificationSchema.index({ senderEntityAccountId: 1 }); // Index cho senderEntityAccountId
+notificationSchema.index({ receiverEntityType: 1, receiverEntityId: 1 }); // Composite index
+notificationSchema.index({ senderEntityType: 1, senderEntityId: 1 }); // Composite index
 
-module.exports = mongoose.model("Notification", notificationSchema, "notifaications");
+module.exports = mongoose.model("Notification", notificationSchema, "notifications");

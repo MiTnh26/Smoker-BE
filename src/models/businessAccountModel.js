@@ -18,18 +18,20 @@ async function getBusinessAccountById(BussinessAccountId) {
 }
 
 // Lấy tất cả BusinessAccount của 1 Account
+// JOIN với EntityAccounts để lấy EntityAccountId
 async function getBusinessAccountsByAccountId(accountId) {
   const pool = await getPool();
   const result = await pool.request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
     .query(`
       SELECT 
-        BussinessAccountId, AccountId, BankInfoId, UserName, Role, 
-        Avatar, Background, Phone, Address, Bio, Status, Gender, 
-        PricePerHours, PricePerSession, created_at
-      FROM BussinessAccounts
-      WHERE AccountId = @AccountId
-      ORDER BY created_at DESC
+        ba.BussinessAccountId, ba.AccountId, ba.BankInfoId, ba.UserName, ba.Role, 
+        ba.Avatar, ba.Background, ba.Phone, ba.Address, ba.Bio, ba.Status, ba.Gender, 
+        ba.PricePerHours, ba.PricePerSession, ba.created_at, ea.EntityAccountId
+      FROM BussinessAccounts ba
+      LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BusinessAccount' AND ea.EntityId = ba.BussinessAccountId
+      WHERE ba.AccountId = @AccountId
+      ORDER BY ba.created_at DESC
     `);
   return result.recordset;
 }
@@ -116,9 +118,22 @@ async function updateBusinessAccountFiles(BussinessAccountId, updates) {
   return result.recordset[0] || null;
 }
 
+async function updateBusinessStatus(id, status){
+  const pool = await getPool();
+  const rs = await pool.request()
+    .input("id", sql.UniqueIdentifier, id)
+    .input("Status", sql.NVarChar(20), status)
+    .query(`
+      UPDATE BussinessAccounts SET Status=@Status WHERE BussinessAccountId=@id;
+      SELECT BussinessAccountId, UserName, Role, Status FROM BussinessAccounts WHERE BussinessAccountId=@id;
+    `);
+  return rs.recordset?.[0] || null;
+}
+
 module.exports = {
   getBusinessAccountById,
   getBusinessAccountsByAccountId,
   createBusinessAccount,
-  updateBusinessAccountFiles
+  updateBusinessAccountFiles,
+  updateBusinessStatus
 };

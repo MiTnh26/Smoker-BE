@@ -20,8 +20,21 @@ const likeSchema = new mongoose.Schema(
 const replySchema = new mongoose.Schema(
   {
     accountId: {
-      type: String, // ID từ SQL Server
+      type: String, // ID từ SQL Server (backward compatibility)
       required: true,
+    },
+    entityAccountId: {
+      type: String, // EntityAccountId của người reply
+      default: null,
+    },
+    entityId: {
+      type: String, // EntityId của người reply
+      default: null,
+    },
+    entityType: {
+      type: String, // EntityType của người reply
+      enum: ["Account", "BusinessAccount", "BarPage"],
+      default: null,
     },
     content: {
       type: String,
@@ -53,8 +66,21 @@ const replySchema = new mongoose.Schema(
 const commentSchema = new mongoose.Schema(
   {
     accountId: {
-      type: String, // ID từ SQL Server
+      type: String, // ID từ SQL Server (backward compatibility)
       required: true,
+    },
+    entityAccountId: {
+      type: String, // EntityAccountId của người comment
+      default: null,
+    },
+    entityId: {
+      type: String, // EntityId của người comment
+      default: null,
+    },
+    entityType: {
+      type: String, // EntityType của người comment
+      enum: ["Account", "BusinessAccount", "BarPage"],
+      default: null,
     },
     content: {
       type: String,
@@ -120,8 +146,24 @@ const postSchema = new mongoose.Schema(
       default: new Map(),
     },
     accountId: {
-      type: String, // Lưu ID từ SQL Server dưới dạng string
+      type: String, // Lưu AccountId (backward compatibility)
+      default: null,
+    },
+    entityAccountId: {
+      type: String, // Lưu EntityAccountId - ID của role/entity đang post
       required: true,
+      index: true,
+    },
+    entityId: {
+      type: String, // Lưu EntityId - ID của entity cụ thể (AccountId, BarPageId, BusinessAccountId)
+      default: null,
+      index: true,
+    },
+    entityType: {
+      type: String, // Lưu EntityType - Loại entity: "Account", "BarPage", "BusinessAccount"
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+      index: true,
     },
     barId: {
       type: String, // ID của bar (nếu là bài của bar)
@@ -129,7 +171,8 @@ const postSchema = new mongoose.Schema(
     },
     content: {
       type: String,
-      required: true,
+      required: false, // Story được phép không có content (empty string)
+      default: "",
     },
     images: {
       type: String,
@@ -144,6 +187,11 @@ const postSchema = new mongoose.Schema(
       type: Date, // chỉ dùng cho story
       default: null,
     },
+    musicId: {
+      type: mongoose.Schema.Types.ObjectId,
+       ref: "Music", 
+       default: null 
+      },
     songId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Song',
@@ -155,6 +203,48 @@ const postSchema = new mongoose.Schema(
         ref: 'Media',
       }
     ],
+    trendingScore: {
+      type: Number,
+      default: 0,
+      index: true,
+    },
+    views: {
+      type: Number,
+      default: 0,
+    },
+    shares: {
+      type: Number,
+      default: 0,
+    },
+    repostedFromId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Post",
+      default: null,
+      index: true,
+    },
+    status: {
+      type: String,
+      enum: ["active", "trashed", "deleted"], // active: hiển thị, trashed: đã trash (ẩn), deleted: đã xóa vĩnh viễn
+      default: "active",
+      index: true,
+    },
+    trashedAt: {
+      type: Date, // Thời gian post bị trash, null nếu chưa trash
+      default: null,
+      index: true,
+    },
+    trashedBy: {
+      type: String, // EntityAccountId của người trash
+      default: null,
+    },
+    audioDuration: {
+      type: Number, // Độ dài đoạn nhạc đã cắt (giây) - chỉ dùng cho story có audio
+      default: null,
+    },
+    audioStartOffset: {
+      type: Number, // Thời điểm bắt đầu cắt nhạc (giây) - chỉ dùng cho story có audio
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -167,5 +257,10 @@ postSchema.index({ authorId: 1 });
 postSchema.index({ createdAt: -1 });
 postSchema.index({ title: "text", content: "text" });
 postSchema.index({ mediaIds: 1 });
+postSchema.index({ trendingScore: -1 }); // Index cho trending score để sort nhanh
+postSchema.index({ entityAccountId: 1 }); // Index cho entityAccountId
+postSchema.index({ entityType: 1, entityId: 1 }); // Composite index cho entityType và entityId
+// Composite index để tối ưu sort order: trendingScore DESC, createdAt DESC (ưu tiên trendingScore)
+postSchema.index({ trendingScore: -1, createdAt: -1 });
 
 module.exports = mongoose.model("Post", postSchema, "posts");
