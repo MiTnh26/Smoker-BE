@@ -28,6 +28,9 @@ const {
   livestreamRoutes,
   mediaRoutes,
   bookingRoutes,
+  payosRoutes,
+  adRoutes,
+  adminAdRoutes,
 } = require("./routes");
 
 
@@ -127,10 +130,12 @@ app.use("/api/bank-info", bankInfoRoutes);
 app.use("/api/livestream", livestreamRoutes);
 app.use("/api/medias", mediaRoutes);
 app.use("/api/booking", bookingRoutes);
-
+app.use("/api/pay", payosRoutes);
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);
+app.use("/api/ads", adRoutes);
+app.use("/api/admin", adminAdRoutes);
 app.get("/", (req, res) => {
   res.json({ 
     message: "Welcome to Smoker API 🚬",
