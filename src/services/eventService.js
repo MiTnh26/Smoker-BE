@@ -41,7 +41,32 @@ const EventService = {
     return success("Xóa sự kiện thành công", { EventId: eventId });
   },
 
-  // Toggle status visible <-> invisible
+ async getAll(reqQuery) {
+    const skip = Math.max(parseInt(reqQuery.skip ?? "0", 10), 0);
+    const take = Math.min(Math.max(parseInt(reqQuery.take ?? "20", 10), 1), 100);
+    const status = reqQuery.status || null;
+
+    // Tự động cập nhật các event đã hết hạn
+    await EventModel.autoUpdateEndedEvents();
+
+    const data = await EventModel.getAllEvents({ skip, take, status });
+    return success("Lấy danh sách tất cả sự kiện thành công", data);
+  },
+
+  async search(reqQuery) {
+    const q = (reqQuery.q || "").trim();
+    const skip = Math.max(parseInt(reqQuery.skip ?? "0", 10), 0);
+    const take = Math.min(Math.max(parseInt(reqQuery.take ?? "20", 10), 1), 50);
+
+    if (!q || q.length < 2) {
+      return error("Từ khóa tìm kiếm phải từ 2 ký tự trở lên", 400);
+    }
+
+    const data = await EventModel.searchEvents({ q, skip, take });
+    return success(`Tìm thấy ${data.total} sự kiện`, data);
+  },
+
+  // ... toggleStatus cũ giữ nguyên, hoặc cải tiến thêm "ended" không cho toggle
   async toggleStatus(eventId) {
     if (!eventId || !uuidValidate(eventId)) {
       return error("EventId không hợp lệ", 400);
@@ -50,10 +75,12 @@ const EventService = {
     const exist = await EventModel.getEventById(eventId);
     if (!exist) return error("Không tìm thấy sự kiện", 404);
 
-    const newStatus =
-      exist.Status === "invisible"
-        ? "visible"
-        : "invisible";
+    // Không cho phép ẩn/hiện nếu đã ended
+    if (exist.Status === "ended") {
+      return error("Sự kiện đã kết thúc không thể thay đổi trạng thái hiển thị", 400);
+    }
+
+    const newStatus = exist.Status === "invisible" ? "visible" : "invisible";
 
     const updated = await EventModel.updateEventStatus(eventId, newStatus);
 
@@ -61,7 +88,6 @@ const EventService = {
       EventId: eventId,
       oldStatus: exist.Status,
       newStatus,
-      updated,
     });
   },
 };
