@@ -86,6 +86,27 @@ async function remove(req, res) {
     res.status(500).json(error("Lỗi máy chủ khi xoá sự kiện"));
   }
 }
+// GET /api/events
+async function getAll(req, res) {
+  try {
+    const result = await EventService.getAll(req.query);
+    res.status(result.statusCode || 200).json(result);
+  } catch (e) {
+    console.error("getAll events error:", e);
+    res.status(500).json(error("Lỗi máy chủ"));
+  }
+}
+
+// GET /api/events/search?q=summer
+async function search(req, res) {
+  try {
+    const result = await EventService.search(req.query);
+    res.status(result.statusCode || 200).json(result);
+  } catch (e) {
+    console.error("search events error:", e);
+    res.status(500).json(error("Lỗi máy chủ khi tìm kiếm"));
+  }
+}
 
 module.exports = {
   getByBar,
@@ -94,4 +115,6 @@ module.exports = {
   create,
   update,
   remove,
+  getAll,     // mới
+  search,
 };

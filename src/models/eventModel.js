@@ -125,7 +125,103 @@ async function updateEventStatus(eventId, newStatus) {
 
   return res.recordset[0];
 }
+async function getAllEvents({ skip = 0, take = 20, status = null } = {}) {
+  const pool = await getPool();
 
+  let query = `
+    SELECT e.EventId, e.BarPageId, e.EventName, e.Description, e.Picture,
+           e.StartTime, e.EndTime, e.Status, e.CreatedAt, e.UpdatedAt,
+           b.BarName
+    FROM dbo.Events e
+    LEFT JOIN dbo.BarPages b ON e.BarPageId = b.BarPageId
+  `;
+
+  let countQuery = `
+    SELECT COUNT(1) as Total
+    FROM dbo.Events e
+  `;
+
+  const request = pool.request();
+  const countRequest = pool.request();
+
+  if (status) {
+    query += ` WHERE e.Status = @Status`;
+    countQuery += ` WHERE e.Status = @Status`;
+    request.input("Status", sql.NVarChar(50), status);
+    countRequest.input("Status", sql.NVarChar(50), status);
+  }
+
+  query += ` ORDER BY e.StartTime DESC OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY`;
+
+  request.input("Skip", sql.Int, skip);
+  request.input("Take", sql.Int, take);
+
+  const countRs = await countRequest.query(countQuery);
+  const listRs = await request.query(query);
+
+  return {
+    total: countRs.recordset[0].Total,
+    items: listRs.recordset
+  };
+}
+
+async function searchEvents({ q, skip = 0, take = 20 }) {
+  if (!q || q.trim().length < 2) {
+    return { total: 0, items: [] };
+  }
+
+  const searchTerm = `%${q.trim()}%`;
+  const pool = await getPool();
+
+  const countRs = await pool.request()
+    .input("SearchTerm", sql.NVarChar(255), searchTerm)
+    .query(`
+      SELECT COUNT(1) as Total
+      FROM dbo.Events e
+      LEFT JOIN dbo.BarPages b ON e.BarPageId = b.BarPageId
+      WHERE e.EventName LIKE @SearchTerm
+         OR b.BarName LIKE @SearchTerm
+    `);
+
+  const listRs = await pool.request()
+    .input("SearchTerm", sql.NVarChar(255), searchTerm)
+    .input("Skip", sql.Int, skip)
+    .input("Take", sql.Int, take)
+    .query(`
+      SELECT e.EventId, e.EventName, e.Picture, e.StartTime, e.EndTime, e.Status,
+             b.BarName, b.Avatar as BarAvatar
+      FROM dbo.Events e
+      LEFT JOIN dbo.BarPages b ON e.BarPageId = b.BarPageId
+      WHERE e.EventName LIKE @SearchTerm
+         OR b.BarName LIKE @SearchTerm
+      ORDER BY 
+        CASE 
+          WHEN e.EventName LIKE @SearchTerm THEN 0
+          WHEN b.BarName LIKE @SearchTerm THEN 1
+          ELSE 2 
+        END,
+        e.StartTime DESC
+      OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY
+    `);
+
+  return {
+    total: countRs.recordset[0].Total,
+    items: listRs.recordset
+  };
+}
+
+// Tự động cập nhật status các event đã hết hạn
+async function autoUpdateEndedEvents() {
+  const pool = await getPool();
+  await pool.request()
+    .query(`
+      UPDATE dbo.Events
+      SET Status = 'ended',
+          UpdatedAt = SYSUTCDATETIME()
+      WHERE EndTime < SYSUTCDATETIME()
+        AND Status != 'ended'
+    `);
+}
 
 module.exports = {
   createEvent,

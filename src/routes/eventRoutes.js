@@ -22,5 +22,9 @@ router.post("/", upload.single("Picture"), EventController.create);
 router.put("/:id", upload.single("Picture"), EventController.update);
 router.delete("/:id", EventController.remove);
 router.patch("/toggle/:id", EventController.toggleStatus);
+// src/routes/eventRoutes.js
+router.get("/getall", EventController.getAll);
+router.get("/search", EventController.search);
+// Các route cũ giữ nguyên...
 
 module.exports = router;
