@@ -43,13 +43,20 @@ const barReviewRoutes = require('./routes/barReviewRoutes');
 
 const app = express();
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+// CORS phải được đặt TRƯỚC các middleware khác để đảm bảo CORS headers có trong mọi response (kể cả error)
 app.use(
   cors({
     origin: "*",
+    // methods: không chỉ định = cho phép tất cả methods
+    allowedHeaders: "*", // Allow all headers
+    credentials: false, // Set to false when origin is "*"
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
   })
 );
+
+app.use(express.json({ strict: false })); // strict: false cho phép parse null/empty body
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
 // Khởi tạo kết nối MongoDB
 connectDB();
