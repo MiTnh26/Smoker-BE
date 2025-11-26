@@ -315,10 +315,44 @@ async function normalizeToEntityAccountId(id) {
   }
 }
 
+/**
+ * Get all EntityAccountIds for a given AccountId
+ * This is needed to support multi-role system where one AccountId can have multiple EntityAccountIds
+ * Uses getEntitiesByAccountId and extracts EntityAccountIds
+ * @param {string} accountId - AccountId from JWT token
+ * @returns {Promise<string[]>} Array of EntityAccountIds (normalized to lowercase strings)
+ */
+async function getAllEntityAccountIdsForAccount(accountId) {
+  try {
+    if (!accountId) return [];
+    const entities = await getEntitiesByAccountId(accountId);
+    return entities
+      .map(e => e.EntityAccountId)
+      .filter(id => id != null)
+      .map(id => String(id).toLowerCase().trim());
+  } catch (err) {
+    console.error("[entityAccountModel] Error getting all EntityAccountIds for Account:", err);
+    return [];
+  }
+}
+
+/**
+ * Normalize and compare participants for message/conversation operations
+ * Handles both ObjectId and string formats
+ * @param {any} participant - Participant ID (can be ObjectId or string)
+ * @returns {string} Normalized participant ID (lowercase trimmed string)
+ */
+function normalizeParticipant(participant) {
+  if (!participant) return "";
+  return String(participant).toLowerCase().trim();
+}
+
 module.exports = {
   getEntitiesByAccountId,
   createEntityAccount,
   getEntityAccountIdByAccountId,
   verifyEntityAccountId,
-  normalizeToEntityAccountId
+  normalizeToEntityAccountId,
+  getAllEntityAccountIdsForAccount,
+  normalizeParticipant
 };

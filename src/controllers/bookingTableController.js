@@ -19,6 +19,8 @@ class BookingTableController {
         bookingDate,
         startTime,
         endTime,
+        paymentStatus, // "Pending" hoặc "Paid"
+        scheduleStatus, // "Pending" hoặc "Confirmed"
       } = req.body;
 
       const result = await bookingTableService.createBarTableBooking({
@@ -30,6 +32,8 @@ class BookingTableController {
         bookingDate,
         startTime,
         endTime,
+        paymentStatus: paymentStatus || "Pending", // Mặc định Pending
+        scheduleStatus: scheduleStatus || "Confirmed", // Mặc định Confirmed (không cần bar xác nhận)
       });
 
       return res.status(result.success ? 201 : 400).json(result);

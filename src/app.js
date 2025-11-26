@@ -42,13 +42,20 @@ const barReviewRoutes = require('./routes/barReviewRoutes');
 
 const app = express();
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+// CORS phải được đặt TRƯỚC các middleware khác để đảm bảo CORS headers có trong mọi response (kể cả error)
 app.use(
   cors({
     origin: "*",
+    // methods: không chỉ định = cho phép tất cả methods
+    allowedHeaders: "*", // Allow all headers
+    credentials: false, // Set to false when origin is "*"
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
   })
 );
+
+app.use(express.json({ strict: false })); // strict: false cho phép parse null/empty body
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
 // Khởi tạo kết nối MongoDB
 connectDB();
@@ -124,8 +131,6 @@ app.use("/api/events", eventRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/stories", storyRoutes);
 app.use("/api/bookings", bookingRoutes);
-
-app.use("/api/events",eventRoutes)
 app.use("/api/music", musicRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
@@ -136,7 +141,7 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/bank-info", bankInfoRoutes);
 app.use("/api/livestream", livestreamRoutes);
 app.use("/api/medias", mediaRoutes);
-app.use("/api/bookingtable",bookingTableRoutes),
+app.use("/api/bookingtable", bookingTableRoutes);
 app.use("/api/booking", bookingRoutes);
 app.use("/api/pay", payosRoutes);
 // UserReview & BarReview APIs
@@ -145,7 +150,7 @@ app.use("/api/bar-reviews", barReviewRoutes);
 app.use("/api/ads", adRoutes);
 app.use("/api/admin", adminAdRoutes);
 app.use("/api/admin", adminRoutes);
-
+app.use("/api/event-advertisements", require("./routes/eventAdvertisementRoutes"));
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);

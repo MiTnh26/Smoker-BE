@@ -64,7 +64,7 @@ const notificationSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    collection: "notifaications", // Keep original collection name from JSON
+    collection: "notifications", // Fixed typo: was "notifaications"
   }
 );
 
