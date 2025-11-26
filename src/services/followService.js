@@ -1,59 +1,76 @@
 const { success, error } = require("../utils/response");
-const { normalizeToEntityAccountId } = require("../models/entityAccountModel");
+const { normalizeToEntityAccountId, getAllEntityAccountIdsForAccount } = require("../models/entityAccountModel");
 const FollowModel = require("../models/followModel");
 const notificationService = require("./notificationService");
 const { getPool, sql } = require("../db/sqlserver");
 
-exports.followEntity = async ({ followerId, followingId, followingType }) => {
+exports.followEntity = async ({ followerId, followingId, followingType, userId }) => {
 	try {
-		if (!followerId || !followingId) {
-			return error("followerId and followingId are required.", 400);
+		if (!followerId || !followingId || !userId) {
+			return error("followerId, followingId, and userId are required.", 400);
 		}
-		
-		// Normalize IDs to EntityAccountId (handles all entity types)
-		let followerEntityAccountId = await normalizeToEntityAccountId(followerId);
-		let followingEntityAccountId = await normalizeToEntityAccountId(followingId);
-		
-		// If normalization failed, return error instead of using original ID
-		// This prevents SQL errors when IDs are invalid
-		if (!followerEntityAccountId) {
-			console.error("❌ Failed to normalize followerId:", followerId);
-			return error("Invalid followerId. Could not resolve to EntityAccountId.", 400);
+
+		// Get all EntityAccountIds for the logged-in user's AccountId (supports multi-role)
+		const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(userId);
+		if (allUserEntityAccountIds.length === 0) {
+			return error("Could not verify follower's identity.", 401);
 		}
+
+		// Normalize IDs from request body
+		const followerEntityAccountIdFromRequest = await normalizeToEntityAccountId(followerId);
+		const followingEntityAccountId = await normalizeToEntityAccountId(followingId);
+
+		// Security Validation: Ensure the followerId from the body belongs to the logged-in user
+		// Check if followerEntityAccountIdFromRequest is in the list of all EntityAccountIds for this AccountId
+		const followerEntityAccountIdNormalized = followerEntityAccountIdFromRequest?.toLowerCase().trim();
+		const isAuthorized = followerEntityAccountIdNormalized && allUserEntityAccountIds.includes(followerEntityAccountIdNormalized);
+		
+		if (!isAuthorized) {
+			console.warn("[FollowService] Mismatch: followerId from request body does not belong to user's AccountId.", {
+				fromBody: followerEntityAccountIdFromRequest,
+				userEntityAccountIds: allUserEntityAccountIds,
+				userId
+			});
+			return error("Follower ID does not match the authenticated user.", 403); // 403 Forbidden
+		}
+
+		// Use the normalized EntityAccountId from request (which is the active role)
+		const trustedFollowerEntityAccountId = followerEntityAccountIdFromRequest;
+
 		if (!followingEntityAccountId) {
 			console.error("❌ Failed to normalize followingId:", followingId);
 			return error("Invalid followingId. Could not resolve to EntityAccountId.", 400);
 		}
-		
+
 		// Prevent self-follow
-		if (followerEntityAccountId === followingEntityAccountId) {
+		if (trustedFollowerEntityAccountId === followingEntityAccountId) {
 			return error("Cannot follow yourself.", 400);
 		}
-		
-		console.log("✅ Resolved followerEntityAccountId:", followerEntityAccountId);
+
+		console.log("✅ Resolved followerEntityAccountId:", trustedFollowerEntityAccountId);
 		console.log("✅ Resolved followingEntityAccountId:", followingEntityAccountId);
-		await FollowModel.followEntity({ followerId: followerEntityAccountId, followingId: followingEntityAccountId, followingType });
+		await FollowModel.followEntity({ followerId: trustedFollowerEntityAccountId, followingId: followingEntityAccountId, followingType });
 		
 		// Tạo notification cho người được follow (không gửi nếu follow chính mình - đã check ở trên)
 		try {
-			// Lấy sender và receiver accountIds cho backward compatibility
-			const senderAccountId = followerId;
-			const receiverAccountId = followingId;
+			const pool = await getPool();
 			
-			// Lấy entity info từ SQL Server
+			// Lấy entity info và AccountId từ SQL Server
+			let senderAccountId = null;
 			let senderEntityId = null;
 			let senderEntityType = null;
+			let receiverAccountId = null;
 			let receiverEntityId = null;
 			let receiverEntityType = null;
 			
-			// Get sender entity info
-			if (followerEntityAccountId) {
+			// Get sender entity info và AccountId
+			if (trustedFollowerEntityAccountId) {
 				try {
-					const pool = await getPool();
 					const result = await pool.request()
-						.input("EntityAccountId", sql.UniqueIdentifier, followerEntityAccountId)
-						.query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+						.input("EntityAccountId", sql.UniqueIdentifier, trustedFollowerEntityAccountId)
+						.query(`SELECT TOP 1 AccountId, EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
 					if (result.recordset.length > 0) {
+						senderAccountId = String(result.recordset[0].AccountId);
 						senderEntityType = result.recordset[0].EntityType;
 						senderEntityId = String(result.recordset[0].EntityId);
 					}
@@ -62,14 +79,14 @@ exports.followEntity = async ({ followerId, followingId, followingType }) => {
 				}
 			}
 			
-			// Get receiver entity info
+			// Get receiver entity info và AccountId
 			if (followingEntityAccountId) {
 				try {
-					const pool = await getPool();
 					const result = await pool.request()
 						.input("EntityAccountId", sql.UniqueIdentifier, followingEntityAccountId)
-						.query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+						.query(`SELECT TOP 1 AccountId, EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
 					if (result.recordset.length > 0) {
+						receiverAccountId = String(result.recordset[0].AccountId);
 						receiverEntityType = result.recordset[0].EntityType;
 						receiverEntityId = String(result.recordset[0].EntityId);
 					}
@@ -78,13 +95,21 @@ exports.followEntity = async ({ followerId, followingId, followingType }) => {
 				}
 			}
 			
+			// BẮT BUỘC phải lấy được AccountId từ EntityAccountId
+			// KHÔNG fallback về followerId/followingId để tránh nhầm lẫn
+			if (!senderAccountId || !receiverAccountId) {
+				console.error("[FollowService] Failed to get AccountId from EntityAccountId. senderAccountId:", senderAccountId, "receiverAccountId:", receiverAccountId);
+				// Vẫn tạo notification nhưng không có AccountId (chỉ có EntityAccountId)
+				// notificationService sẽ xử lý
+			}
+			
 			await notificationService.createFollowNotification({
-				sender: senderAccountId,
-				senderEntityAccountId: String(followerEntityAccountId),
+				sender: senderAccountId || null, // Optional - chỉ để backward compatibility
+				senderEntityAccountId: String(trustedFollowerEntityAccountId), // REQUIRED
 				senderEntityId: senderEntityId,
 				senderEntityType: senderEntityType,
-				receiver: receiverAccountId,
-				receiverEntityAccountId: String(followingEntityAccountId),
+				receiver: receiverAccountId || null, // Optional - chỉ để backward compatibility
+				receiverEntityAccountId: String(followingEntityAccountId), // REQUIRED
 				receiverEntityId: receiverEntityId,
 				receiverEntityType: receiverEntityType
 			});
@@ -102,27 +127,45 @@ exports.followEntity = async ({ followerId, followingId, followingType }) => {
 	}
 };
 
-exports.unfollowEntity = async ({ followerId, followingId }) => {
+exports.unfollowEntity = async ({ followerId, followingId, userId }) => {
 	try {
-		if (!followerId || !followingId) {
-			return error("followerId and followingId are required.", 400);
+		if (!followerId || !followingId || !userId) {
+			return error("followerId, followingId, and userId are required.", 400);
 		}
-		
-		// Normalize IDs to EntityAccountId (handles all entity types)
-		let followerEntityAccountId = await normalizeToEntityAccountId(followerId);
-		let followingEntityAccountId = await normalizeToEntityAccountId(followingId);
-		
-		// If normalization failed, return error instead of using original ID
-		if (!followerEntityAccountId) {
-			console.error("❌ Failed to normalize followerId:", followerId);
-			return error("Invalid followerId. Could not resolve to EntityAccountId.", 400);
+
+		// Get all EntityAccountIds for the logged-in user's AccountId (supports multi-role)
+		const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(userId);
+		if (allUserEntityAccountIds.length === 0) {
+			return error("Could not verify follower's identity.", 401);
 		}
+
+		// Normalize IDs from request body
+		const followerEntityAccountIdFromRequest = await normalizeToEntityAccountId(followerId);
+		const followingEntityAccountId = await normalizeToEntityAccountId(followingId);
+
+		// Security Validation: Ensure the followerId from the body belongs to the logged-in user
+		// Check if followerEntityAccountIdFromRequest is in the list of all EntityAccountIds for this AccountId
+		const followerEntityAccountIdNormalized = followerEntityAccountIdFromRequest?.toLowerCase().trim();
+		const isAuthorized = followerEntityAccountIdNormalized && allUserEntityAccountIds.includes(followerEntityAccountIdNormalized);
+		
+		if (!isAuthorized) {
+			console.warn("[FollowService] Mismatch: followerId from request body does not belong to user's AccountId for unfollow.", {
+				fromBody: followerEntityAccountIdFromRequest,
+				userEntityAccountIds: allUserEntityAccountIds,
+				userId
+			});
+			return error("Follower ID does not match the authenticated user.", 403); // 403 Forbidden
+		}
+
+		// Use the normalized EntityAccountId from request (which is the active role)
+		const trustedFollowerEntityAccountId = followerEntityAccountIdFromRequest;
+
 		if (!followingEntityAccountId) {
 			console.error("❌ Failed to normalize followingId:", followingId);
 			return error("Invalid followingId. Could not resolve to EntityAccountId.", 400);
 		}
-		
-		const affected = await FollowModel.unfollowEntity({ followerId: followerEntityAccountId, followingId: followingEntityAccountId });
+
+		const affected = await FollowModel.unfollowEntity({ followerId: trustedFollowerEntityAccountId, followingId: followingEntityAccountId });
 		if (affected === 0) {
 			return error("Follow relationship not found.", 404);
 		}
