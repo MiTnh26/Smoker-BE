@@ -40,6 +40,17 @@ class PostService {
   // Tạo post mới
   async createPost(postData) {
     try {
+      console.log("[PostService] createPost - Input data:", {
+        hasTitle: !!postData.title,
+        hasContent: !!postData.content,
+        type: postData.type,
+        entityAccountId: postData.entityAccountId,
+        entityId: postData.entityId,
+        entityType: postData.entityType,
+        hasRepostedFromId: !!postData.repostedFromId,
+        mediaIdsCount: postData.mediaIds?.length || 0
+      });
+
       const post = new Post(postData);
       await post.save();
 
@@ -53,8 +64,23 @@ class PostService {
       };
     } catch (error) {
       console.error("[PostService] Error creating post:", error.message);
+      console.error("[PostService] Error name:", error.name);
+      console.error("[PostService] Error stack:", error.stack);
 
       if (error.name === 'ValidationError') {
+        const validationErrors = {};
+        if (error.errors) {
+          Object.keys(error.errors).forEach(key => {
+            validationErrors[key] = error.errors[key].message;
+          });
+        }
+        console.error("[PostService] Validation errors:", validationErrors);
+        return {
+          success: false,
+          message: "Validation error",
+          error: error.message,
+          validationErrors
+        };
       }
 
       return {
@@ -113,10 +139,10 @@ class PostService {
   // Lấy tất cả posts
   async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null) {
     try {
-      // Filter posts đã trash: chỉ lấy posts có status = "active" (chưa trash, chưa xóa)
+      // Filter posts: chỉ lấy posts có status = "public" (công khai, chưa trash, chưa xóa)
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
       const baseFilter = {
-        status: "active",
+        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active"
         $or: [
           { type: "post" },
           { type: { $exists: false } } // Backward compatibility: posts cũ có thể không có field type
@@ -268,6 +294,16 @@ class PostService {
       // Enrich posts with author information (now working with plain objects)
       await this.enrichPostsWithAuthorInfo(postsPlain);
       
+      // Đảm bảo mọi post đều có author info (double-check fallback)
+      postsPlain.forEach(post => {
+        if (!post.authorName) {
+          post.authorName = 'Người dùng';
+        }
+        if (post.authorAvatar === undefined) {
+          post.authorAvatar = null;
+        }
+      });
+      
       // Enrich comments and replies with author information
       await this.enrichCommentsWithAuthorInfo(postsPlain);
 
@@ -312,8 +348,12 @@ class PostService {
     try {
       console.log('[PostService] getPostById - postId:', postId, 'includeMedias:', includeMedias, 'includeMusic:', includeMusic);
       
-      // Chỉ lấy post có status = "active" (chưa trash, chưa xóa)
-      const query = Post.findOne({ _id: postId, status: "active" });
+      // Chỉ lấy post có status = "public" (công khai, chưa trash, chưa xóa)
+      // Hoặc status = "private" nếu user là owner
+      const query = Post.findOne({ 
+        _id: postId, 
+        status: { $in: ["public", "private"] } // Cho phép lấy cả public và private
+      });
       if (includeMedias) query.populate('mediaIds');
       if (includeMusic) {
         query.populate('songId');
@@ -1421,7 +1461,7 @@ class PostService {
     try {
       const skip = (page - 1) * limit;
       const searchQuery = {
-        status: "active", // Chỉ tìm posts chưa trash, chưa xóa
+        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active" // Chỉ tìm posts công khai (chưa trash, chưa xóa)
         $or: [
           { type: "post" },
           { type: { $exists: false } } // Backward compatibility
@@ -1468,7 +1508,7 @@ class PostService {
     try {
       const skip = (page - 1) * limit;
       const searchQuery = {
-        status: "active", // Chỉ tìm posts chưa trash, chưa xóa
+        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active" // Chỉ tìm posts công khai (chưa trash, chưa xóa)
         $or: [
           { type: "post" },
           { type: { $exists: false } } // Backward compatibility
@@ -1513,7 +1553,7 @@ class PostService {
     try {
       const skip = (page - 1) * limit;
       const searchQuery = {
-        status: "active", // Chỉ tìm posts chưa trash, chưa xóa
+        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active" // Chỉ tìm posts công khai (chưa trash, chưa xóa)
         $or: [
           { type: "post" },
           { type: { $exists: false } } // Backward compatibility
@@ -1738,8 +1778,8 @@ class PostService {
         };
       }
 
-      // Set status = "active", trashedAt = null, trashedBy = null
-      post.status = "active";
+      // Set status = "public", trashedAt = null, trashedBy = null
+      post.status = "public";
       post.trashedAt = null;
       post.trashedBy = null;
       await post.save();
@@ -1979,10 +2019,17 @@ class PostService {
       const pool = await getPool();
       
       // Lấy entityAccountIds từ posts (ưu tiên entityAccountId)
+      // Filter ra các giá trị không hợp lệ như "string", "null", "undefined"
       const entityAccountIds = [...new Set(
         posts.map(p => {
           // Ưu tiên entityAccountId, nếu không có thì lấy từ accountId
-          if (p.entityAccountId) return String(p.entityAccountId).trim();
+          if (p.entityAccountId) {
+            const id = String(p.entityAccountId).trim();
+            // Filter ra các giá trị không hợp lệ
+            if (id && id !== 'null' && id !== 'undefined' && id !== 'string' && id.length > 0) {
+              return id;
+            }
+          }
           if (p.accountId) {
             // Nếu chỉ có accountId, cần tìm EntityAccountId tương ứng
             // Tạm thời return null, sẽ xử lý riêng
@@ -2104,7 +2151,28 @@ class PostService {
 
       // Enrich mỗi post với author info
       for (const post of posts) {
-        const entityAccountId = post.entityAccountId || post.accountId;
+        let entityAccountId = post.entityAccountId;
+        
+        // Filter ra các giá trị không hợp lệ
+        if (entityAccountId) {
+          const idStr = String(entityAccountId).trim();
+          if (idStr === 'null' || idStr === 'undefined' || idStr === 'string' || idStr.length === 0) {
+            entityAccountId = null;
+          }
+        }
+        
+        // Nếu không có entityAccountId hợp lệ, thử lấy từ accountId
+        if (!entityAccountId && post.accountId) {
+          try {
+            entityAccountId = await getEntityAccountIdByAccountId(post.accountId);
+            if (entityAccountId) {
+              post.entityAccountId = entityAccountId; // Update post với entityAccountId mới
+            }
+          } catch (err) {
+            console.warn(`[PostService] Could not get EntityAccountId for accountId ${post.accountId}:`, err.message);
+          }
+        }
+        
         if (entityAccountId) {
           // Normalize để so sánh: trim và lowercase
           const entityAccountIdStr = String(entityAccountId).trim().toLowerCase();
@@ -2112,26 +2180,15 @@ class PostService {
           const entityInfo = entityMap.get(entityAccountIdStr);
           
           if (entityInfo) {
-            post.authorName = entityInfo.userName;
-            post.authorAvatar = entityInfo.avatar;
-            // Giữ backward compatibility
-            post.authorEntityName = entityInfo.userName;
-            post.authorEntityAvatar = entityInfo.avatar;
+            post.authorName = entityInfo.userName || 'Người dùng';
+            post.authorAvatar = entityInfo.avatar || null;
             post.authorEntityType = entityInfo.entityType;
             post.authorEntityId = entityInfo.entityId;
             // Thêm authorEntityAccountId để frontend có thể so sánh (dùng original, không lowercase)
             post.authorEntityAccountId = entityInfo.originalEntityAccountId || originalEntityAccountId;
           } else {
-            // Nếu không tìm thấy trong map, log để debug
-            console.warn(`[PostService] Could not find author info for entityAccountId: ${entityAccountIdStr}`);
-            console.warn(`[PostService] Post ID: ${post._id || post.id}`);
-            console.warn(`[PostService] Post entityAccountId: ${post.entityAccountId}, accountId: ${post.accountId}, entityType: ${post.entityType}, entityId: ${post.entityId}`);
-            console.warn(`[PostService] Available entityAccountIds in map (${entityMap.size}):`, Array.from(entityMap.keys()).slice(0, 10));
-            
-            // Thử query trực tiếp từ database để debug và populate
+            // Nếu không tìm thấy trong map, thử query trực tiếp
             try {
-              // Sử dụng original entityAccountId (không lowercase) để query
-              const originalEntityAccountId = String(post.entityAccountId || post.accountId).trim();
               const debugResult = await pool.request()
                 .input("EntityAccountId", sql.UniqueIdentifier, originalEntityAccountId)
                 .query(`
@@ -2151,66 +2208,63 @@ class PostService {
                       WHEN EA.EntityType = 'BarPage' THEN BP.Avatar
                       WHEN EA.EntityType = 'BusinessAccount' THEN BA.Avatar
                       ELSE NULL
-                    END AS Avatar,
-                    -- Debug fields để kiểm tra join với Accounts
-                    A.AccountId AS AccountId_Check,
-                    A.UserName AS AccountUserName_Check,
-                    A.Avatar AS AccountAvatar_Check,
-                    -- Debug fields để kiểm tra join với BarPages
-                    BP.BarPageId AS BarPageId_Check,
-                    BP.BarName AS BarName_Check,
-                    BP.Avatar AS BarAvatar_Check,
-                    -- Debug fields để kiểm tra join với BusinessAccounts
-                    BA.BussinessAccountId AS BusinessAccountId_Check,
-                    BA.UserName AS BusinessAccountUserName_Check,
-                    BA.Avatar AS BusinessAccountAvatar_Check
+                    END AS Avatar
                   FROM EntityAccounts EA
-                  -- Join với Accounts: EntityId chiếu sang Accounts.AccountId khi EntityType = 'Account'
                   LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
-                  -- Join với BarPages: EntityId chiếu sang BarPages.BarPageId khi EntityType = 'BarPage'
                   LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
-                  -- Join với BussinessAccounts: EntityId chiếu sang BussinessAccounts.BussinessAccountId khi EntityType = 'BusinessAccount'
                   LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
                   WHERE EA.EntityAccountId = @EntityAccountId
                 `);
               
               if (debugResult.recordset.length > 0) {
                 const row = debugResult.recordset[0];
-                // Log chi tiết cho từng EntityType
-                if (row.EntityType === 'Account') {
-                  console.warn(`[PostService] Found in DB but not in map! Account: EntityAccountId=${originalEntityAccountId}, EntityId=${String(row.EntityId).trim()}, AccountId_Check=${row.AccountId_Check ? String(row.AccountId_Check).trim() : 'NULL'}, UserName=${row.AccountUserName_Check || 'NULL'}, Avatar=${row.AccountAvatar_Check ? 'EXISTS' : 'NULL'}`);
-                } else if (row.EntityType === 'BarPage') {
-                  console.warn(`[PostService] Found in DB but not in map! BarPage: EntityAccountId=${originalEntityAccountId}, EntityId=${String(row.EntityId).trim()}, BarPageId_Check=${row.BarPageId_Check ? String(row.BarPageId_Check).trim() : 'NULL'}, BarName=${row.BarName_Check || 'NULL'}, BarAvatar=${row.BarAvatar_Check ? 'EXISTS' : 'NULL'}`);
-                } else if (row.EntityType === 'BusinessAccount') {
-                  console.warn(`[PostService] Found in DB but not in map! BusinessAccount: EntityAccountId=${originalEntityAccountId}, EntityId=${String(row.EntityId).trim()}, BusinessAccountId_Check=${row.BusinessAccountId_Check ? String(row.BusinessAccountId_Check).trim() : 'NULL'}, UserName=${row.BusinessAccountUserName_Check || 'NULL'}, Avatar=${row.BusinessAccountAvatar_Check ? 'EXISTS' : 'NULL'}`);
-                } else {
-                  console.warn(`[PostService] Found in DB but not in map! EntityType: ${row.EntityType}, UserName: ${row.UserName}, EntityAccountId: ${originalEntityAccountId}`);
-                }
-                // Populate từ kết quả query trực tiếp
                 post.authorName = row.UserName || 'Người dùng';
                 post.authorAvatar = row.Avatar || null;
-                post.authorEntityName = row.UserName || 'Người dùng';
-                post.authorEntityAvatar = row.Avatar || null;
                 post.authorEntityType = row.EntityType;
                 post.authorEntityId = row.EntityId;
+                post.authorEntityAccountId = originalEntityAccountId;
               } else {
-                console.warn(`[PostService] EntityAccountId ${originalEntityAccountId} not found in EntityAccounts table`);
+                // Không tìm thấy trong DB, set default
+                post.authorName = 'Người dùng';
+                post.authorAvatar = null;
+                console.warn(`[PostService] EntityAccountId ${originalEntityAccountId} not found in EntityAccounts table for post ${post._id}`);
               }
             } catch (debugErr) {
-              console.error(`[PostService] Error querying EntityAccountId ${entityAccountIdStr}:`, debugErr.message);
+              console.error(`[PostService] Error querying EntityAccountId ${originalEntityAccountId}:`, debugErr.message);
+              // Set default values on error
+              post.authorName = 'Người dùng';
+              post.authorAvatar = null;
             }
           }
         } else {
-          console.warn(`[PostService] Post has no entityAccountId or accountId:`, post._id || post.id);
+          // Không có entityAccountId hợp lệ, set default
+          post.authorName = 'Người dùng';
+          post.authorAvatar = null;
+          console.warn(`[PostService] Post ${post._id || post.id} has no valid entityAccountId or accountId`);
         }
       }
       
+      // Đảm bảo mọi post đều có author info (fallback)
+      posts.forEach(post => {
+        if (!post.authorName) {
+          post.authorName = 'Người dùng';
+        }
+        if (post.authorAvatar === undefined) {
+          post.authorAvatar = null;
+        }
+      });
+      
       // Log summary
       const enrichedCount = posts.filter(p => p.authorName && p.authorName !== 'Người dùng').length;
-      console.log(`[PostService] Enriched ${enrichedCount}/${posts.length} posts with author info`);
+      const hasAvatarCount = posts.filter(p => p.authorAvatar).length;
+      console.log(`[PostService] Enriched ${enrichedCount}/${posts.length} posts with author info (${hasAvatarCount} with avatar)`);
     } catch (error) {
       console.error('[PostService] Error enriching posts with author info:', error);
-      // Không throw error, chỉ log để không ảnh hưởng đến việc lấy posts
+      // Set default values for all posts if enrich fails
+      posts.forEach(post => {
+        post.authorName = post.authorName || 'Người dùng';
+        post.authorAvatar = post.authorAvatar || null;
+      });
     }
   }
 

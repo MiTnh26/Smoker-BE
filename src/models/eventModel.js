@@ -8,6 +8,10 @@ async function getUuidModule() {
     uuidModule = await import("uuid");
   }
   return uuidModule;
+// Simple UUID (RFC 4122) validator to avoid ESM-only `uuid` package issues
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isValidUUID(value) {
+  return typeof value === "string" && UUID_REGEX.test(value);
 }
 
 async function createEvent({ BarPageId, EventName, Description, Picture, StartTime, EndTime, Status }) {
@@ -50,7 +54,7 @@ async function getEventsByBarId(barPageId, { skip = 0, take = 20 } = {}) {
     .input("Skip", sql.Int, skip)
     .input("Take", sql.Int, take)
     .query(`
-      SELECT EventId, BarPageId, EventName, Description, Picture, StartTime, EndTime, CreatedAt, UpdatedAt
+      SELECT EventId, BarPageId, EventName, Description, Picture, StartTime, EndTime, Status, CreatedAt, UpdatedAt
       FROM dbo.Events
       WHERE BarPageId = @BarPageId
       ORDER BY CreatedAt DESC
@@ -64,8 +68,9 @@ async function getEventsByBarId(barPageId, { skip = 0, take = 20 } = {}) {
 }
 
 async function getEventById(eventId) {
-  if (!eventId ) {
-    return null;
+  // BƯỚC 1: Validate UUID
+  if (!isValidUUID(eventId)) {
+    return null; // Không throw, để controller xử lý 404
   }
 
   const pool = await getPool();
@@ -101,33 +106,74 @@ async function getEventById(eventId) {
   return result.recordset[0] || null;
 }
 
+// src/models/eventModel.js
+// src/models/eventModel.js → updateEvent
+
 async function updateEvent(eventId, data) {
   const pool = await getPool();
-  const { EventName, Description, Picture, StartTime, EndTime } = data;
 
-  const rs = await pool.request()
-    .input("EventId", sql.UniqueIdentifier, eventId)
-    .input("EventName", sql.NVarChar(255), EventName)
-    .input("Description", sql.NVarChar(sql.MAX), Description || "")
-    .input("Picture", sql.NVarChar(500), Picture || "")
-    .input("StartTime", sql.DateTime2, StartTime)
-    .input("EndTime", sql.DateTime2, EndTime)
-    .query(`
-      UPDATE dbo.Events
-      SET EventName = @EventName,
-          Description = @Description,
-          Picture = @Picture,
-          StartTime = @StartTime,
-          EndTime = @EndTime,
-          UpdatedAt = SYSUTCDATETIME()
-      OUTPUT INSERTED.EventId, INSERTED.BarPageId, INSERTED.EventName, INSERTED.Description,
-             INSERTED.Picture, INSERTED.StartTime, INSERTED.EndTime, INSERTED.CreatedAt, INSERTED.UpdatedAt
-      WHERE EventId = @EventId
-    `);
+  const fields = [];
+  const inputs = { EventId: eventId };
 
-  return rs.recordset[0] || null;
+  if (data.EventName !== undefined) {
+    fields.push("EventName = @EventName");
+    inputs.EventName = data.EventName;
+  }
+  if (data.Description !== undefined) {
+    fields.push("Description = @Description");
+    inputs.Description = data.Description || "";
+  }
+  if (data.Picture !== undefined) {
+    fields.push("Picture = @Picture");        // ← có thể là URL hoặc ""
+    inputs.Picture = data.Picture;
+    console.log("📸 Model: Setting Picture =", data.Picture);
+    console.log("📸 Model: Picture type:", typeof data.Picture);
+    console.log("📸 Model: Picture length:", data.Picture ? data.Picture.length : 0);
+  } else {
+    console.log("ℹ️ Model: Picture not in data - skipping update");
+  }
+  if (data.StartTime) {
+    fields.push("StartTime = @StartTime");
+    inputs.StartTime = data.StartTime;
+  }
+  if (data.EndTime) {
+    fields.push("EndTime = @EndTime");
+    inputs.EndTime = data.EndTime;
+  }
+  if (data.Status !== undefined) {
+    fields.push("Status = @Status");
+    inputs.Status = data.Status;
+  }
+
+  if (fields.length === 0) return null;
+
+  fields.push("UpdatedAt = SYSUTCDATETIME()");
+
+  const query = `
+    UPDATE dbo.Events
+    SET ${fields.join(", ")}
+    OUTPUT INSERTED.*
+    WHERE EventId = @EventId
+  `;
+
+  const request = pool.request();
+  Object.keys(inputs).forEach(key => request.input(key, inputs[key]));
+
+  console.log("📋 Model: SQL Query:", query);
+  console.log("📋 Model: Inputs:", Object.keys(inputs));
+  console.log("📋 Model: Picture input:", inputs.Picture ? `${inputs.Picture.substring(0, 50)}...` : "null/empty");
+  
+  const rs = await request.query(query);
+  const result = rs.recordset[0] || null;
+  
+  if (result) {
+    console.log("✅ Model: Update successful - Picture:", result.Picture ? `${result.Picture.substring(0, 50)}...` : "null/empty");
+  } else {
+    console.warn("⚠️ Model: Update returned no result");
+  }
+  
+  return result;
 }
-
 async function deleteEvent(eventId) {
   const pool = await getPool();
   await pool.request()
@@ -255,5 +301,8 @@ module.exports = {
   getEventById,
   updateEvent,
   deleteEvent,
-  updateEventStatus
+  updateEventStatus,
+   getAllEvents,        // THÊM DÒNG NÀY
+  searchEvents,        // THÊM DÒNG NÀY
+  autoUpdateEndedEvents // THÊM DÒNG NÀY
 };

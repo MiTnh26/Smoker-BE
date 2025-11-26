@@ -1,12 +1,13 @@
-const { RtcTokenBuilder, RtcRole } = require('agora-access-token');
-;
+const { RtcTokenBuilder, RtcRole } = require("agora-access-token");
 const crypto = require("crypto");
+const livestreamConfig = require("../config/livestreamConfig");
 
-const APP_ID = process.env.AGORA_APP_ID;
-const APP_CERTIFICATE = process.env.AGORA_APP_CERTIFICATE;
+const APP_ID = livestreamConfig.agora.appId;
+const APP_CERTIFICATE = livestreamConfig.agora.certificate;
+const TOKEN_TTL = livestreamConfig.agora.tokenTtl;
 
 // Generate RTC token for a user to join a channel
-function generateRtcToken(channelName, uid = 0, role = RtcRole.PUBLISHER, expirationTimeInSeconds = 3600) {
+function generateRtcToken(channelName, uid = 0, role = RtcRole.PUBLISHER, expirationTimeInSeconds = TOKEN_TTL) {
   if (!APP_ID || !APP_CERTIFICATE) {
     throw new Error("Agora credentials are not configured");
   }
@@ -64,6 +65,7 @@ function getSubscriberToken(channelName) {
   const token = generateRtcToken(channelName, uid, RtcRole.SUBSCRIBER);
   
   return {
+    appId: APP_ID,
     uid,
     token,
   };
