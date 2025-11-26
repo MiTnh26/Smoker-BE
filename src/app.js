@@ -29,8 +29,10 @@ const {
   mediaRoutes,
   bookingTableRoutes,
  
+
   bookingRoutes,
   adminRoutes,
+
 } = require("./routes");
 
 
@@ -125,12 +127,10 @@ app.use("/api/bar-table", barTableRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/business", businessRoutes);
-app.use("/api/events", eventRoutes)
+app.use("/api/events", eventRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/stories", storyRoutes);
 app.use("/api/bookings", bookingRoutes);
-
-app.use("/api/events",eventRoutes)
 app.use("/api/music", musicRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
@@ -144,7 +144,6 @@ app.use("/api/medias", mediaRoutes);
 app.use("/api/bookingtable",bookingTableRoutes)
 app.use("/api/booking", bookingRoutes);
 app.use("/api/admin", adminRoutes);
-
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);
