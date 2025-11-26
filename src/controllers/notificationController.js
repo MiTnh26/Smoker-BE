@@ -136,7 +136,7 @@ class NotificationController {
   async getNotifications(req, res) {
     try {
       const userId = req.user?.id;
-      const { page = 1, limit = 10 } = req.query;
+      const { page = 1, limit = 10, entityAccountId: requestedEntityAccountId } = req.query;
 
       if (!userId) {
         return res.status(401).json({
@@ -145,17 +145,30 @@ class NotificationController {
         });
       }
 
+      // BẮT BUỘC phải có entityAccountId - không dùng AccountId để tránh nhầm lẫn
+      if (!requestedEntityAccountId) {
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required. Cannot use AccountId to avoid confusion between roles."
+        });
+      }
+
+      // Chỉ query theo EntityAccountId - không fallback về AccountId
+      // Exclude Messages type - message notifications are handled separately
+      const entityAccountId = String(requestedEntityAccountId).trim();
       const skip = (page - 1) * limit;
       
       const notifications = await Notification.find({
-        receiver: userId
+        receiverEntityAccountId: entityAccountId,
+        type: { $ne: "Messages" } // Exclude message notifications
       })
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(parseInt(limit));
+        .limit(Number.parseInt(limit, 10));
       
       const total = await Notification.countDocuments({
-        receiver: userId
+        receiverEntityAccountId: entityAccountId,
+        type: { $ne: "Messages" } // Exclude message notifications
       });
 
       res.status(200).json({
@@ -182,6 +195,7 @@ class NotificationController {
     try {
       const { notificationId } = req.params;
       const userId = req.user?.id;
+      const requestedEntityAccountId = req.query?.entityAccountId;
 
       if (!userId) {
         return res.status(401).json({
@@ -190,11 +204,23 @@ class NotificationController {
         });
       }
 
+      // BẮT BUỘC phải có entityAccountId - không dùng AccountId để tránh nhầm lẫn
+      if (!requestedEntityAccountId) {
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required. Cannot use AccountId to avoid confusion between roles."
+        });
+      }
+
+      // Chỉ query theo EntityAccountId - không fallback về AccountId
+      const entityAccountId = String(requestedEntityAccountId).trim();
+      const query = {
+        _id: notificationId,
+        receiverEntityAccountId: entityAccountId
+      };
+
       const notification = await Notification.findOneAndUpdate(
-        {
-          _id: notificationId,
-          receiver: userId
-        },
+        query,
         { status: "Read" },
         { new: true }
       );
@@ -224,6 +250,7 @@ class NotificationController {
   async markAllAsRead(req, res) {
     try {
       const userId = req.user?.id;
+      const requestedEntityAccountId = req.query?.entityAccountId;
 
       if (!userId) {
         return res.status(401).json({
@@ -232,11 +259,25 @@ class NotificationController {
         });
       }
 
+      // BẮT BUỘC phải có entityAccountId - không dùng AccountId để tránh nhầm lẫn
+      if (!requestedEntityAccountId) {
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required. Cannot use AccountId to avoid confusion between roles."
+        });
+      }
+
+      // Chỉ query theo EntityAccountId - không fallback về AccountId
+      // Exclude Messages type - message notifications are handled separately
+      const entityAccountId = String(requestedEntityAccountId).trim();
+      const query = {
+        status: "Unread",
+        receiverEntityAccountId: entityAccountId,
+        type: { $ne: "Messages" } // Exclude message notifications
+      };
+
       await Notification.updateMany(
-        {
-          receiver: userId,
-          status: "Unread"
-        },
+        query,
         { status: "Read" }
       );
 
@@ -256,39 +297,39 @@ class NotificationController {
   // Get unread notification count
   async getUnreadCount(req, res) {
     try {
-      console.log("📊 getUnreadCount - Request user:", req.user);
       const userId = req.user?.id;
+      const requestedEntityAccountId = req.query?.entityAccountId;
 
       if (!userId) {
-        console.log("❌ No userId found in request");
         return res.status(401).json({
           success: false,
-          message: "Unauthorized - No user ID"
+          message: "Unauthorized"
         });
       }
 
-      console.log("📊 Querying unread count for userId:", userId, "Type:", typeof userId);
-      
-      // Try both string and ObjectId formats
-      let queryUserId = userId;
-      if (typeof userId === 'string' && userId.length === 36) {
-        // It's a UUID string, keep it as string
-        queryUserId = userId;
+      // BẮT BUỘC phải có entityAccountId - không dùng AccountId để tránh nhầm lẫn
+      if (!requestedEntityAccountId) {
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required. Cannot use AccountId to avoid confusion between roles."
+        });
       }
-      
+
+      // Chỉ query theo EntityAccountId - không fallback về AccountId
+      // Exclude Messages type - message notifications are handled separately
+      const entityAccountId = String(requestedEntityAccountId).trim();
       const count = await Notification.countDocuments({
-        receiver: queryUserId,
-        status: "Unread"
+        receiverEntityAccountId: entityAccountId,
+        status: "Unread",
+        type: { $ne: "Messages" } // Exclude message notifications
       });
 
-      console.log("✅ Unread count:", count);
       res.status(200).json({
         success: true,
         data: { count }
       });
     } catch (error) {
       console.error("❌ Error in getUnreadCount:", error);
-      console.error("❌ Error stack:", error.stack);
       res.status(500).json({
         success: false,
         message: "Internal server error",
