@@ -1,3 +1,6 @@
+
+// src/models/bookedScheduleModel.js
+
 const { getPool, sql } = require("../db/sqlserver");
 
 function toDateOrNull(value) {
@@ -5,6 +8,7 @@ function toDateOrNull(value) {
   return value instanceof Date ? value : new Date(value);
 }
 
+// tạo booking mới
 async function createBookedSchedule({
   bookerId,
   receiverId,
@@ -19,6 +23,7 @@ async function createBookedSchedule({
 }) {
   const pool = await getPool();
   const request = pool.request()
+
     .input("BookerId", sql.UniqueIdentifier, bookerId)
     .input("ReceiverId", sql.UniqueIdentifier, receiverId)
     .input("Type", sql.NVarChar(100), type)
@@ -28,47 +33,47 @@ async function createBookedSchedule({
     .input("BookingDate", sql.DateTime, toDateOrNull(bookingDate))
     .input("StartTime", sql.DateTime, toDateOrNull(startTime))
     .input("EndTime", sql.DateTime, toDateOrNull(endTime))
-    .input("MongoDetailId", sql.NVarChar(50), mongoDetailId || null);
 
-  const result = await request.query(`
-    INSERT INTO BookedSchedules (
-      BookerId,
-      ReceiverId,
-      Type,
-      TotalAmount,
-      PaymentStatus,
-      ScheduleStatus,
-      BookingDate,
-      StartTime,
-      EndTime,
-      MongoDetailId
-    )
-    OUTPUT
-      inserted.BookedScheduleId,
-      inserted.BookerId,
-      inserted.ReceiverId,
-      inserted.Type,
-      inserted.TotalAmount,
-      inserted.PaymentStatus,
-      inserted.ScheduleStatus,
-      inserted.BookingDate,
-      inserted.StartTime,
-      inserted.EndTime,
-      inserted.MongoDetailId,
-      inserted.created_at
-    VALUES (
-      @BookerId,
-      @ReceiverId,
-      @Type,
-      @TotalAmount,
-      @PaymentStatus,
-      @ScheduleStatus,
-      @BookingDate,
-      @StartTime,
-      @EndTime,
-      @MongoDetailId
-    );
-  `);
+    .input("MongoDetailId", sql.NVarChar(50), mongoDetailId || null)
+    .query(`
+      INSERT INTO BookedSchedules (
+        BookerId,
+        ReceiverId,
+        Type,
+        TotalAmount,
+        PaymentStatus,
+        ScheduleStatus,
+        BookingDate,
+        StartTime,
+        EndTime,
+        MongoDetailId
+      )
+      OUTPUT
+        inserted.BookedScheduleId,
+        inserted.BookerId,
+        inserted.ReceiverId,
+        inserted.Type,
+        inserted.TotalAmount,
+        inserted.PaymentStatus,
+        inserted.ScheduleStatus,
+        inserted.BookingDate,
+        inserted.StartTime,
+        inserted.EndTime,
+        inserted.MongoDetailId,
+        inserted.created_at
+      VALUES (
+        @BookerId,
+        @ReceiverId,
+        @Type,
+        @TotalAmount,
+        @PaymentStatus,
+        @ScheduleStatus,
+        @BookingDate,
+        @StartTime,
+        @EndTime,
+        @MongoDetailId
+      );
+    `);
 
   return result.recordset[0];
 }
