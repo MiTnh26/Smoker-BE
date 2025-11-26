@@ -14,6 +14,8 @@ class BookingTableService {
     bookingDate,
     startTime,
     endTime,
+    paymentStatus = "Pending", // "Pending" hoặc "Paid"
+    scheduleStatus = "Confirmed", // "Confirmed" (không cần bar xác nhận)
   }) {
     if (!bookerAccountId || !receiverEntityId) {
       return { success: false, message: "Thiếu bookerAccountId hoặc receiverEntityId" };
@@ -46,13 +48,14 @@ class BookingTableService {
       });
 
       // 2. Lưu booking tổng vào SQL (BookerId & ReceiverId đều là EntityAccountId)
+      // Nếu đã thanh toán và scheduleStatus = "Confirmed" → bàn tự động chuyển thành "đã đặt"
       const createdBooking = await bookedScheduleModel.createBookedSchedule({
         bookerId: bookerEntityId,
         receiverId: receiverEntityId,
         type: "BarTable",
         totalAmount: totalAmount || 0,
-        paymentStatus: "Pending",
-        scheduleStatus: "Pending",
+        paymentStatus: paymentStatus, // "Pending" hoặc "Paid"
+        scheduleStatus: scheduleStatus, // "Confirmed" (không cần bar xác nhận)
         bookingDate,
         startTime,
         endTime,
