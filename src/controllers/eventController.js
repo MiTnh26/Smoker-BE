@@ -29,7 +29,7 @@ async function toggleStatus(req, res) {
 async function getById(req, res) {
   try {
     const result = await EventService.getById(req.params.id);
-    res.status(result.statusCode || (result.ok ? 200 : 404)).json(result);
+    res.status(result.statusCode || (result.ok ? 200 : 200)).json(result);
   } catch (e) {
     console.error("getById error:", e);
     res.status(500).json(error("Lỗi máy chủ khi lấy sự kiện"));

@@ -129,5 +129,51 @@ async function checkBannedStatus(req, res, next) {
   }
 }
 
+async function requireBarPage(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ status: "error", message: "Unauthorized" });
+    }
 
-module.exports = { verifyToken, requireAdmin, requireActiveEntity, checkBannedStatus };
+    const accountId = req.user?.id;
+    if (!accountId) {
+      return res.status(401).json({ status: "error", message: "Unauthorized" });
+    }
+
+    const pool = await getPool();
+
+    // Check if user has a BarPage entity
+    const barPageCheck = await pool.request()
+      .input("AccountId", sql.UniqueIdentifier, accountId)
+      .query(`
+        SELECT TOP 1 bp.BarPageId, bp.Status, ea.EntityAccountId
+        FROM BarPages bp
+        INNER JOIN EntityAccounts ea ON ea.EntityId = bp.BarPageId AND ea.EntityType = 'BarPage'
+        WHERE ea.AccountId = @AccountId
+      `);
+
+    if (barPageCheck.recordset.length === 0) {
+      return res.status(403).json({ 
+        status: "error", 
+        message: "Chỉ quán bar mới có thể thực hiện thao tác này" 
+      });
+    }
+
+    const barPage = barPageCheck.recordset[0];
+    if (barPage.Status !== 'active') {
+      return res.status(403).json({ 
+        status: "error", 
+        message: "Quán bar của bạn đang chờ duyệt hoặc đã bị khóa. Vui lòng liên hệ quản trị viên." 
+      });
+    }
+
+    // Attach barPageId to request for convenience
+    req.barPageId = barPage.BarPageId;
+    next();
+  } catch (err) {
+    console.error("[requireBarPage] Middleware error:", err);
+    return res.status(500).json({ status: "error", message: "Lỗi máy chủ khi xác thực." });
+  }
+}
+
+module.exports = { verifyToken, requireAdmin, requireActiveEntity, checkBannedStatus, requireBarPage };

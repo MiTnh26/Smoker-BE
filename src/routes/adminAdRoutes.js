@@ -26,6 +26,10 @@ router.get("/ads/:userAdId", verifyToken, requireAdmin, adminAdController.getAdB
 router.post("/ads/:userAdId/approve", verifyToken, requireAdmin, adminAdController.approveAd);
 router.post("/ads/:userAdId/reject", verifyToken, requireAdmin, adminAdController.rejectAd);
 
+// Event-based ad purchases
+router.get("/ads/event-purchases/pending", verifyToken, requireAdmin, adminAdController.getPendingEventPurchases);
+router.post("/ads/event-purchases/:purchaseId/approve", verifyToken, requireAdmin, adminAdController.approveEventPurchase);
+
 module.exports = router;
 
 

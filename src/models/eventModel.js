@@ -1,6 +1,14 @@
 const sql = require("mssql");
 const { getPool } = require("../db/sqlserver");
-const { validate: uuidValidate } = require("uuid");
+
+// Cache for uuid module (ES Module, so we use dynamic import)
+let uuidModule = null;
+async function getUuidModule() {
+  if (!uuidModule) {
+    uuidModule = await import("uuid");
+  }
+  return uuidModule;
+}
 
 async function createEvent({ BarPageId, EventName, Description, Picture, StartTime, EndTime, Status }) {
   const pool = await getPool();
@@ -56,20 +64,38 @@ async function getEventsByBarId(barPageId, { skip = 0, take = 20 } = {}) {
 }
 
 async function getEventById(eventId) {
-  // BƯỚC 1: Validate UUID
-  if (!eventId || !uuidValidate(eventId)) {
-    return null; // Không throw, để controller xử lý 404
+  if (!eventId ) {
+    return null;
   }
 
   const pool = await getPool();
+
   const result = await pool.request()
     .input("EventId", sql.UniqueIdentifier, eventId)
     .query(`
-      SELECT TOP 1 
-        EventId, BarPageId, EventName, Description, Picture,
-        StartTime, EndTime, Status, CreatedAt, UpdatedAt
-      FROM dbo.Events
-      WHERE EventId = @EventId
+      SELECT 
+        e.EventId,
+        e.BarPageId,
+        e.EventName,
+        e.Description,
+        e.Picture AS EventPicture,
+        e.StartTime,
+        e.EndTime,
+        e.Status,
+        e.CreatedAt,
+        e.UpdatedAt,
+        b.BarName,
+        b.Avatar AS BarAvatar,
+        b.Background AS BarBackground,
+        b.Address AS BarAddress,
+        b.PhoneNumber AS BarPhone,
+        b.Email AS BarEmail,
+        b.Role AS BarRole,
+        b.created_at AS BarCreatedAt
+
+      FROM dbo.Events e
+      LEFT JOIN dbo.BarPages b ON e.BarPageId = b.BarPageId
+      WHERE e.EventId = @EventId
     `);
 
   return result.recordset[0] || null;

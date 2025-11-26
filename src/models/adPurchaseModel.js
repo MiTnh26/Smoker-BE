@@ -2,8 +2,22 @@ const { getPool, sql } = require("../db/sqlserver");
 
 /**
  * Tạo purchase record
+ * @param {Object} params - Purchase parameters
+ * @param {string} params.eventId - EventId (required for event-based ads)
+ * @param {string} params.userAdId - UserAdId (optional, for regular ads)
+ * @param {string} params.packageId - PackageId
+ * @param {string} params.barPageId - BarPageId
+ * @param {string} params.accountId - AccountId
+ * @param {string} params.packageName - PackageName
+ * @param {string} params.packageCode - PackageCode
+ * @param {number} params.impressions - Impressions
+ * @param {number} params.price - Price
+ * @param {string} params.paymentHistoryId - PaymentHistoryId
+ * @param {string} params.paymentMethod - PaymentMethod
+ * @param {string} params.paymentId - PaymentId
  */
 async function createPurchase({ 
+  eventId,
   userAdId, 
   packageId, 
   barPageId, 
@@ -18,7 +32,8 @@ async function createPurchase({
 }) {
   const pool = await getPool();
   const result = await pool.request()
-    .input("UserAdId", sql.UniqueIdentifier, userAdId)
+    .input("EventId", sql.UniqueIdentifier, eventId || null)
+    .input("UserAdId", sql.UniqueIdentifier, userAdId || null)
     .input("PackageId", sql.UniqueIdentifier, packageId)
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
     .input("AccountId", sql.UniqueIdentifier, accountId)
@@ -31,12 +46,12 @@ async function createPurchase({
     .input("PaymentId", sql.NVarChar(255), paymentId || null)
     .query(`
       INSERT INTO AdPurchases
-        (PurchaseId, UserAdId, PackageId, BarPageId, AccountId, PackageName, PackageCode, 
+        (PurchaseId, EventId, UserAdId, PackageId, BarPageId, AccountId, PackageName, PackageCode, 
          Impressions, Price, PaymentHistoryId, PaymentMethod, PaymentId, 
          PaymentStatus, Status, UsedImpressions, PurchasedAt)
       OUTPUT inserted.*
       VALUES
-        (NEWID(), @UserAdId, @PackageId, @BarPageId, @AccountId, @PackageName, @PackageCode,
+        (NEWID(), @EventId, @UserAdId, @PackageId, @BarPageId, @AccountId, @PackageName, @PackageCode,
          @Impressions, @Price, @PaymentHistoryId, @PaymentMethod, @PaymentId,
          'pending', 'pending', 0, GETDATE())
     `);
@@ -98,6 +113,58 @@ async function getPurchasesByAccountId(accountId) {
       FROM AdPurchases
       WHERE AccountId = @AccountId
       ORDER BY PurchasedAt DESC
+    `);
+  return result.recordset;
+}
+
+/**
+ * Lấy purchases theo EventId
+ */
+async function getPurchasesByEventId(eventId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("EventId", sql.UniqueIdentifier, eventId)
+    .query(`
+      SELECT ap.*, 
+        e.EventName,
+        e.Description AS EventDescription,
+        e.Picture AS EventPicture,
+        e.RedirectUrl AS EventRedirectUrl
+      FROM AdPurchases ap
+      LEFT JOIN Events e ON ap.EventId = e.EventId
+      WHERE ap.EventId = @EventId
+      ORDER BY ap.PurchasedAt DESC
+    `);
+  return result.recordset;
+}
+
+/**
+ * Lấy purchase pending approval (có EventId nhưng chưa có UserAdId)
+ */
+async function getPendingEventPurchases(limit = 50) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("Limit", sql.Int, limit)
+    .query(`
+      SELECT TOP (@Limit)
+        ap.*,
+        e.EventName,
+        e.Description AS EventDescription,
+        e.Picture AS EventPicture,
+        e.RedirectUrl AS EventRedirectUrl,
+        e.BarPageId,
+        bp.BarName,
+        a.Email AS AccountEmail,
+        a.UserName AS AccountUserName
+      FROM AdPurchases ap
+      INNER JOIN Events e ON ap.EventId = e.EventId
+      INNER JOIN BarPages bp ON ap.BarPageId = bp.BarPageId
+      INNER JOIN Accounts a ON ap.AccountId = a.AccountId
+      WHERE ap.EventId IS NOT NULL
+        AND ap.UserAdId IS NULL
+        AND ap.PaymentStatus = 'paid'
+        AND ap.Status = 'pending'
+      ORDER BY ap.PurchasedAt ASC
     `);
   return result.recordset;
 }
@@ -269,6 +336,8 @@ module.exports = {
   getPurchasesByUserAdId,
   getPurchasesByBarPageId,
   getPurchasesByAccountId,
+  getPurchasesByEventId,
+  getPendingEventPurchases,
   updatePurchaseStatus,
   updateUsedImpressions,
   getPurchaseByPaymentHistoryId,

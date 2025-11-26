@@ -372,7 +372,7 @@ class AdController {
   }
 
   /**
-   * Lấy danh sách quảng cáo của BarPage
+   * Lấy danh sách quảng cáo của BarPage (bao gồm cả event-based ads)
    * GET /api/ads/my-ads?barPageId=xxx
    */
   async getMyAds(req, res) {
@@ -396,13 +396,64 @@ class AdController {
       const adsWithPurchases = await Promise.all(
         ads.map(async (ad) => {
           const purchases = await adPurchaseModel.getPurchasesByUserAdId(ad.UserAdId);
-          return { ...ad, purchases };
+          return { ...ad, purchases, source: 'direct' }; // Direct ads (tạo trực tiếp)
         })
       );
       
       return res.json({ success: true, data: adsWithPurchases });
     } catch (error) {
       console.error("[AdController] getMyAds error:", error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * Lấy purchases của một Event (để xem tiến trình quảng cáo)
+   * GET /api/ads/event-purchases/:eventId
+   */
+  async getEventPurchases(req, res) {
+    try {
+      const accountId = req.user?.id || req.user?.accountId;
+      const { eventId } = req.params;
+      
+      if (!accountId || !eventId) {
+        return res.status(400).json({ success: false, message: "eventId is required" });
+      }
+      
+      // Verify Event thuộc về user
+      const eventModel = require("../models/eventModel");
+      const event = await eventModel.getEventById(eventId);
+      if (!event) {
+        return res.status(404).json({ success: false, message: "Event not found" });
+      }
+      
+      const barPage = await barPageModel.getBarPageByAccountId(accountId);
+      if (!barPage || barPage.BarPageId !== event.BarPageId) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
+      
+      const purchases = await adPurchaseModel.getPurchasesByEventId(eventId);
+      
+      // Lấy thông tin UserAdvertisement nếu đã được approve
+      const purchasesWithAds = await Promise.all(
+        purchases.map(async (purchase) => {
+          if (purchase.UserAdId) {
+            const userAd = await userAdvertisementModel.findById(purchase.UserAdId);
+            return { ...purchase, userAd };
+          }
+          return purchase;
+        })
+      );
+      
+      return res.json({ 
+        success: true, 
+        data: {
+          event,
+          purchases: purchasesWithAds
+        }
+      });
+    } catch (error) {
+      console.error("[AdController] getEventPurchases error:", error);
       return res.status(500).json({ success: false, message: error.message });
     }
   }
@@ -422,43 +473,53 @@ class AdController {
   }
 
   /**
-   * Mua gói quảng cáo (sau khi ad đã được approve)
+   * Mua gói quảng cáo cho Event
    * POST /api/ads/purchase
-   * Body: { userAdId, packageId, price, impressions, packageName }
+   * Body: { eventId, packageId, price, impressions, packageName }
+   * 
+   * Luồng mới:
+   * 1. BarPage tạo Event
+   * 2. Chọn gói quảng cáo cho Event
+   * 3. Thanh toán
+   * 4. Gửi notification cho admin với thông tin Event
+   * 5. Admin set lên Revive và approve
    */
   async purchasePackage(req, res) {
     try {
       const accountId = req.user?.id || req.user?.accountId;
-      const { userAdId, packageId, price, impressions, packageName } = req.body;
+      const { eventId, packageId, price, impressions, packageName } = req.body;
       
       if (!accountId) {
         return res.status(401).json({ success: false, message: "Unauthorized" });
       }
       
-      if (!userAdId || !packageId || !price || !impressions || !packageName) {
+      if (!eventId || !packageId || !price || !impressions || !packageName) {
         return res.status(400).json({ 
           success: false, 
-          message: "userAdId, packageId, price, impressions, packageName are required" 
+          message: "eventId, packageId, price, impressions, packageName are required" 
         });
       }
       
-      // Kiểm tra ad thuộc về BarPage và đã được approve
-      const ad = await userAdvertisementModel.findById(userAdId);
-      if (!ad || ad.AccountId !== accountId) {
+      // Lấy thông tin Event
+      const eventModel = require("../models/eventModel");
+      const event = await eventModel.getEventById(eventId);
+      if (!event) {
+        return res.status(404).json({ 
+          success: false, 
+          message: "Event not found" 
+        });
+      }
+      
+      // Verify Event thuộc về BarPage của user
+      const barPage = await barPageModel.getBarPageByAccountId(accountId);
+      if (!barPage || barPage.BarPageId !== event.BarPageId) {
         return res.status(403).json({ 
           success: false, 
-          message: "Ad not found or access denied" 
+          message: "Event not found or access denied" 
         });
       }
       
-      if (ad.Status !== 'approved') {
-        return res.status(400).json({ 
-          success: false, 
-          message: `Quảng cáo phải được duyệt trước khi mua gói. Trạng thái hiện tại: ${ad.Status}` 
-        });
-      }
-      
-      // Lấy thông tin package để lấy packageCode
+      // Lấy thông tin package
       const pkg = await adPackageModel.findById(packageId);
       if (!pkg || !pkg.IsActive) {
         return res.status(400).json({ 
@@ -483,54 +544,56 @@ class AdController {
         type: 'ad_package',
         senderId: accountId,
         receiverId: null,
-        transferContent: `Mua gói quảng cáo: ${packageName} (${parseInt(impressions).toLocaleString()} lượt xem) cho quảng cáo "${ad.Title}"`,
+        transferContent: `Mua gói quảng cáo: ${packageName} (${parseInt(impressions).toLocaleString()} lượt xem) cho event "${event.EventName}"`,
         transferAmount: parseFloat(price)
       });
       
-      // 2. Tạo purchase record
+      // 2. Tạo purchase record (với EventId, chưa có UserAdId - sẽ tạo sau khi admin approve)
       const purchase = await adPurchaseModel.createPurchase({
-        userAdId,
+        eventId, // Link với Event
+        userAdId: null, // Sẽ được set sau khi admin approve và tạo UserAdvertisement
         packageId,
-        barPageId: ad.BarPageId,
+        barPageId: event.BarPageId,
         accountId,
         packageName,
         packageCode: pkg.PackageCode,
         impressions: parseInt(impressions),
         price: parseFloat(price),
         paymentHistoryId: paymentHistory.PaymentHistoryId,
-        paymentMethod: 'payos', // Hoặc method khác
-        paymentId: `order_${Date.now()}` // Order code từ payment gateway
+        paymentMethod: 'payos',
+        paymentId: `order_${Date.now()}`
       });
       
-      // 3. Update purchase status -> paid -> active
-      await adPurchaseModel.updatePurchaseStatus(purchase.PurchaseId, 'active', 'paid');
+      // 3. Update purchase status -> paid (chưa active vì chưa có admin approve)
+      await adPurchaseModel.updatePurchaseStatus(purchase.PurchaseId, 'pending', 'paid');
       
-      // 4. Update ad: thêm impressions và activate
-      const newRemainingImpressions = (ad.RemainingImpressions || 0) + parseInt(impressions);
-      await userAdvertisementModel.updateAdStatus(userAdId, {
-        status: 'active',
-        remainingImpressions: newRemainingImpressions,
-        totalImpressions: (ad.TotalImpressions || 0) + parseInt(impressions)
-      });
-      
-      // 5. Update package stats (SoldCount, TotalRevenue)
+      // 4. Update package stats
       await adPackageModel.updatePackageStats(packageId, parseFloat(price), 'increment');
       
-      // 6. Update total spent của ad
-      const pool = await getPool();
-      await pool.request()
-        .input("UserAdId", sql.UniqueIdentifier, userAdId)
-        .input("Price", sql.Decimal(18,2), parseFloat(price))
-        .query(`
-          UPDATE UserAdvertisements
-          SET TotalSpent = TotalSpent + @Price
-          WHERE UserAdId = @UserAdId
+      // 5. Gửi notification cho tất cả admin
+      try {
+        const pool = await getPool();
+        const adminResult = await pool.request().query(`
+          SELECT AccountId FROM Accounts WHERE Role IN ('admin', 'Admin')
         `);
+        
+        for (const admin of adminResult.recordset) {
+          await notificationService.createNotification({
+            type: "Confirm",
+            sender: accountId,
+            receiver: admin.AccountId,
+            content: `Quán bar "${barPage.BarName}" đã mua gói quảng cáo cho event "${event.EventName}". Cần set lên Revive và approve.`,
+            link: `/admin/ads/event-purchases/pending/${purchase.PurchaseId}`
+          });
+        }
+      } catch (notifError) {
+        console.warn("[AdController] Failed to send admin notification:", notifError);
+      }
       
       return res.json({ 
         success: true, 
-        data: { purchase, paymentHistory },
-        message: "Gói quảng cáo đã được mua thành công" 
+        data: { purchase, paymentHistory, event },
+        message: "Gói quảng cáo đã được mua thành công. Đang chờ admin set lên Revive và approve." 
       });
     } catch (error) {
       console.error("[AdController] purchasePackage error:", error);
