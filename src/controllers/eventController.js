@@ -1,7 +1,12 @@
 // src/controllers/eventController.js
 const EventService = require("../services/eventService");
 const { error } = require("../utils/response");
-const { validate: uuidValidate } = require("uuid");   // DÒNG NÀY PHẢI CÓ Ở ĐẦU
+
+// Simple UUID (RFC 4122) validator - không dùng uuid package vì nó là ES Module
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function uuidValidate(value) {
+  return typeof value === "string" && UUID_REGEX.test(value);
+}
 
 // GET /api/events/bar/:barPageId
 async function getByBar(req, res) {
