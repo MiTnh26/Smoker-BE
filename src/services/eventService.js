@@ -31,17 +31,53 @@ const EventService = {
     return success("Tạo sự kiện thành công", created, 201);
   },
 
-  async update(eventId, payload) {
-    const updated = await EventModel.updateEvent(eventId, payload);
-    return success("Cập nhật sự kiện thành công", updated);
-  },
+ // src/services/eventService.js → sửa hàm update
 
+async update(eventId, payload) {
+  try {
+    const existingEvent = await EventModel.getEventById(eventId);
+    if (!existingEvent) return error("Không tìm thấy sự kiện", 404);
+
+    // Chỉ cập nhật những field được gửi lên
+    const updateData = {};
+
+    if (payload.EventName !== undefined) updateData.EventName = payload.EventName.trim();
+    if (payload.Description !== undefined) updateData.Description = payload.Description.trim();
+    if (payload.StartTime !== undefined) updateData.StartTime = new Date(payload.StartTime);
+    if (payload.EndTime !== undefined) updateData.EndTime = new Date(payload.EndTime);
+
+    // QUAN TRỌNG: chỉ cập nhật Picture nếu có gửi lên (có thể là URL mới hoặc "")
+    if (payload.Picture !== undefined) {
+      updateData.Picture = payload.Picture; // có thể là URL mới hoặc ""
+      console.log("📸 Service: Updating Picture to:", payload.Picture);
+      console.log("📸 Service: Picture length:", payload.Picture ? payload.Picture.length : 0);
+    } else {
+      console.log("ℹ️ Service: Picture not in payload (undefined) - keeping existing");
+    }
+    
+    console.log("📋 Service: updateData keys:", Object.keys(updateData));
+    console.log("📋 Service: updateData.Picture:", updateData.Picture);
+
+    // Validate date...
+    if (updateData.StartTime && updateData.EndTime && updateData.StartTime >= updateData.EndTime) {
+      return error("Thời gian kết thúc phải sau thời gian bắt đầu", 400);
+    }
+
+    const updated = await EventModel.updateEvent(eventId, updateData);
+    if (!updated) return error("Cập nhật thất bại", 500);
+
+    return success("Cập nhật thành công", updated);
+  } catch (err) {
+    console.error(err);
+    return error("Lỗi server: " + err.message, 500);
+  }
+},
   async remove(eventId) {
     await EventModel.deleteEvent(eventId);
     return success("Xóa sự kiện thành công", { EventId: eventId });
   },
 
- async getAll(reqQuery) {
+  async getAll(reqQuery) {
     const skip = Math.max(parseInt(reqQuery.skip ?? "0", 10), 0);
     const take = Math.min(Math.max(parseInt(reqQuery.take ?? "20", 10), 1), 100);
     const status = reqQuery.status || null;
@@ -66,30 +102,29 @@ const EventService = {
     return success(`Tìm thấy ${data.total} sự kiện`, data);
   },
 
-  // ... toggleStatus cũ giữ nguyên, hoặc cải tiến thêm "ended" không cho toggle
   async toggleStatus(eventId) {
-    if (!eventId || !uuidValidate(eventId)) {
-      return error("EventId không hợp lệ", 400);
-    }
+  if (!eventId || !uuidValidate(eventId)) {
+    return error("EventId không hợp lệ", 400);
+  }
 
-    const exist = await EventModel.getEventById(eventId);
-    if (!exist) return error("Không tìm thấy sự kiện", 404);
+  const exist = await EventModel.getEventById(eventId);
+  if (!exist) return error("Không tìm thấy sự kiện", 404);
 
-    // Không cho phép ẩn/hiện nếu đã ended
-    if (exist.Status === "ended") {
-      return error("Sự kiện đã kết thúc không thể thay đổi trạng thái hiển thị", 400);
-    }
+  // Không cho toggle nếu đã Ended
+  if (exist.Status === "Ended") {
+    return error("Sự kiện đã kết thúc không thể thay đổi trạng thái hiển thị", 400);
+  }
 
-    const newStatus = exist.Status === "invisible" ? "visible" : "invisible";
+  // ĐỔI TỪ visible/invisible → Active/Hidden
+  const newStatus = exist.Status === "active" ? "hidden" : "active";
 
-    const updated = await EventModel.updateEventStatus(eventId, newStatus);
+  const updated = await EventModel.updateEventStatus(eventId, newStatus);
 
-    return success("Cập nhật trạng thái thành công", {
-      EventId: eventId,
-      oldStatus: exist.Status,
-      newStatus,
-    });
-  },
+  return success("Thay đổi trạng thái thành công", {
+    EventId: eventId,
+    Status: newStatus  // frontend chỉ cần biết Status mới
+  });
+}
 };
 
 module.exports = EventService;
