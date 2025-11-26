@@ -52,6 +52,9 @@ router.post(
 // Lấy quảng cáo của BarPage
 router.get("/my-ads", verifyToken, requireBarPage, adController.getMyAds);
 
+// Lấy purchases của Event (xem tiến trình quảng cáo)
+router.get("/event-purchases/:eventId", verifyToken, requireBarPage, adController.getEventPurchases);
+
 // Lấy danh sách gói quảng cáo (cho BarPage chọn)
 router.get("/packages", verifyToken, adController.getPackages);
 

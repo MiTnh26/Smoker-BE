@@ -1,5 +1,7 @@
 const adPackageModel = require("../models/adPackageModel");
 const userAdvertisementModel = require("../models/userAdvertisementModel");
+const adPurchaseModel = require("../models/adPurchaseModel");
+const barPageModel = require("../models/barPageModel");
 const notificationService = require("../services/notificationService");
 const { getPool, sql } = require("../db/sqlserver");
 
@@ -260,6 +262,129 @@ class AdminAdController {
       });
     } catch (error) {
       console.error("[AdminAdController] approveAd error:", error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * Lấy danh sách event purchases pending approval
+   * GET /api/admin/ads/event-purchases/pending
+   */
+  async getPendingEventPurchases(req, res) {
+    try {
+      const { limit = 50 } = req.query;
+      const purchases = await adPurchaseModel.getPendingEventPurchases(parseInt(limit));
+      
+      return res.json({ success: true, data: purchases });
+    } catch (error) {
+      console.error("[AdminAdController] getPendingEventPurchases error:", error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * Admin approve event purchase (tạo UserAdvertisement từ Event và link với Purchase)
+   * POST /api/admin/ads/event-purchases/:purchaseId/approve
+   */
+  async approveEventPurchase(req, res) {
+    try {
+      const { purchaseId } = req.params;
+      const { reviveBannerId, reviveCampaignId, reviveZoneId, pricingModel, bidAmount, redirectUrl } = req.body;
+      const adminAccountId = req.user?.id || req.user?.accountId;
+      
+      if (!adminAccountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      
+      // Lấy purchase với thông tin Event
+      const purchase = await adPurchaseModel.findById(purchaseId);
+      if (!purchase || !purchase.EventId) {
+        return res.status(404).json({ success: false, message: "Event purchase not found" });
+      }
+      
+      if (purchase.UserAdId) {
+        return res.status(400).json({ success: false, message: "Purchase already approved" });
+      }
+      
+      // Lấy thông tin Event
+      const eventModel = require("../models/eventModel");
+      const event = await eventModel.getEventById(purchase.EventId);
+      if (!event) {
+        return res.status(404).json({ success: false, message: "Event not found" });
+      }
+      
+      // Tạo UserAdvertisement từ Event
+      const userAd = await userAdvertisementModel.createUserAd({
+        barPageId: purchase.BarPageId,
+        accountId: purchase.AccountId,
+        title: event.EventName,
+        description: event.Description || null,
+        imageUrl: event.Picture || event.EventPicture,
+        redirectUrl: redirectUrl || event.RedirectUrl || `#` // URL từ event hoặc admin set
+      });
+      
+      // Approve ad và set Revive info
+      const approvedAd = await userAdvertisementModel.approveAd(userAd.UserAdId, adminAccountId, {
+        reviveBannerId,
+        reviveCampaignId,
+        reviveZoneId,
+        pricingModel,
+        bidAmount: bidAmount ? parseFloat(bidAmount) : null
+      });
+      
+      // Link purchase với UserAdvertisement và activate
+      const pool = await getPool();
+      await pool.request()
+        .input("PurchaseId", sql.UniqueIdentifier, purchaseId)
+        .input("UserAdId", sql.UniqueIdentifier, userAd.UserAdId)
+        .query(`
+          UPDATE AdPurchases
+          SET UserAdId = @UserAdId,
+              Status = 'active'
+          WHERE PurchaseId = @PurchaseId
+        `);
+      
+      // Update ad với impressions và activate
+      await userAdvertisementModel.updateAdStatus(userAd.UserAdId, {
+        status: 'active',
+        remainingImpressions: purchase.Impressions,
+        totalImpressions: purchase.Impressions
+      });
+      
+      // Update total spent
+      await pool.request()
+        .input("UserAdId", sql.UniqueIdentifier, userAd.UserAdId)
+        .input("Price", sql.Decimal(18,2), purchase.Price)
+        .query(`
+          UPDATE UserAdvertisements
+          SET TotalSpent = TotalSpent + @Price
+          WHERE UserAdId = @UserAdId
+        `);
+      
+      // Gửi notification cho BarPage
+      try {
+        await notificationService.createNotification({
+          type: "Confirm",
+          sender: adminAccountId,
+          receiver: purchase.AccountId,
+          content: `Quảng cáo cho event "${event.EventName}" đã được duyệt và kích hoạt. Đang hiển thị.`,
+          link: `/ads/my-ads/${userAd.UserAdId}`
+        });
+      } catch (notifError) {
+        console.warn("[AdminAdController] Failed to send notification:", notifError);
+      }
+      
+      return res.json({ 
+        success: true, 
+        data: {
+          purchase: { ...purchase, UserAdId: userAd.UserAdId },
+          userAd: approvedAd,
+          event
+        },
+        message: "Event purchase approved and activated successfully" 
+      });
+    } catch (error) {
+      console.error("[AdminAdController] approveEventPurchase error:", error);
       return res.status(500).json({ success: false, message: error.message });
     }
   }

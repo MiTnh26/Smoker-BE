@@ -56,6 +56,6 @@ module.exports = {
   bookingTableRoutes,
   bookingRoutes,
   reportRoutes,
-  adminRoutes
+  adminRoutes,
   payosRoutes
 };

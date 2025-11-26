@@ -1,10 +1,19 @@
 // src/services/eventService.js
 const EventModel = require("../models/eventModel");
 const { success, error } = require("../utils/response");
-const { validate: uuidValidate } = require("uuid");
+
+// Cache for uuid module (ES Module, so we use dynamic import)
+let uuidModule = null;
+async function getUuidModule() {
+  if (!uuidModule) {
+    uuidModule = await import("uuid");
+  }
+  return uuidModule;
+}
 
 const EventService = {
   async listByBar(barPageId, query) {
+    const { validate: uuidValidate } = await getUuidModule();
     if (!barPageId || !uuidValidate(barPageId)) {
       return error("BarPageId không hợp lệ", 400);
     }
@@ -16,6 +25,7 @@ const EventService = {
   },
 
   async getById(eventId) {
+    const { validate: uuidValidate } = await getUuidModule();
     if (!eventId || !uuidValidate(eventId)) {
       return error("EventId không hợp lệ", 400);
     }
@@ -68,6 +78,7 @@ const EventService = {
 
   // ... toggleStatus cũ giữ nguyên, hoặc cải tiến thêm "ended" không cho toggle
   async toggleStatus(eventId) {
+    const { validate: uuidValidate } = await getUuidModule();
     if (!eventId || !uuidValidate(eventId)) {
       return error("EventId không hợp lệ", 400);
     }
