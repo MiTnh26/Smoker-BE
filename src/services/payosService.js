@@ -2,6 +2,19 @@ const PayOS = require("@payos/node");
 
 class PayOSService {
   constructor() {
+    this.payOS = null; // Lazy initialization
+  }
+
+  /**
+   * Khởi tạo PayOS client (lazy initialization)
+   * Chỉ khởi tạo khi thực sự cần sử dụng
+   */
+  _initializePayOS() {
+    // Nếu đã khởi tạo rồi thì return
+    if (this.payOS) {
+      return this.payOS;
+    }
+
     const clientId = process.env.PAYOS_CLIENT_ID;
     const apiKey = process.env.PAYOS_API_KEY;
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
@@ -30,6 +43,7 @@ class PayOSService {
         apiKey.trim(),
         checksumKey.trim()
       );
+      return this.payOS;
     } catch (error) {
       console.error("[PayOS Service] Error initializing PayOS:", error);
       throw new Error(`Failed to initialize PayOS: ${error.message}`);
@@ -97,8 +111,11 @@ class PayOSService {
         cancelUrl: payload.cancelUrl
       });
 
+      // Khởi tạo PayOS client nếu chưa có
+      const payOS = this._initializePayOS();
+
       // Gọi API PayOS để tạo payment link
-      const result = await this.payOS.createPaymentLink(payload);
+      const result = await payOS.createPaymentLink(payload);
 
       return {
         success: true,
@@ -148,9 +165,12 @@ class PayOSService {
         return null;
       }
 
+      // Khởi tạo PayOS client nếu chưa có
+      const payOS = this._initializePayOS();
+
       // Sử dụng phương thức verifyPaymentWebhookData từ PayOS SDK
       // Method này sẽ verify signature và trả về data nếu hợp lệ
-      const verifiedData = this.payOS.verifyPaymentWebhookData(webhookData);
+      const verifiedData = payOS.verifyPaymentWebhookData(webhookData);
       
       if (!verifiedData) {
         console.warn("[PayOS Service] Webhook verification returned null");
@@ -216,8 +236,11 @@ class PayOSService {
    */
   async getPaymentInfo(orderCode) {
     try {
+      // Khởi tạo PayOS client nếu chưa có
+      const payOS = this._initializePayOS();
+
       // Gọi API PayOS để lấy thông tin payment
-      const result = await this.payOS.getPaymentLinkInformation(orderCode);
+      const result = await payOS.getPaymentLinkInformation(orderCode);
 
       return {
         success: true,
@@ -236,7 +259,10 @@ class PayOSService {
    */
   async cancelPayment(orderCode) {
     try {
-      const result = await this.payOS.cancelPaymentLink(orderCode);
+      // Khởi tạo PayOS client nếu chưa có
+      const payOS = this._initializePayOS();
+
+      const result = await payOS.cancelPaymentLink(orderCode);
 
       return {
         success: true,

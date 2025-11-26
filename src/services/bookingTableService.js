@@ -147,6 +147,42 @@ class BookingTableService {
     const data = await bookedScheduleModel.getBookedSchedulesByReceiver(receiverEntityId, { limit, offset });
     return { success: true, data };
   }
+
+  // Get by receiver EntityAccountId directly (for frontend that sends EntityAccountId)
+  async getByReceiverEntityId(receiverEntityId, { limit = 50, offset = 0, date } = {}) {
+    if (!receiverEntityId) {
+      return { success: false, message: "receiverEntityId is required" };
+    }
+
+    const data = await bookedScheduleModel.getBookedSchedulesByReceiver(receiverEntityId, { limit, offset, date });
+    
+    // Populate detailSchedule từ MongoDB cho mỗi booking
+    const bookingsWithDetails = await Promise.all(
+      data.map(async (booking) => {
+        if (booking.MongoDetailId) {
+          try {
+            const detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
+            return {
+              ...booking,
+              detailSchedule: detailSchedule || null,
+            };
+          } catch (error) {
+            console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
+            return {
+              ...booking,
+              detailSchedule: null,
+            };
+          }
+        }
+        return {
+          ...booking,
+          detailSchedule: null,
+        };
+      })
+    );
+
+    return { success: true, data: bookingsWithDetails };
+  }
 }
 
 module.exports = new BookingTableService();
