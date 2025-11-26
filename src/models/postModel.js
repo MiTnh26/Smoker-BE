@@ -133,7 +133,8 @@ const postSchema = new mongoose.Schema(
   {
     title: {
       type: String,
-      required: true,
+      required: false, // Cho phép rỗng (đặc biệt cho repost không có comment)
+      default: "",
     },
     comments: {
       type: Map,
@@ -218,14 +219,15 @@ const postSchema = new mongoose.Schema(
     },
     repostedFromId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Post",
+      ref: "Post", // Reference đến post gốc (không phân biệt post hay media, query sẽ tự xử lý)
       default: null,
       index: true,
     },
+    // Không lưu snapshot - chỉ cần repostedFromId, query lại khi hiển thị
     status: {
       type: String,
-      enum: ["active", "trashed", "deleted"], // active: hiển thị, trashed: đã trash (ẩn), deleted: đã xóa vĩnh viễn
-      default: "active",
+      enum: ["public", "private", "trashed", "deleted"], // public: công khai, private: riêng tư, trashed: đã trash (ẩn), deleted: đã xóa vĩnh viễn
+      default: "public",
       index: true,
     },
     trashedAt: {
