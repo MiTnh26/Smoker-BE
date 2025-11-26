@@ -1,6 +1,11 @@
 const sql = require("mssql");
 const { getPool } = require("../db/sqlserver");
-const { validate: uuidValidate } = require("uuid");
+
+// Simple UUID (RFC 4122) validator to avoid ESM-only `uuid` package issues
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isValidUUID(value) {
+  return typeof value === "string" && UUID_REGEX.test(value);
+}
 
 async function createEvent({ BarPageId, EventName, Description, Picture, StartTime, EndTime, Status }) {
   const pool = await getPool();
@@ -57,7 +62,7 @@ async function getEventsByBarId(barPageId, { skip = 0, take = 20 } = {}) {
 
 async function getEventById(eventId) {
   // BƯỚC 1: Validate UUID
-  if (!eventId || !uuidValidate(eventId)) {
+  if (!isValidUUID(eventId)) {
     return null; // Không throw, để controller xử lý 404
   }
 

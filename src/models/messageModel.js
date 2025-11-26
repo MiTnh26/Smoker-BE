@@ -1,42 +1,89 @@
-const { getPool, sql } = require("../db/sqlserver");
+const mongoose = require("mongoose");
 
-// Thêm tin nhắn mới
-async function addMessage(conversationId, senderId, content, messageType = 'text') {
-    const pool = await getPool();
-    // Insert message, không dùng OUTPUT
-    await pool.request()
-        .input('conversationId', sql.UniqueIdentifier, conversationId)
-        .input('senderId', sql.UniqueIdentifier, senderId)
-        .input('content', sql.NVarChar, content)
-        .input('messageType', sql.NVarChar, messageType)
-        .query(`INSERT INTO Messages (conversationId, senderId, content, messageType) VALUES (@conversationId, @senderId, @content, @messageType)`);
-    // Lấy messageId vừa thêm
-    const result = await pool.request().query(`SELECT TOP 1 * FROM Messages WHERE conversationId = '${conversationId}' AND senderId = '${senderId}' ORDER BY sentAt DESC`);
-    return result.recordset[0];
-}
+const messageSchema = new mongoose.Schema(
+  {
+    conversation_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Conversation",
+      required: true,
+      index: true,
+    },
+    sender_id: {
+      type: String, // entityAccountId
+      required: true,
+      index: true,
+    },
+    sender_entity_type: {
+      type: String,
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+    },
+    content: {
+      type: String,
+      required: true,
+    },
+    message_type: {
+      type: String,
+      default: "text",
+    },
+    attachments: {
+      type: [String],
+      default: [],
+    },
+    is_story_reply: {
+      type: Boolean,
+      default: false,
+    },
+    story_id: {
+      type: String,
+      default: null,
+    },
+    story_url: {
+      type: String,
+      default: null,
+    },
+    is_post_share: {
+      type: Boolean,
+      default: false,
+    },
+    post_id: {
+      type: String,
+      default: null,
+    },
+    post_summary: {
+      type: String,
+      default: null,
+    },
+    post_image: {
+      type: String,
+      default: null,
+    },
+    post_author_name: {
+      type: String,
+      default: null,
+    },
+    post_author_avatar: {
+      type: String,
+      default: null,
+    },
+    post_title: {
+      type: String,
+      default: null,
+    },
+    post_content: {
+      type: String,
+      default: null,
+    },
+  },
+  {
+    timestamps: true,
+    collection: "messages", // Collection for individual message documents
+  }
+);
 
-// Lấy tin nhắn theo conversationId
-async function getMessagesByConversation(conversationId, limit = 50, offset = 0) {
-    const pool = await getPool();
-    const result = await pool.request()
-        .input('conversationId', sql.UniqueIdentifier, conversationId)
-        .input('offset', sql.Int, offset)
-        .input('limit', sql.Int, limit)
-        .query(`SELECT * FROM Messages WHERE conversationId = @conversationId ORDER BY sentAt DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`);
-    return result.recordset;
-}
+// Indexes for query optimization
+messageSchema.index({ conversation_id: 1, createdAt: -1 }); // Composite index for pagination
+messageSchema.index({ sender_id: 1 });
+messageSchema.index({ createdAt: -1 });
 
-// Đánh dấu tin nhắn đã đọc
-async function markMessagesAsRead(conversationId, userId) {
-    const pool = await getPool();
-    await pool.request()
-        .input('conversationId', sql.UniqueIdentifier, conversationId)
-        .input('userId', sql.UniqueIdentifier, userId)
-        .query(`UPDATE Messages SET isRead = 1 WHERE conversationId = @conversationId AND senderId <> @userId AND isRead = 0`);
-}
-
-module.exports = {
-    addMessage,
-    getMessagesByConversation,
-    markMessagesAsRead
-};
+module.exports = mongoose.model("Message", messageSchema, "messages");

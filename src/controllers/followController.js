@@ -5,11 +5,17 @@ const followService = require("../services/followService");
 // Follow an entity
 exports.followEntity = async (req, res) => {
     const { followerId, followingId, followingType } = req.body;
-    console.log("📥 Follow request:", { followerId, followingId, followingType });
+    const userId = req.user?.id; // Get userId from token
+
+    console.log("📥 Follow request:", { followerId, followingId, followingType, userId });
     if (!followerId || !followingId || !followingType) {
         return res.status(400).json({ message: 'Missing required fields.' });
     }
-    const result = await followService.followEntity({ followerId, followingId, followingType });
+    if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized.' });
+    }
+
+    const result = await followService.followEntity({ followerId, followingId, followingType, userId });
     if (result.status === "error") {
         console.error("❌ Follow error:", result.message);
         return res.status(result.code || 500).json(result);
@@ -22,10 +28,16 @@ exports.followEntity = async (req, res) => {
 // Unfollow an entity
 exports.unfollowEntity = async (req, res) => {
     const { followerId, followingId } = req.body;
+    const userId = req.user?.id; // Get userId from token
+
     if (!followerId || !followingId) {
         return res.status(400).json({ message: 'Missing required fields.' });
     }
-    const result = await followService.unfollowEntity({ followerId, followingId });
+    if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized.' });
+    }
+
+    const result = await followService.unfollowEntity({ followerId, followingId, userId });
     if (result.status === "error") {
         return res.status(result.code || 500).json(result);
     }

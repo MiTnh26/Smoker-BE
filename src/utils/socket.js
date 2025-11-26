@@ -1,6 +1,8 @@
 // utils/socket.js
 // Cấu hình và khởi tạo Socket.IO cho server Express
 
+const registerLivestreamSocket = require("../sockets/livestreamSocket");
+
 let ioInstance = null;
 
 function initSocket(server) {
@@ -38,6 +40,8 @@ function initSocket(server) {
             console.log('Socket', socket.id, 'left conversation room:', conversationRoom);
         });
         
+        registerLivestreamSocket(socket, ioInstance);
+
         socket.on('disconnect', () => {
             console.log('Socket disconnected:', socket.id);
         });
