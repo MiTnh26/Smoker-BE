@@ -1,11 +1,16 @@
 // src/services/eventService.js
 const EventModel = require("../models/eventModel");
 const { success, error } = require("../utils/response");
-const { validate: uuidValidate } = require("uuid");
+
+// Dùng chung regex validate UUID để tránh phụ thuộc package `uuid` (ESM only)
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isValidUUID(value) {
+  return typeof value === "string" && UUID_REGEX.test(value);
+}
 
 const EventService = {
   async listByBar(barPageId, query) {
-    if (!barPageId || !uuidValidate(barPageId)) {
+    if (!isValidUUID(barPageId)) {
       return error("BarPageId không hợp lệ", 400);
     }
     const skip = Math.max(parseInt(query.skip ?? "0", 10), 0);
@@ -16,7 +21,7 @@ const EventService = {
   },
 
   async getById(eventId) {
-    if (!eventId || !uuidValidate(eventId)) {
+    if (!isValidUUID(eventId)) {
       return error("EventId không hợp lệ", 400);
     }
 
@@ -68,7 +73,7 @@ const EventService = {
 
   // ... toggleStatus cũ giữ nguyên, hoặc cải tiến thêm "ended" không cho toggle
   async toggleStatus(eventId) {
-    if (!eventId || !uuidValidate(eventId)) {
+    if (!isValidUUID(eventId)) {
       return error("EventId không hợp lệ", 400);
     }
 

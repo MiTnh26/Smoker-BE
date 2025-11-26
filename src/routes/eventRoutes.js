@@ -49,7 +49,6 @@ const { verifyToken, requireActiveEntity } = require("../middleware/authMiddlewa
 const upload = createCloudinaryUpload("events");
 router.get("/bar/:barPageId", EventController.getByBar);
 router.get("/detail/:id", EventController.getById);
-router.post("/", upload.single("Picture"), EventController.create);
 router.put("/:id", upload.single("Picture"), EventController.update);
 router.delete("/:id", EventController.remove);
 router.patch("/toggle/:id", EventController.toggleStatus);
