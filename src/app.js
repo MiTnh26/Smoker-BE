@@ -28,11 +28,11 @@ const {
   livestreamRoutes,
   mediaRoutes,
   bookingTableRoutes,
- 
-
   bookingRoutes,
   adminRoutes,
-
+  payosRoutes,
+  adRoutes,
+  adminAdRoutes,
 } = require("./routes");
 
 
@@ -141,9 +141,16 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/bank-info", bankInfoRoutes);
 app.use("/api/livestream", livestreamRoutes);
 app.use("/api/medias", mediaRoutes);
-app.use("/api/bookingtable",bookingTableRoutes)
+app.use("/api/bookingtable", bookingTableRoutes);
 app.use("/api/booking", bookingRoutes);
+app.use("/api/pay", payosRoutes);
+// UserReview & BarReview APIs
+app.use("/api/user-reviews", userReviewRoutes);
+app.use("/api/bar-reviews", barReviewRoutes);
+app.use("/api/ads", adRoutes);
+app.use("/api/admin", adminAdRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/event-advertisements", require("./routes/eventAdvertisementRoutes"));
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);
