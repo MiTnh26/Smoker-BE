@@ -169,7 +169,7 @@ class StoryService {
                        };
                    });
 
-                   // Enrich với thông tin author (authorName, authorEntityName, avatar)
+                   // Enrich với thông tin author (authorName, avatar)
                    await PostService.enrichPostsWithAuthorInfo(storiesWithSong);
 
                    // Thêm field viewed: true/false cho mỗi story
