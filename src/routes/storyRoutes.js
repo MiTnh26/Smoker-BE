@@ -78,6 +78,11 @@ router.post(
 			next();
 		});
 	},
+	(req, res, next) => {
+		// Stories luôn có type = "story", kể cả client không truyền
+		req.body.type = "story";
+		next();
+	},
 	postController.createPost
 );
 
