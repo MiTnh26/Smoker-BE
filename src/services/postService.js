@@ -5,6 +5,11 @@ const { getPool, sql } = require("../db/sqlserver");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 const notificationService = require("./notificationService");
 
+const normalizeGuid = (value) => {
+  if (!value) return null;
+  return String(value).trim().toLowerCase();
+};
+
 class PostService {
   /**
    * Helper function để kiểm tra ownership dựa trên entityAccountId
@@ -1164,8 +1169,8 @@ class PostService {
   }
 
 
-  // Thích post (toggle behavior)
-  async likePost(postId, userId, typeRole) {
+  // Thích post (toggle behavior theo entityAccountId)
+  async likePost(postId, userId, typeRole, userEntityAccountId) {
     try {
       const post = await Post.findById(postId);
       if (!post) {
@@ -1175,10 +1180,26 @@ class PostService {
         };
       }
 
+      const normalizedEntityAccountId = normalizeGuid(userEntityAccountId);
+      const normalizedUserId = normalizeGuid(userId);
+
       // Tìm like hiện tại (nếu có)
       let existingLikeKey = null;
       for (const [likeId, like] of post.likes.entries()) {
-        if (like.accountId.toString() === userId.toString()) {
+        const likeEntityAccountId = normalizeGuid(like.entityAccountId);
+        const likeAccountId = normalizeGuid(like.accountId);
+
+        const matchByEntity =
+          normalizedEntityAccountId &&
+          likeEntityAccountId &&
+          likeEntityAccountId === normalizedEntityAccountId;
+
+        const matchLegacyAccount =
+          (!normalizedEntityAccountId || !likeEntityAccountId) &&
+          normalizedUserId &&
+          likeAccountId === normalizedUserId;
+
+        if (matchByEntity || matchLegacyAccount) {
           existingLikeKey = likeId;
           break;
         }
@@ -1202,6 +1223,7 @@ class PostService {
         const likeId = new mongoose.Types.ObjectId();
         const like = {
           accountId: userId,
+          entityAccountId: userEntityAccountId || null,
           TypeRole: typeRole || "Account"
         };
 
@@ -1214,7 +1236,10 @@ class PostService {
         // Tạo notification cho post owner (không gửi nếu like chính mình)
         try {
           // Lấy sender entityAccountId
-          const senderEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          let senderEntityAccountId = userEntityAccountId;
+          if (!senderEntityAccountId) {
+            senderEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          }
           const receiverEntityAccountId = post.entityAccountId;
           
           // Chỉ tạo notification nếu sender !== receiver
@@ -1297,8 +1322,8 @@ class PostService {
     }
   }
 
-  // Bỏ thích post
-  async unlikePost(postId, userId) {
+  // Bỏ thích post (theo entityAccountId)
+  async unlikePost(postId, userId, userEntityAccountId) {
     try {
       const post = await Post.findById(postId);
       if (!post) {
@@ -1308,9 +1333,25 @@ class PostService {
         };
       }
 
+      const normalizedEntityAccountId = normalizeGuid(userEntityAccountId);
+      const normalizedUserId = normalizeGuid(userId);
+
       // Tìm và xóa like
       for (const [likeId, like] of post.likes.entries()) {
-        if (like.accountId.toString() === userId.toString()) {
+        const likeEntityAccountId = normalizeGuid(like.entityAccountId);
+        const likeAccountId = normalizeGuid(like.accountId);
+
+        const matchByEntity =
+          normalizedEntityAccountId &&
+          likeEntityAccountId &&
+          likeEntityAccountId === normalizedEntityAccountId;
+
+        const matchLegacyAccount =
+          (!normalizedEntityAccountId || !likeEntityAccountId) &&
+          normalizedUserId &&
+          likeAccountId === normalizedUserId;
+
+        if (matchByEntity || matchLegacyAccount) {
           post.likes.delete(likeId);
           break;
         }
