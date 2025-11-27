@@ -623,10 +623,17 @@ class PostController {
       
       console.log('[PostController] getPostById - postId:', id, 'includeMedias:', includeMedias, 'includeMusic:', includeMusic);
       
+      const viewerAccountId = req.user?.id || null;
+      const viewerEntityAccountId = req.user?.entityAccountId || null;
+
       const result = await postService.getPostById(
         id,
         String(includeMedias) === 'true',
-        String(includeMusic) === 'true'
+        String(includeMusic) === 'true',
+        {
+          viewerAccountId,
+          viewerEntityAccountId
+        }
       );
 
       console.log('[PostController] getPostById - result.success:', result.success);
