@@ -137,7 +137,7 @@ class PostService {
   }
 
   // Lấy tất cả posts
-  async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null) {
+    async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null, populateReposts = false) {
     try {
       // Filter posts: chỉ lấy posts có status = "public" (công khai, chưa trash, chưa xóa)
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
@@ -207,6 +207,10 @@ class PostService {
         query.populate('musicId');
       }
 
+      if (populateReposts) {
+        query.populate('repostedFromId');
+      }
+
       const posts = await query;
       
       // Check if there are more posts (we fetched limit + 1)
@@ -241,6 +245,13 @@ class PostService {
           });
           plain.comments = commentsObj;
         }
+        // If it's a repost, rename 'repostedFromId' to 'originalPost'
+        if (populateReposts && plain.repostedFromId) {
+          // Ensure originalPost is a plain object as well
+          plain.originalPost = plain.repostedFromId.toObject ? plain.repostedFromId.toObject({ flattenMaps: true }) : plain.repostedFromId;
+          delete plain.repostedFromId;
+        }
+
         return plain;
       });
       
@@ -2460,6 +2471,98 @@ class PostService {
     } catch (error) {
       console.error('[PostService] Error enriching comments with author info:', error);
       // Không throw error, chỉ log để không ảnh hưởng đến việc lấy posts
+    }
+  }
+
+  /**
+   * Lấy tất cả posts của một entity cụ thể, sắp xếp theo thời gian mới nhất.
+   * @param {string} entityAccountId - ID của entity cần lấy posts.
+   * @param {object} options - Các tùy chọn { limit, cursor, includeMedias, includeMusic, populateReposts }.
+   * @returns {Promise<object>} - Kết quả tương tự getAllPosts.
+   */
+  async getPostsByEntityAccountId(entityAccountId, { limit = 10, cursor = null, includeMedias = true, includeMusic = true, populateReposts = true }) {
+    try {
+      if (!entityAccountId) {
+        return { success: false, message: "Entity Account ID is required" };
+      }
+
+      const baseFilter = {
+        entityAccountId: String(entityAccountId).trim(),
+        status: { $in: ["public", "active"] },
+        $or: [
+          { type: "post" },
+          { type: { $exists: false } }
+        ]
+      };
+
+      const parsedCursor = this.parseCursor(cursor);
+
+      let queryFilter = { ...baseFilter };
+      if (parsedCursor) {
+        queryFilter = {
+          $and: [
+            baseFilter,
+            {
+              $or: [
+                { createdAt: { $lt: new Date(parsedCursor.createdAt) } },
+                {
+                  $and: [
+                    { createdAt: new Date(parsedCursor.createdAt) },
+                    { _id: { $lt: parsedCursor._id } }
+                  ]
+                }
+              ]
+            }
+          ]
+        };
+      }
+
+      const query = Post.find(queryFilter)
+        .sort({ createdAt: -1, _id: -1 })
+        .limit(limit + 1);
+
+      if (includeMedias) query.populate('mediaIds');
+      if (includeMusic) query.populate('songId');
+      if (populateReposts) query.populate('repostedFromId');
+
+      const posts = await query.lean();
+
+      const hasMore = posts.length > limit;
+      const postsToReturn = hasMore ? posts.slice(0, limit) : posts;
+
+      const postsPlain = postsToReturn.map(p => {
+        const plain = p.toObject ? p.toObject({ flattenMaps: true }) : p;
+        if (populateReposts && plain.repostedFromId) {
+          plain.originalPost = plain.repostedFromId.toObject ? plain.repostedFromId.toObject({ flattenMaps: true }) : plain.repostedFromId;
+          delete plain.repostedFromId;
+        }
+        return plain;
+      });
+
+      await this.enrichPostsWithAuthorInfo(postsPlain);
+
+      let nextCursor = null;
+      if (hasMore) {
+        const lastPost = postsToReturn[limit - 1];
+        if (lastPost) {
+            nextCursor = Buffer.from(JSON.stringify({ createdAt: lastPost.createdAt.toISOString(), _id: lastPost._id.toString() })).toString('base64');
+        }
+      }
+
+      return {
+        success: true,
+        data: postsPlain,
+        nextCursor,
+        hasMore,
+      };
+
+    } catch (error) {
+      console.error('[PostService] Error in getPostsByEntityAccountId:', error);
+      return {
+        success: false,
+        message: "Error fetching posts for entity",
+        error: error.message
+      };
     }
   }
 }
