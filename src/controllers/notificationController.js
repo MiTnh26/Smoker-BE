@@ -1,4 +1,5 @@
-const Notification = require("../models/notificationModel");
+const Notification = require('../models/notificationModel');
+const notificationService = require('../services/notificationService');
 const mongoose = require("mongoose");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 const { getPool, sql } = require("../db/sqlserver");
@@ -7,6 +8,14 @@ class NotificationController {
   // Create new notification
   async createNotification(req, res) {
     try {
+      console.log('[NotificationController] ===== CREATE NOTIFICATION =====');
+      console.log('[NotificationController] Request body:', req.body);
+      console.log('[NotificationController] Current user:', {
+        userId: req.user?.id,
+        entityAccountId: req.user?.entityAccountId,
+        email: req.user?.email
+      });
+      
       const { 
         type, 
         receiver, 
@@ -21,6 +30,14 @@ class NotificationController {
       const senderEntityAccountId = req.body.senderEntityAccountId;
       const senderEntityId = req.body.senderEntityId;
       const senderEntityType = req.body.senderEntityType;
+      
+      console.log('[NotificationController] Extracted fields:', {
+        type,
+        receiver,
+        receiverEntityAccountId,
+        sender,
+        senderEntityAccountId
+      });
 
       if (!sender) {
         return res.status(401).json({
@@ -100,6 +117,47 @@ class NotificationController {
         }
       }
 
+      // Validate required fields
+      if (!type) {
+        console.error('[NotificationController] Missing required field: type');
+        return res.status(400).json({
+          success: false,
+          message: "Type is required"
+        });
+      }
+      
+      if (!finalReceiverEntityAccountId) {
+        console.error('[NotificationController] Missing required field: receiverEntityAccountId');
+        return res.status(400).json({
+          success: false,
+          message: "receiverEntityAccountId is required"
+        });
+      }
+      
+      if (!finalSenderEntityAccountId) {
+        console.error('[NotificationController] Missing required field: senderEntityAccountId');
+        return res.status(400).json({
+          success: false,
+          message: "senderEntityAccountId is required"
+        });
+      }
+      
+      if (!content) {
+        console.error('[NotificationController] Missing required field: content');
+        return res.status(400).json({
+          success: false,
+          message: "Content is required"
+        });
+      }
+      
+      if (!link) {
+        console.error('[NotificationController] Missing required field: link');
+        return res.status(400).json({
+          success: false,
+          message: "Link is required"
+        });
+      }
+
       const notificationData = {
         type,
         sender, // Backward compatibility
@@ -115,8 +173,18 @@ class NotificationController {
         link
       };
 
+      console.log('[NotificationController] Notification data to save:', {
+        type: notificationData.type,
+        senderEntityAccountId: notificationData.senderEntityAccountId,
+        receiverEntityAccountId: notificationData.receiverEntityAccountId,
+        hasContent: !!notificationData.content,
+        hasLink: !!notificationData.link
+      });
+
       const notification = new Notification(notificationData);
       await notification.save();
+      
+      console.log('[NotificationController] Notification created successfully:', notification._id);
 
       res.status(201).json({
         success: true,
@@ -124,61 +192,49 @@ class NotificationController {
         message: "Notification created successfully"
       });
     } catch (error) {
+      console.error('[NotificationController] ===== CREATE NOTIFICATION ERROR =====');
+      console.error('[NotificationController] Error:', error);
+      console.error('[NotificationController] Error details:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack
+      });
+      console.error('[NotificationController] Request body:', req.body);
+      
       res.status(500).json({
         success: false,
         message: "Internal server error",
-        error: error.message
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   }
 
-  // Get user notifications
+  // Get user notifications (enriched)
   async getNotifications(req, res) {
     try {
-      const userId = req.user?.id;
-      const { page = 1, limit = 10, entityAccountId: requestedEntityAccountId } = req.query;
+      const { entityAccountId: requestedEntityAccountId, page = 1, limit = 10 } = req.query;
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "Unauthorized"
-        });
-      }
-
-      // BẮT BUỘC phải có entityAccountId - không dùng AccountId để tránh nhầm lẫn
       if (!requestedEntityAccountId) {
         return res.status(400).json({
           success: false,
-          message: "entityAccountId is required. Cannot use AccountId to avoid confusion between roles."
+          message: "entityAccountId is required."
         });
       }
 
-      // Chỉ query theo EntityAccountId - không fallback về AccountId
-      // Exclude Messages type - message notifications are handled separately
       const entityAccountId = String(requestedEntityAccountId).trim();
-      const skip = (page - 1) * limit;
+      const pageInt = parseInt(page, 10);
+      const limitInt = parseInt(limit, 10);
       
-      const notifications = await Notification.find({
-        receiverEntityAccountId: entityAccountId,
-        type: { $ne: "Messages" } // Exclude message notifications
-      })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(Number.parseInt(limit, 10));
-      
-      const total = await Notification.countDocuments({
-        receiverEntityAccountId: entityAccountId,
-        type: { $ne: "Messages" } // Exclude message notifications
-      });
+      const { notifications, total } = await notificationService.getEnrichedNotifications(entityAccountId, { page: pageInt, limit: limitInt });
 
       res.status(200).json({
         success: true,
         data: notifications,
         pagination: {
-          page,
-          limit,
+          page: pageInt,
+          limit: limitInt,
           total,
-          pages: Math.ceil(total / limit)
+          pages: Math.ceil(total / limitInt)
         }
       });
     } catch (error) {
