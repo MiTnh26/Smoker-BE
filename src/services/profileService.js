@@ -1,6 +1,91 @@
 const { getPool, sql } = require('../db/sqlserver');
 const postService = require('./postService');
 
+const getFirstString = (...values) => {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const str = String(value).trim();
+    if (str) return str;
+  }
+  return null;
+};
+
+const buildAddressText = (addressObj) => {
+  if (!addressObj || typeof addressObj !== 'object') return null;
+
+  const fullAddress = getFirstString(
+    addressObj.fullAddress,
+    addressObj.FullAddress,
+    addressObj.addressText,
+    addressObj.AddressText
+  );
+  if (fullAddress) return fullAddress;
+
+  const detail = getFirstString(
+    addressObj.detail,
+    addressObj.Detail,
+    addressObj.addressDetail,
+    addressObj.AddressDetail,
+    addressObj.street,
+    addressObj.Street
+  );
+  const ward = getFirstString(
+    addressObj.wardName,
+    addressObj.WardName,
+    addressObj.ward,
+    addressObj.Ward
+  );
+  const district = getFirstString(
+    addressObj.districtName,
+    addressObj.DistrictName,
+    addressObj.district,
+    addressObj.District
+  );
+  const province = getFirstString(
+    addressObj.provinceName,
+    addressObj.ProvinceName,
+    addressObj.province,
+    addressObj.Province
+  );
+
+  const parts = [detail, ward, district, province].filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+};
+
+const normalizeAddressField = (rawAddress) => {
+  if (!rawAddress) {
+    return { text: null, object: null, raw: null };
+  }
+
+  if (typeof rawAddress === 'string') {
+    const trimmed = rawAddress.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return {
+          text: buildAddressText(parsed) || trimmed,
+          object: parsed,
+          raw: rawAddress
+        };
+      } catch (err) {
+        console.warn('[ProfileService] Failed to parse address JSON, returning raw string:', err?.message || err);
+        return { text: trimmed, object: null, raw: rawAddress };
+      }
+    }
+    return { text: trimmed, object: null, raw: rawAddress };
+  }
+
+  if (typeof rawAddress === 'object') {
+    return {
+      text: buildAddressText(rawAddress),
+      object: rawAddress,
+      raw: rawAddress
+    };
+  }
+
+  return { text: String(rawAddress), object: null, raw: rawAddress };
+};
+
 class ProfileService {
 
   /**
@@ -110,6 +195,13 @@ class ProfileService {
       }
       
       const entityInfo = result.recordset[0];
+      if (entityInfo) {
+        const normalizedAddress = normalizeAddressField(entityInfo.address);
+        entityInfo.addressText = normalizedAddress.text;
+        entityInfo.addressObject = normalizedAddress.object;
+        entityInfo.addressRaw = normalizedAddress.raw;
+        entityInfo.address = normalizedAddress.text || entityInfo.address;
+      }
       console.log('[ProfileService] _getEntityInfo - Entity found:', {
         entityAccountId: entityInfo.EntityAccountId,
         entityType: entityInfo.EntityType,

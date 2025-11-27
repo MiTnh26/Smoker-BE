@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const postController = require("../controllers/postController");
-const { verifyToken, requireActiveEntity, checkBannedStatus } = require("../middleware/authMiddleware");
+const { verifyToken, optionalVerifyToken, requireActiveEntity, checkBannedStatus } = require("../middleware/authMiddleware");
 const { createPostUpload } = require("../middleware/uploadCloudinary");
 
 // Tạo instance upload cho posts
@@ -57,6 +57,6 @@ router.post("/:id/trash", verifyToken, checkBannedStatus, requireActiveEntity, p
 router.post("/:id/restore", verifyToken, checkBannedStatus, requireActiveEntity, postController.restorePost);
 
 // Routes không cần authentication (public routes) - phải đặt cuối
-router.get("/:id", postController.getPostById);
+router.get("/:id", optionalVerifyToken, postController.getPostById);
 
 module.exports = router;
