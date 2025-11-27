@@ -135,7 +135,33 @@ class BookingTableService {
     }
 
     const data = await bookedScheduleModel.getBookedSchedulesByBooker(bookerEntityId, { limit, offset });
-    return { success: true, data };
+    
+    // Populate detailSchedule từ MongoDB cho mỗi booking
+    const bookingsWithDetails = await Promise.all(
+      data.map(async (booking) => {
+        if (booking.MongoDetailId) {
+          try {
+            const detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
+            return {
+              ...booking,
+              detailSchedule: detailSchedule || null,
+            };
+          } catch (error) {
+            console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
+            return {
+              ...booking,
+              detailSchedule: null,
+            };
+          }
+        }
+        return {
+          ...booking,
+          detailSchedule: null,
+        };
+      })
+    );
+
+    return { success: true, data: bookingsWithDetails };
   }
 
   async getByReceiver(receiverAccountId, { limit = 50, offset = 0 } = {}) {
