@@ -56,7 +56,7 @@ class SearchService {
       console.log('[SearchService] _searchPosts - Starting search with query:', query, 'limit:', limit);
       
       // Gọi postService để tìm kiếm posts
-      const result = await postService.searchPosts(query, 1, limit);
+    const result = await postService.searchPosts(query, 1, limit);
       
       if (!result.success || !result.data) {
         console.log('[SearchService] _searchPosts - No posts found or error:', result.message);
@@ -160,13 +160,13 @@ class SearchService {
   async searchAll(query, limit = 5) {
     try {
       console.log('[SearchService] searchAll - Starting search with query:', query, 'limit:', limit);
-      const pool = await getPool();
+  const pool = await getPool();
       
       const [allUsers, bars, posts] = await Promise.all([
         this._searchUsers(pool, query, limit),
         this._searchBars(pool, query, limit),
         this._searchPosts(query, limit)
-      ]);
+  ]);
 
       console.log('[SearchService] searchAll - Raw results:', {
         allUsersCount: allUsers?.length || 0,
