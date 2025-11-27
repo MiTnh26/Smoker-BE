@@ -311,7 +311,7 @@ class StoryViewService {
         // Kiểm tra xem viewer có liked story không (ưu tiên entityAccountId)
         // KHÔNG hiển thị lượt tim nếu viewer là chủ sở hữu story
         let isLiked = false;
-        const isOwner = storyOwnerEntityAccountId && viewerIdLower === storyOwnerEntityAccountId;
+          const isOwner = storyOwnerEntityAccountId && viewerIdLower === storyOwnerEntityAccountId;
         if (!isOwner) {
           if (likedEntityAccountIds.has(viewerIdLower)) {
             isLiked = true;
