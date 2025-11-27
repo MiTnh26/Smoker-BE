@@ -12,6 +12,25 @@ function verifyToken(req, res, next) {
   });
 }
 
+function optionalVerifyToken(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (!token) {
+      return next();
+    }
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, payload) => {
+      if (!err && payload) {
+        req.user = payload;
+      }
+      next();
+    });
+  } catch (error) {
+    next(); // Không chặn request nếu token không hợp lệ
+  }
+}
+
 function requireAdmin(req, res, next) {
   if (!req.user) return res.status(401).json({ status: "error", message: "Unauthenticated" });
   const role = String(req.user.role || "").toLowerCase();
@@ -176,4 +195,4 @@ async function requireBarPage(req, res, next) {
   }
 }
 
-module.exports = { verifyToken, requireAdmin, requireActiveEntity, checkBannedStatus, requireBarPage };
+module.exports = { verifyToken, optionalVerifyToken, requireAdmin, requireActiveEntity, checkBannedStatus, requireBarPage };
