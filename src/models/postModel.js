@@ -7,6 +7,10 @@ const likeSchema = new mongoose.Schema(
       type: String, // ID từ SQL Server
       required: true,
     },
+    entityAccountId: {
+      type: String, // EntityAccountId của người tương tác
+      default: null,
+    },
     TypeRole: {
       type: String,
       enum: ["Account", "BusinessAccount", "BarPage"],

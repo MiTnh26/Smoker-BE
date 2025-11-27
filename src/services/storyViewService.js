@@ -1,5 +1,10 @@
 const StoryView = require("../models/storyViewModel");
 
+const normalizeGuid = (value) => {
+  if (!value) return null;
+  return String(value).trim().toLowerCase();
+};
+
 class StoryViewService {
   /**
    * Đánh dấu một story đã được xem bởi user
@@ -261,7 +266,7 @@ class StoryViewService {
             avatar: row.Avatar || null,
             entityType: row.EntityType,
             entityId: row.EntityId,
-            accountId: String(row.AccountId).trim(), // AccountId để check liked
+            accountId: String(row.AccountId).trim(), // AccountId để check liked (legacy)
           });
         });
       }
@@ -270,20 +275,25 @@ class StoryViewService {
       const Post = require("../models/postModel");
       const story = await Post.findById(storyId).lean();
       
-      // Kiểm tra liked status cho mỗi viewer
-      // Likes Map lưu accountId, nên cần check AccountId của viewer
-      const likedAccountIds = new Set();
+      // Kiểm tra liked status cho mỗi viewer (ưu tiên entityAccountId)
+      const likedEntityAccountIds = new Set();
+      const likedAccountIds = new Set(); // legacy fallback
       if (story && story.likes) {
         if (story.likes instanceof Map) {
           for (const [likeId, like] of story.likes.entries()) {
-            if (like.accountId) {
-              likedAccountIds.add(String(like.accountId).trim());
+            if (like.entityAccountId) {
+              likedEntityAccountIds.add(normalizeGuid(like.entityAccountId));
+            } else if (like.accountId) {
+              likedAccountIds.add(normalizeGuid(like.accountId));
             }
           }
         } else if (typeof story.likes === 'object' && story.likes !== null) {
           for (const likeId in story.likes) {
-            if (story.likes[likeId]?.accountId) {
-              likedAccountIds.add(String(story.likes[likeId].accountId).trim());
+            const like = story.likes[likeId];
+            if (like?.entityAccountId) {
+              likedEntityAccountIds.add(normalizeGuid(like.entityAccountId));
+            } else if (like?.accountId) {
+              likedAccountIds.add(normalizeGuid(like.accountId));
             }
           }
         }
@@ -298,16 +308,18 @@ class StoryViewService {
         const viewerIdLower = viewerIdOriginal.toLowerCase();
         const viewerInfo = viewerMap.get(viewerIdLower);
         
-        // Kiểm tra xem viewer có liked story không (dựa trên AccountId)
+        // Kiểm tra xem viewer có liked story không (ưu tiên entityAccountId)
         // KHÔNG hiển thị lượt tim nếu viewer là chủ sở hữu story
         let isLiked = false;
-        if (viewerInfo && viewerInfo.accountId) {
-          const accountIdStr = String(viewerInfo.accountId).trim();
-          const isOwner = storyOwnerEntityAccountId && viewerIdLower === storyOwnerEntityAccountId;
-          
-          // Chỉ hiển thị liked nếu viewer đã like VÀ không phải là chủ sở hữu
-          if (!isOwner && likedAccountIds.has(accountIdStr)) {
+        const isOwner = storyOwnerEntityAccountId && viewerIdLower === storyOwnerEntityAccountId;
+        if (!isOwner) {
+          if (likedEntityAccountIds.has(viewerIdLower)) {
             isLiked = true;
+          } else if (viewerInfo && viewerInfo.accountId) {
+            const accountIdStr = normalizeGuid(viewerInfo.accountId);
+            if (accountIdStr && likedAccountIds.has(accountIdStr)) {
+              isLiked = true;
+            }
           }
         }
         
