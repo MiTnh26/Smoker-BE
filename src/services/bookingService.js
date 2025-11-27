@@ -1,4 +1,6 @@
 const bookedScheduleModel = require("../models/bookedScheduleModel");
+const DetailSchedule = require("../models/detailSchedule");
+const { getEntityAccountIdByAccountId } = require("../models/entityAccount1Model");
 
 class BookingService {
   async createBooking(bookingData) {
@@ -18,7 +20,22 @@ class BookingService {
         return { success: false, message: "Booked schedule not found" };
       }
 
-      if (!this._isSameId(schedule.ReceiverId, userId)) {
+      // userId từ token là AccountId, cần convert sang EntityAccountId để so sánh với ReceiverId
+      // ReceiverId là EntityAccountId của receiver (DJ/Dancer BusinessAccount hoặc BarPage)
+      // Cần tìm tất cả EntityAccountId của AccountId và so sánh với ReceiverId
+      let isAuthorized = false;
+      
+      // Thử tìm EntityAccountId với các EntityType phổ biến và so sánh với ReceiverId
+      const entityTypes = ["BusinessAccount", "BarPage", "Account"];
+      for (const entityType of entityTypes) {
+        const entityAccountId = await getEntityAccountIdByAccountId(userId, entityType);
+        if (entityAccountId && this._isSameId(schedule.ReceiverId, entityAccountId)) {
+          isAuthorized = true;
+          break;
+        }
+      }
+
+      if (!isAuthorized) {
         return { success: false, message: "Unauthorized to confirm this schedule" };
       }
 
@@ -26,10 +43,53 @@ class BookingService {
         return { success: false, message: "Cannot confirm a canceled schedule" };
       }
 
+      // Confirm the booking
       const updatedSchedule = await bookedScheduleModel.updateBookedScheduleStatuses(
         bookedScheduleId,
         { scheduleStatus: "Confirmed" }
       );
+
+      // Auto-reject other pending bookings on the same date for the same receiver
+      if (schedule.BookingDate) {
+        try {
+          const bookingDate = new Date(schedule.BookingDate);
+          // Format date as YYYY-MM-DD for the query
+          const dateString = bookingDate.toISOString().split('T')[0];
+
+          // Get all bookings on the same date for the same receiver
+          const sameDateBookings = await bookedScheduleModel.getBookedSchedulesByReceiver(
+            schedule.ReceiverId,
+            { limit: 1000, date: dateString }
+          );
+
+          // Filter pending bookings (excluding the one we just confirmed)
+          const pendingBookings = sameDateBookings.filter(b => {
+            const bookingId = b.BookedScheduleId || b.bookedScheduleId;
+            const status = b.ScheduleStatus || b.scheduleStatus;
+            return bookingId && 
+                   bookingId.toLowerCase() !== bookedScheduleId.toLowerCase() &&
+                   status === "Pending";
+          });
+
+          // Reject all other pending bookings on the same date
+          for (const pendingBooking of pendingBookings) {
+            const bookingId = pendingBooking.BookedScheduleId || pendingBooking.bookedScheduleId;
+            if (bookingId) {
+              await bookedScheduleModel.updateBookedScheduleStatuses(
+                bookingId,
+                { scheduleStatus: "Canceled" }
+              );
+            }
+          }
+
+          if (pendingBookings.length > 0) {
+            console.log(`[BookingService] Auto-rejected ${pendingBookings.length} pending bookings on the same date`);
+          }
+        } catch (error) {
+          console.error("[BookingService] Error auto-rejecting same-date bookings:", error);
+          // Don't fail the confirmation if auto-reject fails
+        }
+      }
 
       const finalSchedule = await this._autoCompleteIfNeeded(updatedSchedule);
 
@@ -80,6 +140,51 @@ class BookingService {
     }
   }
 
+  async rejectBookingSchedule(bookedScheduleId, userId) {
+    try {
+      const schedule = await bookedScheduleModel.getBookedScheduleById(bookedScheduleId);
+
+      if (!schedule) {
+        return { success: false, message: "Booked schedule not found" };
+      }
+
+      // Check if user is the receiver (DJ/Dancer) - similar to confirmBookingSchedule
+      let isAuthorized = false;
+      const entityTypes = ["BusinessAccount", "BarPage", "Account"];
+      for (const entityType of entityTypes) {
+        const entityAccountId = await getEntityAccountIdByAccountId(userId, entityType);
+        if (entityAccountId && this._isSameId(schedule.ReceiverId, entityAccountId)) {
+          isAuthorized = true;
+          break;
+        }
+      }
+
+      if (!isAuthorized) {
+        return { success: false, message: "Unauthorized to reject this schedule" };
+      }
+
+      if (schedule.ScheduleStatus !== "Pending") {
+        return { success: false, message: "Only pending schedules can be rejected" };
+      }
+
+      const updatedSchedule = await bookedScheduleModel.updateBookedScheduleStatuses(
+        bookedScheduleId,
+        { scheduleStatus: "Rejected" }
+      );
+
+      return {
+        success: true,
+        data: updatedSchedule,
+        message: "Schedule rejected successfully"
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message || "Failed to reject schedule"
+      };
+    }
+  }
+
   async _autoCompleteIfNeeded(schedule) {
     if (!schedule) return schedule;
 
@@ -109,7 +214,33 @@ class BookingService {
   async getBookingsByBooker(bookerId, { limit = 50, offset = 0 } = {}) {
     try {
       const data = await bookedScheduleModel.getBookedSchedulesByBooker(bookerId, { limit, offset });
-      return { success: true, data };
+      
+      // Populate detailSchedule từ MongoDB cho mỗi booking
+      const bookingsWithDetails = await Promise.all(
+        data.map(async (booking) => {
+          if (booking.MongoDetailId) {
+            try {
+              const detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
+              return {
+                ...booking,
+                detailSchedule: detailSchedule || null,
+              };
+            } catch (error) {
+              console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
+              return {
+                ...booking,
+                detailSchedule: null,
+              };
+            }
+          }
+          return {
+            ...booking,
+            detailSchedule: null,
+          };
+        })
+      );
+
+      return { success: true, data: bookingsWithDetails };
     } catch (error) {
       return { success: false, message: error.message || "Failed to fetch schedules by booker" };
     }
@@ -118,7 +249,33 @@ class BookingService {
   async getBookingsByReceiver(receiverId, { limit = 50, offset = 0 } = {}) {
     try {
       const data = await bookedScheduleModel.getBookedSchedulesByReceiver(receiverId, { limit, offset });
-      return { success: true, data };
+      
+      // Populate detailSchedule từ MongoDB cho mỗi booking
+      const bookingsWithDetails = await Promise.all(
+        data.map(async (booking) => {
+          if (booking.MongoDetailId) {
+            try {
+              const detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
+              return {
+                ...booking,
+                detailSchedule: detailSchedule || null,
+              };
+            } catch (error) {
+              console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
+              return {
+                ...booking,
+                detailSchedule: null,
+              };
+            }
+          }
+          return {
+            ...booking,
+            detailSchedule: null,
+          };
+        })
+      );
+
+      return { success: true, data: bookingsWithDetails };
     } catch (error) {
       return { success: false, message: error.message || "Failed to fetch schedules by receiver" };
     }

@@ -22,8 +22,7 @@ async function createBookedSchedule({
   mongoDetailId = null
 }) {
   const pool = await getPool();
-  const request = pool.request()
-
+  const result = await pool.request()
     .input("BookerId", sql.UniqueIdentifier, bookerId)
     .input("ReceiverId", sql.UniqueIdentifier, receiverId)
     .input("Type", sql.NVarChar(100), type)
@@ -33,7 +32,6 @@ async function createBookedSchedule({
     .input("BookingDate", sql.DateTime, toDateOrNull(bookingDate))
     .input("StartTime", sql.DateTime, toDateOrNull(startTime))
     .input("EndTime", sql.DateTime, toDateOrNull(endTime))
-
     .input("MongoDetailId", sql.NVarChar(50), mongoDetailId || null)
     .query(`
       INSERT INTO BookedSchedules (
@@ -132,13 +130,29 @@ async function getBookedSchedulesByBooker(bookerId, { limit = 50, offset = 0 } =
   return result.recordset;
 }
 
-async function getBookedSchedulesByReceiver(receiverId, { limit = 50, offset = 0 } = {}) {
+async function getBookedSchedulesByReceiver(receiverId, { limit = 50, offset = 0, date } = {}) {
   const pool = await getPool();
-  const result = await pool.request()
+  const request = pool.request()
     .input("ReceiverId", sql.UniqueIdentifier, receiverId)
     .input("Limit", sql.Int, limit)
-    .input("Offset", sql.Int, offset)
-    .query(`
+    .input("Offset", sql.Int, offset);
+
+  let whereClause = "WHERE ReceiverId = @ReceiverId";
+  
+  // Filter by date if provided
+  if (date) {
+    const dateObj = new Date(date);
+    const startOfDay = new Date(dateObj);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(dateObj);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    request.input("StartOfDay", sql.DateTime, startOfDay);
+    request.input("EndOfDay", sql.DateTime, endOfDay);
+    whereClause += " AND BookingDate >= @StartOfDay AND BookingDate <= @EndOfDay";
+  }
+
+  const result = await request.query(`
       SELECT
         BookedScheduleId,
         BookerId,
@@ -153,7 +167,7 @@ async function getBookedSchedulesByReceiver(receiverId, { limit = 50, offset = 0
         MongoDetailId,
         created_at
       FROM BookedSchedules
-      WHERE ReceiverId = @ReceiverId
+      ${whereClause}
       ORDER BY created_at DESC
       OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY;
     `);

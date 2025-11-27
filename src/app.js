@@ -49,7 +49,8 @@ app.use(
   cors({
     origin: "*",
     // methods: không chỉ định = cho phép tất cả methods
-    allowedHeaders: "*", // Allow all headers
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"], // Explicitly include Authorization
+    exposedHeaders: ["Authorization"],
     credentials: false, // Set to false when origin is "*"
     preflightContinue: false,
     optionsSuccessStatus: 204,

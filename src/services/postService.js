@@ -10,6 +10,84 @@ const normalizeGuid = (value) => {
   return String(value).trim().toLowerCase();
 };
 
+const countCollectionItems = (value) => {
+  if (!value) return 0;
+  if (Array.isArray(value)) return value.length;
+  if (value instanceof Map) return value.size;
+  if (typeof value === "object") return Object.keys(value).length;
+  if (typeof value === "number") return value;
+  return 0;
+};
+
+const extractLikeEntityAccountId = (like, key) => {
+  if (like && typeof like === "object") {
+    return normalizeGuid(
+      like.entityAccountId ||
+      like.EntityAccountId
+    );
+  }
+  if (key && (typeof key === "string" || typeof key === "number")) {
+    return normalizeGuid(key);
+  }
+  return null;
+};
+
+const extractLikeAccountId = (like, key) => {
+  if (like && typeof like === "object") {
+    return normalizeGuid(
+      like.accountId ||
+      like.AccountId ||
+      like.id ||
+      like.Id
+    );
+  }
+  if (key && (typeof key === "string" || typeof key === "number")) {
+    return normalizeGuid(key);
+  }
+  return null;
+};
+
+const isCollectionLikedByViewer = (likes, viewerAccountId, viewerEntityAccountId) => {
+  if (!likes) return false;
+  if (!viewerAccountId && !viewerEntityAccountId) return false;
+
+  const checkMatch = (likeValue, key) => {
+    const likeEntity = extractLikeEntityAccountId(likeValue, key);
+    const likeAccount = extractLikeAccountId(likeValue, key);
+
+    if (viewerEntityAccountId && likeEntity && viewerEntityAccountId === likeEntity) {
+      return true;
+    }
+
+    if (!viewerEntityAccountId && viewerAccountId && likeAccount && viewerAccountId === likeAccount) {
+      return true;
+    }
+
+    if (viewerEntityAccountId && !likeEntity && viewerAccountId && likeAccount && viewerAccountId === likeAccount) {
+      return true;
+    }
+
+    return false;
+  };
+
+  if (Array.isArray(likes)) {
+    return likes.some((like) => checkMatch(like));
+  }
+
+  if (likes instanceof Map) {
+    for (const [key, value] of likes.entries()) {
+      if (checkMatch(value, key)) return true;
+    }
+    return false;
+  }
+
+  if (typeof likes === "object") {
+    return Object.entries(likes).some(([key, value]) => checkMatch(value, key));
+  }
+
+  return false;
+};
+
 class PostService {
   /**
    * Helper function để kiểm tra ownership dựa trên entityAccountId
@@ -370,9 +448,11 @@ class PostService {
   }
 
   // Lấy post theo ID
-  async getPostById(postId, includeMedias = false, includeMusic = false) {
+  async getPostById(postId, includeMedias = false, includeMusic = false, options = {}) {
     try {
       console.log('[PostService] getPostById - postId:', postId, 'includeMedias:', includeMedias, 'includeMusic:', includeMusic);
+      const viewerAccountId = options?.viewerAccountId || null;
+      const viewerEntityAccountId = options?.viewerEntityAccountId || null;
       
       // Chỉ lấy post có status = "public" (công khai, chưa trash, chưa xóa)
       // Hoặc status = "private" nếu user là owner
@@ -484,6 +564,7 @@ class PostService {
       
       // Enrich comments and replies with author information
       await this.enrichCommentsWithAuthorInfo([postData]);
+      this.applyViewerContextToComments([postData], viewerAccountId, viewerEntityAccountId);
 
       return {
         success: true,
@@ -2567,6 +2648,101 @@ class PostService {
       console.error('[PostService] Error enriching comments with author info:', error);
       // Không throw error, chỉ log để không ảnh hưởng đến việc lấy posts
     }
+  }
+
+  isOwnedByViewer(resource, normalizedAccountId, normalizedEntityAccountId) {
+    if (!resource) return false;
+
+    const resourceEntityAccountId = normalizeGuid(
+      resource.authorEntityAccountId ||
+      resource.entityAccountId
+    );
+    const resourceAccountId = normalizeGuid(
+      resource.accountId ||
+      resource.authorAccountId
+    );
+
+    if (
+      normalizedEntityAccountId &&
+      resourceEntityAccountId &&
+      normalizedEntityAccountId === resourceEntityAccountId
+    ) {
+      return true;
+    }
+
+    if (
+      normalizedAccountId &&
+      resourceAccountId &&
+      normalizedAccountId === resourceAccountId
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  applyViewerContextToComments(posts, viewerAccountId, viewerEntityAccountId) {
+    if (!posts || posts.length === 0) return;
+
+    const normalizedAccountId = normalizeGuid(viewerAccountId);
+    const normalizedEntityAccountId = normalizeGuid(viewerEntityAccountId);
+
+    posts.forEach((post) => {
+      if (!post || !post.comments || typeof post.comments !== "object") return;
+
+      const commentsEntries = post.comments instanceof Map
+        ? Array.from(post.comments.entries())
+        : Object.entries(post.comments);
+
+      commentsEntries.forEach(([commentKey, comment]) => {
+        if (!comment || typeof comment !== "object") return;
+
+        comment.likesCount = countCollectionItems(comment.likes);
+        comment.likedByViewer = isCollectionLikedByViewer(
+          comment.likes,
+          normalizedAccountId,
+          normalizedEntityAccountId
+        );
+        comment.canManage = this.isOwnedByViewer(
+          comment,
+          normalizedAccountId,
+          normalizedEntityAccountId
+        );
+
+        if (comment.replies && typeof comment.replies === "object") {
+          const repliesEntries = comment.replies instanceof Map
+            ? Array.from(comment.replies.entries())
+            : Object.entries(comment.replies);
+
+          repliesEntries.forEach(([replyKey, reply]) => {
+            if (!reply || typeof reply !== "object") return;
+            reply.likesCount = countCollectionItems(reply.likes);
+            reply.likedByViewer = isCollectionLikedByViewer(
+              reply.likes,
+              normalizedAccountId,
+              normalizedEntityAccountId
+            );
+            reply.canManage = this.isOwnedByViewer(
+              reply,
+              normalizedAccountId,
+              normalizedEntityAccountId
+            );
+
+            if (comment.replies instanceof Map) {
+              comment.replies.set(replyKey, reply);
+            } else {
+              comment.replies[replyKey] = reply;
+            }
+          });
+        }
+
+        if (post.comments instanceof Map) {
+          post.comments.set(commentKey, comment);
+        } else {
+          post.comments[commentKey] = comment;
+        }
+      });
+    });
   }
 
   /**
