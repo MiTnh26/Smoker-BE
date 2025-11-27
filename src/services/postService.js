@@ -40,10 +40,20 @@ class PostService {
   // Tạo post mới
   async createPost(postData) {
     try {
+      // Validate và fix status trước khi tạo post
+      const validStatuses = ["public", "private", "trashed", "deleted"];
+      if (postData.status && !validStatuses.includes(postData.status)) {
+        console.warn(`[PostService] Invalid status "${postData.status}" provided, setting to "public"`);
+        postData.status = "public";
+      } else if (!postData.status) {
+        postData.status = "public"; // Default
+      }
+
       console.log("[PostService] createPost - Input data:", {
         hasTitle: !!postData.title,
         hasContent: !!postData.content,
         type: postData.type,
+        status: postData.status,
         entityAccountId: postData.entityAccountId,
         entityId: postData.entityId,
         entityType: postData.entityType,
@@ -1950,7 +1960,8 @@ class PostService {
   // Tăng số lượt xem của post
   async incrementView(postId, accountId = null) {
     try {
-      const post = await Post.findById(postId);
+      // Kiểm tra post có tồn tại không
+      const post = await Post.findById(postId).lean(); // Dùng lean() để tránh Mongoose document overhead
       if (!post) {
         return {
           success: false,
@@ -1958,19 +1969,62 @@ class PostService {
         };
       }
 
-      // Tăng views (không cần check duplicate vì có thể nhiều người xem)
-      post.views = (post.views || 0) + 1;
-      await post.save();
+      // Kiểm tra status hiện tại
+      const validStatuses = ["public", "private", "trashed", "deleted"];
+      const currentStatus = post.status;
+      const needsStatusFix = !currentStatus || !validStatuses.includes(currentStatus);
+
+      // Update views bằng $inc (atomic operation, không touch các field khác)
+      await Post.findByIdAndUpdate(
+        postId,
+        { $inc: { views: 1 } },
+        { 
+          runValidators: false, // Tắt validation để chỉ update views, không validate toàn bộ document
+          upsert: false
+        }
+      );
+
+      // Nếu status không hợp lệ, sửa riêng (sau khi đã update views)
+      if (needsStatusFix) {
+        const fixedStatus = "public"; // Default status
+        if (currentStatus && !validStatuses.includes(currentStatus)) {
+          console.warn(`[PostService] Invalid status "${currentStatus}" for post ${postId}, fixing to "public"`);
+        }
+        
+        try {
+          // Update status riêng với validation
+          await Post.findByIdAndUpdate(
+            postId,
+            { $set: { status: fixedStatus } },
+            { 
+              runValidators: true, // Validate chỉ status field
+              strict: true // Chỉ update field được specify
+            }
+          );
+        } catch (statusError) {
+          // Log lỗi nhưng không fail request vì views đã được update
+          console.error(`[PostService] Failed to fix invalid status for post ${postId}:`, statusError.message);
+        }
+      }
 
       // Cập nhật trending score sau khi tăng views
-      await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+      try {
+        await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+      } catch (trendingError) {
+        // Log nhưng không fail request
+        console.warn(`[PostService] Failed to update trending score for post ${postId}:`, trendingError.message);
+      }
+
+      // Lấy lại post đã update để trả về
+      const updatedPost = await Post.findById(postId);
 
       return {
         success: true,
-        data: post,
+        data: updatedPost,
         message: "View tracked successfully"
       };
     } catch (error) {
+      console.error(`[PostService] Error in incrementView for post ${postId}:`, error);
       return {
         success: false,
         message: "Error tracking view",

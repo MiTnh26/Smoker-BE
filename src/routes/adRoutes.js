@@ -55,6 +55,9 @@ router.get("/my-ads", verifyToken, requireBarPage, adController.getMyAds);
 // Lấy purchases của Event (xem tiến trình quảng cáo)
 router.get("/event-purchases/:eventId", verifyToken, requireBarPage, adController.getEventPurchases);
 
+// Lấy thông tin purchase theo ID (cho payment return page)
+router.get("/purchases/:purchaseId", verifyToken, adController.getPurchaseById);
+
 // Lấy danh sách gói quảng cáo (cho BarPage chọn)
 router.get("/packages", verifyToken, adController.getPackages);
 
@@ -63,5 +66,13 @@ router.post("/purchase", verifyToken, requireBarPage, adController.purchasePacka
 
 // Dashboard stats cho BarPage
 router.get("/bar-dashboard/:barPageId", verifyToken, requireBarPage, adController.getBarDashboardStats);
+
+// Pause requests (BarPage)
+router.post("/pause-request", verifyToken, requireBarPage, adController.createPauseRequest);
+router.get("/pause-requests", verifyToken, requireBarPage, adController.getMyPauseRequests);
+
+// Resume requests (BarPage)
+router.post("/resume-request", verifyToken, requireBarPage, adController.createResumeRequest);
+router.get("/resume-requests", verifyToken, requireBarPage, adController.getMyResumeRequests);
 
 module.exports = router;

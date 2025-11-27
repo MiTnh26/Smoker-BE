@@ -16,15 +16,47 @@ async function getAllActivePackages() {
 
 /**
  * Lấy tất cả gói quảng cáo (bao gồm cả inactive - cho admin)
+ * Tính toán SoldCount và TotalRevenue từ AdPurchases thực tế
  */
 async function getAllPackages() {
   const pool = await getPool();
   const result = await pool.request().query(`
-    SELECT *
-    FROM AdPackages
-    ORDER BY DisplayOrder ASC, CreatedAt DESC
+    SELECT 
+      ap.PackageId,
+      ap.PackageName,
+      ap.PackageCode,
+      ap.Impressions,
+      ap.Price,
+      ap.Description,
+      ap.IsActive,
+      ap.DisplayOrder,
+      ap.OriginalPrice,
+      ap.CreatedAt,
+      ap.UpdatedAt,
+      -- Tính SoldCount từ AdPurchases với PaymentStatus = 'paid'
+      CAST(ISNULL((
+        SELECT COUNT(*)
+        FROM AdPurchases
+        WHERE PackageId = ap.PackageId
+          AND PaymentStatus = 'paid'
+      ), 0) AS INT) AS SoldCount,
+      -- Tính TotalRevenue từ AdPurchases với PaymentStatus = 'paid'
+      CAST(ISNULL((
+        SELECT SUM(Price)
+        FROM AdPurchases
+        WHERE PackageId = ap.PackageId
+          AND PaymentStatus = 'paid'
+      ), 0) AS DECIMAL(18,2)) AS TotalRevenue
+    FROM AdPackages ap
+    ORDER BY ap.DisplayOrder ASC, ap.CreatedAt DESC
   `);
-  return result.recordset;
+  
+  // Đảm bảo các giá trị số được convert đúng
+  return result.recordset.map(pkg => ({
+    ...pkg,
+    SoldCount: pkg.SoldCount != null ? parseInt(pkg.SoldCount) : 0,
+    TotalRevenue: pkg.TotalRevenue != null ? parseFloat(pkg.TotalRevenue) : 0
+  }));
 }
 
 /**
@@ -63,7 +95,9 @@ async function createPackage({
   originalPrice = null
 }) {
   const pool = await getPool();
-  const result = await pool.request()
+  
+  // Insert không dùng OUTPUT clause (vì có trigger)
+  await pool.request()
     .input("PackageName", sql.NVarChar(255), packageName)
     .input("PackageCode", sql.NVarChar(100), packageCode)
     .input("Impressions", sql.Int, impressions)
@@ -76,12 +110,13 @@ async function createPackage({
       INSERT INTO AdPackages
         (PackageId, PackageName, PackageCode, Impressions, Price, Description, 
          IsActive, DisplayOrder, OriginalPrice, SoldCount, TotalRevenue, CreatedAt, UpdatedAt)
-      OUTPUT inserted.*
       VALUES
         (NEWID(), @PackageName, @PackageCode, @Impressions, @Price, @Description,
          @IsActive, @DisplayOrder, @OriginalPrice, 0, 0, GETDATE(), GETDATE())
     `);
-  return result.recordset[0];
+  
+  // Query lại bằng PackageCode (unique) để lấy record vừa tạo
+  return await findByCode(packageCode);
 }
 
 /**
@@ -142,14 +177,14 @@ async function updatePackage(packageId, {
   
   updates.push("UpdatedAt = GETDATE()");
   
-  const result = await request.query(`
+  await request.query(`
     UPDATE AdPackages
     SET ${updates.join(", ")}
-    OUTPUT inserted.*
     WHERE PackageId = @PackageId
   `);
   
-  return result.recordset[0] || null;
+  // Query lại để lấy record đã update
+  return await findById(packageId);
 }
 
 /**
@@ -157,15 +192,16 @@ async function updatePackage(packageId, {
  */
 async function deletePackage(packageId) {
   const pool = await getPool();
-  const result = await pool.request()
+  await pool.request()
     .input("PackageId", sql.UniqueIdentifier, packageId)
     .query(`
       UPDATE AdPackages
       SET IsActive = 0, UpdatedAt = GETDATE()
-      OUTPUT inserted.*
       WHERE PackageId = @PackageId
     `);
-  return result.recordset[0] || null;
+  
+  // Query lại để lấy record đã update
+  return await findById(packageId);
 }
 
 /**
@@ -178,7 +214,7 @@ async function updatePackageStats(packageId, price, action = 'increment') {
   const pool = await getPool();
   
   if (action === 'increment') {
-    const result = await pool.request()
+    await pool.request()
       .input("PackageId", sql.UniqueIdentifier, packageId)
       .input("Price", sql.Decimal(18,2), price)
       .query(`
@@ -187,12 +223,10 @@ async function updatePackageStats(packageId, price, action = 'increment') {
           SoldCount = SoldCount + 1,
           TotalRevenue = TotalRevenue + @Price,
           UpdatedAt = GETDATE()
-        OUTPUT inserted.*
         WHERE PackageId = @PackageId
       `);
-    return result.recordset[0] || null;
   } else if (action === 'decrement') {
-    const result = await pool.request()
+    await pool.request()
       .input("PackageId", sql.UniqueIdentifier, packageId)
       .input("Price", sql.Decimal(18,2), price)
       .query(`
@@ -201,33 +235,50 @@ async function updatePackageStats(packageId, price, action = 'increment') {
           SoldCount = CASE WHEN SoldCount > 0 THEN SoldCount - 1 ELSE 0 END,
           TotalRevenue = CASE WHEN TotalRevenue >= @Price THEN TotalRevenue - @Price ELSE 0 END,
           UpdatedAt = GETDATE()
-        OUTPUT inserted.*
         WHERE PackageId = @PackageId
       `);
-    return result.recordset[0] || null;
   } else {
     throw new Error("Invalid action. Must be 'increment' or 'decrement'");
   }
+  
+  // Query lại để lấy record đã update (optional - chỉ cần nếu cần return data)
+  return await findById(packageId);
 }
 
 /**
  * Lấy thống kê tổng quan cho admin dashboard
+ * Tính toán từ dữ liệu thực tế trong AdPurchases
  */
 async function getPackageStats() {
   const pool = await getPool();
   const result = await pool.request().query(`
     SELECT 
-      COUNT(*) AS TotalPackages,
-      SUM(CASE WHEN IsActive = 1 THEN 1 ELSE 0 END) AS ActivePackages,
-      SUM(SoldCount) AS TotalSold,
-      SUM(TotalRevenue) AS TotalRevenue
+      -- Tổng số gói
+      (SELECT COUNT(*) FROM AdPackages) AS TotalPackages,
+      -- Số gói đang hoạt động
+      (SELECT COUNT(*) FROM AdPackages WHERE IsActive = 1) AS ActivePackages,
+      -- Tổng số gói đã bán (từ AdPurchases với PaymentStatus = 'paid')
+      (SELECT COUNT(*) FROM AdPurchases WHERE PaymentStatus = 'paid') AS TotalSoldCount,
+      -- Tổng doanh thu (từ AdPurchases với PaymentStatus = 'paid')
+      ISNULL((SELECT SUM(Price) FROM AdPurchases WHERE PaymentStatus = 'paid'), 0) AS OverallRevenue
     FROM AdPackages
+    -- Chỉ cần 1 row
+    WHERE 1=1
   `);
-  return result.recordset[0] || {
+  
+  const stats = result.recordset[0] || {
     TotalPackages: 0,
     ActivePackages: 0,
-    TotalSold: 0,
-    TotalRevenue: 0
+    TotalSoldCount: 0,
+    OverallRevenue: 0
+  };
+  
+  // Đảm bảo tên field đúng với frontend
+  return {
+    TotalPackages: stats.TotalPackages || 0,
+    ActivePackages: stats.ActivePackages || 0,
+    TotalSoldCount: stats.TotalSoldCount || 0,
+    OverallRevenue: stats.OverallRevenue || 0
   };
 }
 

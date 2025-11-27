@@ -35,7 +35,12 @@ async function createUserAd({ barPageId, accountId, title, description, imageUrl
     throw new Error("BarPage not found or access denied");
   }
   
-  const result = await pool.request()
+  // Generate UUID before insert
+  const crypto = require('crypto');
+  const userAdId = crypto.randomUUID();
+  
+  await pool.request()
+    .input("UserAdId", sql.UniqueIdentifier, userAdId)
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
     .input("AccountId", sql.UniqueIdentifier, accountId)
     .input("Title", sql.NVarChar(255), title)
@@ -45,9 +50,17 @@ async function createUserAd({ barPageId, accountId, title, description, imageUrl
     .query(`
       INSERT INTO UserAdvertisements
         (UserAdId, BarPageId, AccountId, Title, Description, ImageUrl, RedirectUrl, Status, CreatedAt, UpdatedAt)
-      OUTPUT inserted.*
       VALUES
-        (NEWID(), @BarPageId, @AccountId, @Title, @Description, @ImageUrl, @RedirectUrl, 'pending', GETDATE(), GETDATE())
+        (@UserAdId, @BarPageId, @AccountId, @Title, @Description, @ImageUrl, @RedirectUrl, 'pending', GETDATE(), GETDATE())
+    `);
+  
+  // Query the newly created record
+  const result = await pool.request()
+    .input("UserAdId", sql.UniqueIdentifier, userAdId)
+    .query(`
+      SELECT *
+      FROM UserAdvertisements
+      WHERE UserAdId = @UserAdId
     `);
   
   return result.recordset[0];
@@ -120,19 +133,39 @@ async function getPendingAds(limit = 50) {
  * Tìm ad theo ID
  */
 async function findById(userAdId) {
+  if (!userAdId) {
+    return null;
+  }
+  
+  // Validate UUID format before querying
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(userAdId)) {
+    console.warn(`[userAdvertisementModel] Invalid UUID format for UserAdId: ${userAdId}`);
+    return null;
+  }
+  
   const pool = await getPool();
-  const result = await pool.request()
-    .input("UserAdId", sql.UniqueIdentifier, userAdId)
-    .query(`
-      SELECT ua.*,
-        bp.BarName,
-        a.Email AS AccountEmail
-      FROM UserAdvertisements ua
-      LEFT JOIN BarPages bp ON ua.BarPageId = bp.BarPageId
-      LEFT JOIN Accounts a ON ua.AccountId = a.AccountId
-      WHERE ua.UserAdId = @UserAdId
-    `);
-  return result.recordset[0] || null;
+  try {
+    const result = await pool.request()
+      .input("UserAdId", sql.UniqueIdentifier, userAdId)
+      .query(`
+        SELECT ua.*,
+          bp.BarName,
+          a.Email AS AccountEmail
+        FROM UserAdvertisements ua
+        LEFT JOIN BarPages bp ON ua.BarPageId = bp.BarPageId
+        LEFT JOIN Accounts a ON ua.AccountId = a.AccountId
+        WHERE ua.UserAdId = @UserAdId
+      `);
+    return result.recordset[0] || null;
+  } catch (error) {
+    // Handle GUID validation errors gracefully
+    if (error.message && error.message.includes("Invalid GUID")) {
+      console.warn(`[userAdvertisementModel] GUID validation error for UserAdId: ${userAdId}`, error.message);
+      return null;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -146,7 +179,8 @@ async function approveAd(userAdId, adminAccountId, {
   bidAmount 
 } = {}) {
   const pool = await getPool();
-  const result = await pool.request()
+  
+  await pool.request()
     .input("UserAdId", sql.UniqueIdentifier, userAdId)
     .input("AdminAccountId", sql.UniqueIdentifier, adminAccountId)
     .input("ReviveBannerId", sql.NVarChar(100), reviveBannerId || null)
@@ -165,9 +199,18 @@ async function approveAd(userAdId, adminAccountId, {
           AdminApprovedBy = @AdminAccountId,
           AdminApprovedAt = GETDATE(),
           UpdatedAt = GETDATE()
-      OUTPUT inserted.*
       WHERE UserAdId = @UserAdId
     `);
+  
+  // Query the updated record
+  const result = await pool.request()
+    .input("UserAdId", sql.UniqueIdentifier, userAdId)
+    .query(`
+      SELECT *
+      FROM UserAdvertisements
+      WHERE UserAdId = @UserAdId
+    `);
+  
   return result.recordset[0] || null;
 }
 
@@ -176,7 +219,8 @@ async function approveAd(userAdId, adminAccountId, {
  */
 async function rejectAd(userAdId, adminAccountId, reason) {
   const pool = await getPool();
-  const result = await pool.request()
+  
+  await pool.request()
     .input("UserAdId", sql.UniqueIdentifier, userAdId)
     .input("AdminAccountId", sql.UniqueIdentifier, adminAccountId)
     .input("Reason", sql.NVarChar(sql.MAX), reason || null)
@@ -187,9 +231,18 @@ async function rejectAd(userAdId, adminAccountId, reason) {
           AdminApprovedBy = @AdminAccountId,
           AdminApprovedAt = GETDATE(),
           UpdatedAt = GETDATE()
-      OUTPUT inserted.*
       WHERE UserAdId = @UserAdId
     `);
+  
+  // Query the updated record
+  const result = await pool.request()
+    .input("UserAdId", sql.UniqueIdentifier, userAdId)
+    .query(`
+      SELECT *
+      FROM UserAdvertisements
+      WHERE UserAdId = @UserAdId
+    `);
+  
   return result.recordset[0] || null;
 }
 
@@ -241,12 +294,20 @@ async function updateAdStatus(userAdId, {
   
   updates.push("UpdatedAt = GETDATE()");
   
-  const result = await request.query(`
+  await request.query(`
     UPDATE UserAdvertisements
     SET ${updates.join(", ")}
-    OUTPUT inserted.*
     WHERE UserAdId = @UserAdId
   `);
+  
+  // Query the updated record
+  const result = await pool.request()
+    .input("UserAdId", sql.UniqueIdentifier, userAdId)
+    .query(`
+      SELECT *
+      FROM UserAdvertisements
+      WHERE UserAdId = @UserAdId
+    `);
   
   return result.recordset[0] || null;
 }
@@ -293,6 +354,60 @@ async function getAllAds({ status, barPageId, limit = 50, offset = 0 } = {}) {
   return result.recordset;
 }
 
+/**
+ * Lấy UserAdvertisement theo ReviveBannerId
+ */
+async function findByReviveBannerId(reviveBannerId) {
+  if (!reviveBannerId) {
+    console.warn(`[userAdvertisementModel] findByReviveBannerId called with null/undefined bannerId`);
+    return null;
+  }
+
+  // Convert to string để đảm bảo so sánh đúng
+  const bannerIdStr = String(reviveBannerId).trim();
+  
+  console.log(`[userAdvertisementModel] Finding UserAd with ReviveBannerId: "${bannerIdStr}"`);
+  
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("ReviveBannerId", sql.NVarChar(100), bannerIdStr)
+    .query(`
+      SELECT ua.*,
+        bp.BarName,
+        bp.Avatar AS BarAvatar,
+        ea.EntityAccountId AS BarEntityAccountId
+      FROM UserAdvertisements ua
+      LEFT JOIN BarPages bp ON ua.BarPageId = bp.BarPageId
+      LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = bp.BarPageId
+      WHERE ua.ReviveBannerId = @ReviveBannerId
+        AND ua.Status = 'active'
+    `);
+  
+  if (result.recordset.length > 0) {
+    console.log(`[userAdvertisementModel] ✅ Found UserAd: ${result.recordset[0].UserAdId}`);
+    return result.recordset[0];
+  } else {
+    console.log(`[userAdvertisementModel] ⚠️ No active UserAd found with ReviveBannerId: "${bannerIdStr}"`);
+    // Debug: Check if there are any UserAds with this banner ID but different status
+    const debugResult = await pool.request()
+      .input("ReviveBannerId", sql.NVarChar(100), bannerIdStr)
+      .query(`
+        SELECT UserAdId, Status, ReviveBannerId, Title
+        FROM UserAdvertisements
+        WHERE ReviveBannerId = @ReviveBannerId
+      `);
+    
+    if (debugResult.recordset.length > 0) {
+      console.log(`[userAdvertisementModel] Debug: Found ${debugResult.recordset.length} UserAd(s) with this banner ID but status is not 'active':`, 
+        debugResult.recordset.map(r => ({ UserAdId: r.UserAdId, Status: r.Status })));
+    } else {
+      console.log(`[userAdvertisementModel] Debug: No UserAd found with ReviveBannerId: "${bannerIdStr}" at all.`);
+    }
+    
+    return null;
+  }
+}
+
 module.exports = {
   isBarPage,
   createUserAd,
@@ -300,6 +415,7 @@ module.exports = {
   getAdsByAccountId,
   getPendingAds,
   findById,
+  findByReviveBannerId,
   approveAd,
   rejectAd,
   updateAdStatus,

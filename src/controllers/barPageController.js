@@ -235,13 +235,27 @@ const { createEntityAccount } = require("../models/entityAccountModel");
   exports.getBarPageById = async (req, res) => {
     try {
       const { barPageId } = req.params;
-      console.log("📥 [getBarPageById] Received barPageId:", barPageId);
+      console.log("📥 [getBarPageById] Received barPageId:", barPageId, {
+        type: typeof barPageId,
+        length: barPageId?.length
+      });
+      
       if (!barPageId){
-          console.error("❌ [getBarPageById] Thiếu barPageId trong req.params");
+        console.error("❌ [getBarPageById] Thiếu barPageId trong req.params");
         return res.status(400).json({ status: "error", message: "Thiếu barPageId" });
       }
-      
-  
+
+      // Validate GUID format before passing to SQL
+      const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!guidRegex.test(barPageId)) {
+        console.error("❌ [getBarPageById] Invalid GUID format:", barPageId);
+        return res.status(400).json({ 
+          status: "error", 
+          message: "Validation failed for parameter 'BarPageId'. Invalid GUID.",
+          received: barPageId
+        });
+      }
+
       const barPage = await getBarPageById(barPageId);
        console.log("✅ [getBarPageById] Query result:", barPage);
       if (!barPage)

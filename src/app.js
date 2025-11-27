@@ -112,8 +112,24 @@ app.use((req, res, next) => {
 const { initializeAdmin } = require("./utils/adminSetup");
 initSQLConnection().then(() => {
   initializeAdmin();
+  
+  // Khởi động background job để sync stats từ Revive Ad Server
+  const ReviveSyncJob = require("./jobs/reviveSyncJob");
+  
+  // Interval từ env (mặc định: 15 phút)
+  const syncIntervalMinutes = process.env.REVIVE_SYNC_INTERVAL_MINUTES 
+    ? parseInt(process.env.REVIVE_SYNC_INTERVAL_MINUTES) 
+    : 15;
+  
+  // Chỉ start job nếu có config Revive
+  if (process.env.REVIVE_AD_SERVER_URL || process.env.REVIVE_DB_HOST) {
+    ReviveSyncJob.start(syncIntervalMinutes);
+    console.log(`[App] Revive sync job started (interval: ${syncIntervalMinutes} minutes)`);
+  } else {
+    console.log('[App] Revive sync job skipped (no Revive configuration found)');
+  }
 }).catch(err => {
-  console.error("⚠️  SQL connection failed, skipping admin initialization");
+  console.error("⚠️  SQL connection failed, skipping admin initialization and Revive sync job");
 });
 
 // Routes

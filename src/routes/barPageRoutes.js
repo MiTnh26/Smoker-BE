@@ -13,6 +13,11 @@ router.get("/", barPageController.getFeaturedBars);
 
 // 2) Lấy danh sách hoặc thông tin chi tiết
 router.get("/account/:accountId", barPageController.getBarPageByAccountId);
+
+// IMPORTANT: Place specific routes before parameterized routes to avoid conflicts
+// For example, if there's a /dashboard route, it should be here before /:barPageId
+// Currently, /dashboard would be caught by /:barPageId, so we validate GUID format in controller
+
 router.get("/:barPageId", barPageController.getBarPageById);
 
 // 3) Upload avatar/background cho BarPage hiện có
