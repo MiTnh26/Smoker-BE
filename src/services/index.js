@@ -3,6 +3,7 @@ const businessService = require("./businessService");
 const postService = require("./postService");
 const livestreamService = require("./livestreamService");
 const livestreamViewerService = require("./livestreamViewerService");
+const feedService = require("./feedService");
 
 module.exports = {
   authService,
@@ -10,4 +11,5 @@ module.exports = {
   postService,
   livestreamService,
   livestreamViewerService,
+  feedService,
 };
