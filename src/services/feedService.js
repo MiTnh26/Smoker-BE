@@ -1,0 +1,183 @@
+const postService = require("./postService");
+const livestreamRepository = require("../repositories/livestreamRepository");
+const { getPool, sql } = require("../db/sqlserver");
+
+class FeedService {
+
+  async _enrichItemsWithAuthorInfo(items) {
+    if (!items || items.length === 0) return;
+
+        const entityAccountIds = new Set();
+    items.forEach(item => {
+      if (item.entityAccountId) entityAccountIds.add(item.entityAccountId);
+      if (item.hostEntityAccountId) entityAccountIds.add(item.hostEntityAccountId); // For livestreams
+      // If it's a repost, also get the original post's author
+      if (item.originalPost && item.originalPost.entityAccountId) {
+        entityAccountIds.add(item.originalPost.entityAccountId);
+      }
+    });
+
+    const uniqueEntityAccountIds = [...entityAccountIds].filter(Boolean);
+
+        if (uniqueEntityAccountIds.length === 0) return;
+
+    try {
+      const pool = await getPool();
+            const placeholders = uniqueEntityAccountIds.map((_, i) => `@id${i}`).join(',');
+      const request = pool.request();
+            uniqueEntityAccountIds.forEach((id, i) => request.input(`id${i}`, sql.UniqueIdentifier, id));
+
+      const result = await request.query(`
+        SELECT 
+          EA.EntityAccountId,
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.UserName
+            WHEN EA.EntityType = 'BarPage' THEN BP.BarName
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
+            ELSE NULL
+          END AS authorName,
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.Avatar
+            WHEN EA.EntityType = 'BarPage' THEN BP.Avatar
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.Avatar
+            ELSE NULL
+          END AS authorAvatar
+        FROM EntityAccounts EA
+        LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
+        LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
+        LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
+        WHERE EA.EntityAccountId IN (${placeholders})
+      `);
+
+      const authorMap = new Map();
+      result.recordset.forEach(row => {
+        authorMap.set(String(row.EntityAccountId).toLowerCase(), {
+          authorName: row.authorName || 'Người dùng',
+          authorAvatar: row.authorAvatar || null,
+        });
+      });
+
+      for (const item of items) {
+        // Enrich the main item (post or livestream)
+        const entityId = item.entityAccountId || item.hostEntityAccountId;
+        if (entityId) {
+          const authorInfo = authorMap.get(String(entityId).toLowerCase());
+          if (authorInfo) {
+            item.authorName = authorInfo.authorName;
+            item.authorAvatar = authorInfo.authorAvatar;
+          }
+        }
+
+        // If it's a repost, enrich the original post as well
+        if (item.originalPost && item.originalPost.entityAccountId) {
+          const originalAuthorInfo = authorMap.get(String(item.originalPost.entityAccountId).toLowerCase());
+          if (originalAuthorInfo) {
+            item.originalPost.authorName = originalAuthorInfo.authorName;
+            item.originalPost.authorAvatar = originalAuthorInfo.authorAvatar;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[FeedService] Error enriching items with author info:', error);
+    }
+  }
+
+  /**
+   * Lấy feed tổng hợp bao gồm posts và livestreams.
+   * @param {{ currentUser: object, limit: number, cursor?: string }}
+   * @returns {Promise<{feed: Array, nextCursor: string | null, hasMore: boolean}>}
+   */
+  async getFeed({ currentUser, limit = 10, cursor }) {
+    // 1. Lấy dữ liệu từ hai nguồn khác nhau
+    const [postResult, livestreams] = await Promise.all([
+            postService.getAllPosts(null, limit, true, true, cursor, true), // populateReposts = true
+      livestreamRepository.findActive(5) // Lấy 5 livestreams mới nhất
+    ]);
+
+    if (!postResult.success) {
+      throw new Error(postResult.message || "Failed to fetch posts");
+    }
+
+    // 2. Làm giàu dữ liệu với thông tin tác giả
+    await this._enrichItemsWithAuthorInfo(postResult.data);
+    await this._enrichItemsWithAuthorInfo(livestreams);
+
+    // 3. Chuyển đổi posts và livestreams thành một cấu trúc chung
+    const postItems = postResult.data.map(post => ({
+      type: 'post',
+      timestamp: new Date(post.createdAt),
+      data: this.transformPost(post, currentUser),
+    }));
+
+    const livestreamItems = livestreams.map(stream => ({
+      type: 'livestream',
+      timestamp: new Date(stream.startTime),
+      data: this.transformLivestream(stream, currentUser),
+    }));
+
+    // 4. Gộp và sắp xếp
+    const feedItems = [...postItems, ...livestreamItems];
+    feedItems.sort((a, b) => b.timestamp - a.timestamp);
+
+    return {
+      feed: feedItems,
+      nextCursor: postResult.nextCursor,
+      hasMore: postResult.hasMore,
+    };
+  }
+
+  /**
+   * Chuyển đổi dữ liệu Post thô sang định dạng cho client.
+   * Đây là nơi logic của `transformPost` từ frontend được chuyển về.
+   * @param {object} post - Dữ liệu post từ service
+   * @param {object} currentUser - Thông tin user đang đăng nhập
+   * @returns {object} - Dữ liệu post đã được xử lý
+   */
+  transformPost(post, currentUser) {
+    const viewerEntityAccountId = currentUser?.entityAccountId;
+
+    // Logic kiểm tra quyền quản lý (canManage) cho bài post chính
+    const canManage = post.entityAccountId && viewerEntityAccountId &&
+                      String(post.entityAccountId).toLowerCase() === String(viewerEntityAccountId).toLowerCase();
+
+    // Logic kiểm tra đã thích (isLikedByCurrentUser) cho bài post chính
+    const isLiked = post.likes && viewerEntityAccountId
+      ? Object.values(post.likes).some(like => String(like.entityAccountId).toLowerCase() === String(viewerEntityAccountId).toLowerCase())
+      : false;
+
+    // Nếu là repost, xử lý thêm cho bài post gốc
+    if (post.originalPost) {
+      // Kiểm tra isLiked cho bài post gốc
+      const isOriginalPostLiked = post.originalPost.likes && viewerEntityAccountId
+        ? Object.values(post.originalPost.likes).some(like => String(like.entityAccountId).toLowerCase() === String(viewerEntityAccountId).toLowerCase())
+        : false;
+      
+      post.originalPost.isLikedByCurrentUser = isOriginalPostLiked;
+
+      // Logic canManage cho bài post gốc
+      const canManageOriginal = post.originalPost.entityAccountId && viewerEntityAccountId &&
+                                String(post.originalPost.entityAccountId).toLowerCase() === String(viewerEntityAccountId).toLowerCase();
+      post.originalPost.canManage = canManageOriginal;
+    }
+
+    return {
+      ...post,
+      canManage,
+      isLikedByCurrentUser: isLiked,
+    };
+  }
+
+  /**
+   * Chuyển đổi dữ liệu Livestream thô sang định dạng cho client.
+   * @param {object} stream - Dữ liệu livestream từ repository
+   * @param {object} currentUser - Thông tin user đang đăng nhập
+   * @returns {object} - Dữ liệu livestream đã được xử lý
+   */
+  transformLivestream(stream, currentUser) {
+    // Hiện tại chỉ trả về dữ liệu gốc, có thể mở rộng sau
+    return stream;
+  }
+}
+
+module.exports = new FeedService();
+
