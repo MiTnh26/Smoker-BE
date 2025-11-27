@@ -183,17 +183,43 @@ class PayOSService {
         throw new Error("Invalid verified webhook data: data is null or undefined");
       }
 
+      console.log("[PayOS Service] Processing webhook verifiedData:", {
+        hasOrderCode: !!verifiedData.orderCode,
+        orderCode: verifiedData.orderCode,
+        hasCode: !!verifiedData.code,
+        code: verifiedData.code,
+        hasDesc: !!verifiedData.desc,
+        desc: verifiedData.desc,
+        hasAmount: !!verifiedData.amount,
+        amount: verifiedData.amount,
+        allKeys: Object.keys(verifiedData)
+      });
+
       // verifiedData là data object từ webhook
       // Có thể có orderCode, amount, description, etc.
       if (!verifiedData.orderCode) {
         throw new Error("Invalid webhook data: missing orderCode");
       }
 
-      // Xác định status dựa trên code trong data hoặc từ webhook gốc
+      // Xác định status dựa trên code trong data
       // PayOS trả về code "00" cho thành công
-      const status = (verifiedData.code === "00" || verifiedData.desc === "success") 
+      // Note: verifiedData có thể không có code/desc nếu nó là data object từ webhook
+      // Cần check cả code trong data và desc
+      const codeValue = verifiedData.code;
+      const descValue = verifiedData.desc;
+      
+      console.log("[PayOS Service] Determining payment status:", {
+        code: codeValue,
+        desc: descValue,
+        codeIs00: codeValue === "00",
+        descIsSuccess: descValue === "success" || descValue?.toLowerCase() === "success"
+      });
+
+      const status = (codeValue === "00" || descValue === "success" || descValue?.toLowerCase() === "success") 
         ? "PAID" 
         : "FAILED";
+
+      console.log("[PayOS Service] Payment status determined:", status);
 
       return {
         success: true,
@@ -205,6 +231,7 @@ class PayOSService {
       };
     } catch (error) {
       console.error("[PayOS Service] Error processing webhook:", error);
+      console.error("[PayOS Service] Error stack:", error.stack);
       throw new Error(error.message || "Failed to process webhook");
     }
   }
