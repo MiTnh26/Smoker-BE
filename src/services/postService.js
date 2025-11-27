@@ -5,6 +5,11 @@ const { getPool, sql } = require("../db/sqlserver");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 const notificationService = require("./notificationService");
 
+const normalizeGuid = (value) => {
+  if (!value) return null;
+  return String(value).trim().toLowerCase();
+};
+
 class PostService {
   /**
    * Helper function để kiểm tra ownership dựa trên entityAccountId
@@ -147,7 +152,7 @@ class PostService {
   }
 
   // Lấy tất cả posts
-  async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null) {
+    async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null, populateReposts = false) {
     try {
       // Filter posts: chỉ lấy posts có status = "public" (công khai, chưa trash, chưa xóa)
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
@@ -217,6 +222,10 @@ class PostService {
         query.populate('musicId');
       }
 
+      if (populateReposts) {
+        query.populate('repostedFromId');
+      }
+
       const posts = await query;
       
       // Check if there are more posts (we fetched limit + 1)
@@ -251,6 +260,13 @@ class PostService {
           });
           plain.comments = commentsObj;
         }
+        // If it's a repost, rename 'repostedFromId' to 'originalPost'
+        if (populateReposts && plain.repostedFromId) {
+          // Ensure originalPost is a plain object as well
+          plain.originalPost = plain.repostedFromId.toObject ? plain.repostedFromId.toObject({ flattenMaps: true }) : plain.repostedFromId;
+          delete plain.repostedFromId;
+        }
+
         return plain;
       });
       
@@ -1163,8 +1179,8 @@ class PostService {
   }
 
 
-  // Thích post (toggle behavior)
-  async likePost(postId, userId, typeRole) {
+  // Thích post (toggle behavior theo entityAccountId)
+  async likePost(postId, userId, typeRole, userEntityAccountId) {
     try {
       const post = await Post.findById(postId);
       if (!post) {
@@ -1174,10 +1190,26 @@ class PostService {
         };
       }
 
+      const normalizedEntityAccountId = normalizeGuid(userEntityAccountId);
+      const normalizedUserId = normalizeGuid(userId);
+
       // Tìm like hiện tại (nếu có)
       let existingLikeKey = null;
       for (const [likeId, like] of post.likes.entries()) {
-        if (like.accountId.toString() === userId.toString()) {
+        const likeEntityAccountId = normalizeGuid(like.entityAccountId);
+        const likeAccountId = normalizeGuid(like.accountId);
+
+        const matchByEntity =
+          normalizedEntityAccountId &&
+          likeEntityAccountId &&
+          likeEntityAccountId === normalizedEntityAccountId;
+
+        const matchLegacyAccount =
+          (!normalizedEntityAccountId || !likeEntityAccountId) &&
+          normalizedUserId &&
+          likeAccountId === normalizedUserId;
+
+        if (matchByEntity || matchLegacyAccount) {
           existingLikeKey = likeId;
           break;
         }
@@ -1201,6 +1233,7 @@ class PostService {
         const likeId = new mongoose.Types.ObjectId();
         const like = {
           accountId: userId,
+          entityAccountId: userEntityAccountId || null,
           TypeRole: typeRole || "Account"
         };
 
@@ -1213,7 +1246,10 @@ class PostService {
         // Tạo notification cho post owner (không gửi nếu like chính mình)
         try {
           // Lấy sender entityAccountId
-          const senderEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          let senderEntityAccountId = userEntityAccountId;
+          if (!senderEntityAccountId) {
+            senderEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          }
           const receiverEntityAccountId = post.entityAccountId;
           
           // Chỉ tạo notification nếu sender !== receiver
@@ -1296,8 +1332,8 @@ class PostService {
     }
   }
 
-  // Bỏ thích post
-  async unlikePost(postId, userId) {
+  // Bỏ thích post (theo entityAccountId)
+  async unlikePost(postId, userId, userEntityAccountId) {
     try {
       const post = await Post.findById(postId);
       if (!post) {
@@ -1307,9 +1343,25 @@ class PostService {
         };
       }
 
+      const normalizedEntityAccountId = normalizeGuid(userEntityAccountId);
+      const normalizedUserId = normalizeGuid(userId);
+
       // Tìm và xóa like
       for (const [likeId, like] of post.likes.entries()) {
-        if (like.accountId.toString() === userId.toString()) {
+        const likeEntityAccountId = normalizeGuid(like.entityAccountId);
+        const likeAccountId = normalizeGuid(like.accountId);
+
+        const matchByEntity =
+          normalizedEntityAccountId &&
+          likeEntityAccountId &&
+          likeEntityAccountId === normalizedEntityAccountId;
+
+        const matchLegacyAccount =
+          (!normalizedEntityAccountId || !likeEntityAccountId) &&
+          normalizedUserId &&
+          likeAccountId === normalizedUserId;
+
+        if (matchByEntity || matchLegacyAccount) {
           post.likes.delete(likeId);
           break;
         }
@@ -2514,6 +2566,98 @@ class PostService {
     } catch (error) {
       console.error('[PostService] Error enriching comments with author info:', error);
       // Không throw error, chỉ log để không ảnh hưởng đến việc lấy posts
+    }
+  }
+
+  /**
+   * Lấy tất cả posts của một entity cụ thể, sắp xếp theo thời gian mới nhất.
+   * @param {string} entityAccountId - ID của entity cần lấy posts.
+   * @param {object} options - Các tùy chọn { limit, cursor, includeMedias, includeMusic, populateReposts }.
+   * @returns {Promise<object>} - Kết quả tương tự getAllPosts.
+   */
+  async getPostsByEntityAccountId(entityAccountId, { limit = 10, cursor = null, includeMedias = true, includeMusic = true, populateReposts = true }) {
+    try {
+      if (!entityAccountId) {
+        return { success: false, message: "Entity Account ID is required" };
+      }
+
+      const baseFilter = {
+        entityAccountId: String(entityAccountId).trim(),
+        status: { $in: ["public", "active"] },
+        $or: [
+          { type: "post" },
+          { type: { $exists: false } }
+        ]
+      };
+
+      const parsedCursor = this.parseCursor(cursor);
+
+      let queryFilter = { ...baseFilter };
+      if (parsedCursor) {
+        queryFilter = {
+          $and: [
+            baseFilter,
+            {
+              $or: [
+                { createdAt: { $lt: new Date(parsedCursor.createdAt) } },
+                {
+                  $and: [
+                    { createdAt: new Date(parsedCursor.createdAt) },
+                    { _id: { $lt: parsedCursor._id } }
+                  ]
+                }
+              ]
+            }
+          ]
+        };
+      }
+
+      const query = Post.find(queryFilter)
+        .sort({ createdAt: -1, _id: -1 })
+        .limit(limit + 1);
+
+      if (includeMedias) query.populate('mediaIds');
+      if (includeMusic) query.populate('songId');
+      if (populateReposts) query.populate('repostedFromId');
+
+      const posts = await query.lean();
+
+      const hasMore = posts.length > limit;
+      const postsToReturn = hasMore ? posts.slice(0, limit) : posts;
+
+      const postsPlain = postsToReturn.map(p => {
+        const plain = p.toObject ? p.toObject({ flattenMaps: true }) : p;
+        if (populateReposts && plain.repostedFromId) {
+          plain.originalPost = plain.repostedFromId.toObject ? plain.repostedFromId.toObject({ flattenMaps: true }) : plain.repostedFromId;
+          delete plain.repostedFromId;
+        }
+        return plain;
+      });
+
+      await this.enrichPostsWithAuthorInfo(postsPlain);
+
+      let nextCursor = null;
+      if (hasMore) {
+        const lastPost = postsToReturn[limit - 1];
+        if (lastPost) {
+            nextCursor = Buffer.from(JSON.stringify({ createdAt: lastPost.createdAt.toISOString(), _id: lastPost._id.toString() })).toString('base64');
+        }
+      }
+
+      return {
+        success: true,
+        data: postsPlain,
+        nextCursor,
+        hasMore,
+      };
+
+    } catch (error) {
+      console.error('[PostService] Error in getPostsByEntityAccountId:', error);
+      return {
+        success: false,
+        message: "Error fetching posts for entity",
+        error: error.message
+      };
     }
   }
 }

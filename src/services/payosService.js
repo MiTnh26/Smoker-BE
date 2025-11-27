@@ -1,7 +1,19 @@
 const PayOS = require("@payos/node");
 
 class PayOSService {
-  constructor() {
+  // Lazy initialization - không khởi tạo PayOS ngay lập tức
+  payOS = null;
+
+  /**
+   * Lazy initialization của PayOS client
+   * Chỉ khởi tạo khi cần sử dụng
+   */
+  _initializePayOS() {
+    // Nếu đã khởi tạo rồi thì return
+    if (this.payOS) {
+      return;
+    }
+
     const clientId = process.env.PAYOS_CLIENT_ID;
     const apiKey = process.env.PAYOS_API_KEY;
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
@@ -48,6 +60,9 @@ class PayOSService {
    */
   async createPayment(paymentData) {
     try {
+      // Lazy initialize PayOS client
+      this._initializePayOS();
+
       const { amount, orderId, orderCode, description, returnUrl, cancelUrl } = paymentData;
 
       if (!amount || (!orderId && !orderCode) || !description) {
@@ -132,6 +147,9 @@ class PayOSService {
    */
   verifyWebhook(webhookData) {
     try {
+      // Lazy initialize PayOS client
+      this._initializePayOS();
+
       if (!webhookData) {
         console.warn("[PayOS Service] Webhook data is empty");
         return null;
@@ -243,6 +261,9 @@ class PayOSService {
    */
   async getPaymentInfo(orderCode) {
     try {
+      // Lazy initialize PayOS client
+      this._initializePayOS();
+
       // Gọi API PayOS để lấy thông tin payment
       const result = await this.payOS.getPaymentLinkInformation(orderCode);
 
@@ -263,6 +284,9 @@ class PayOSService {
    */
   async cancelPayment(orderCode) {
     try {
+      // Lazy initialize PayOS client
+      this._initializePayOS();
+
       const result = await this.payOS.cancelPaymentLink(orderCode);
 
       return {
