@@ -33,6 +33,8 @@ const {
   payosRoutes,
   adRoutes,
   adminAdRoutes,
+  feedRoutes,
+  profileRoutes,
 } = require("./routes");
 
 
@@ -151,6 +153,8 @@ app.use("/api/ads", adRoutes);
 app.use("/api/admin", adminAdRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/event-advertisements", require("./routes/eventAdvertisementRoutes"));
+app.use("/api/feed", feedRoutes);
+app.use("/api/profile", profileRoutes);
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);
