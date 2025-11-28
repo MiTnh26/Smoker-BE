@@ -460,6 +460,16 @@ class PostController {
         // Ensure title is set (can be empty string for repost without comment)
         const postTitle = title || "";
 
+        // Validate và fix status - chỉ cho phép giá trị hợp lệ
+        const validStatuses = ["public", "private", "trashed", "deleted"];
+        let validStatus = status || "public";
+        
+        // Nếu status không hợp lệ (ví dụ: "active"), fix về "public"
+        if (!validStatuses.includes(validStatus)) {
+          console.warn(`[POST] Invalid status "${validStatus}" provided, setting to "public"`);
+          validStatus = "public";
+        }
+
         const postData = {
           title: postTitle,
           content: postContent,
@@ -473,7 +483,7 @@ class PostController {
           mediaIds: finalMediaIds,
           images: typeof images === "string" ? images : "",
           repostedFromId: repostedFromIdObjectId, // Reference đến post gốc nếu là repost (converted to ObjectId)
-          status: status || "public", // public, private, trashed, deleted
+          status: validStatus, // public, private, trashed, deleted (đã validate)
           expiredAt: expiredAt ? new Date(expiredAt) : null,
           type: type || "post"
         };
@@ -1460,7 +1470,7 @@ class PostController {
       // Build query - chỉ tìm theo entityAccountId hoặc entityId và status = "public"
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
       const query = {
-        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active"
+        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active" (posts cũ có thể có "active", nhưng posts mới chỉ dùng "public")
         $or: [
           { entityAccountId: entityAccountId },
           { entityId: authorId } // Có thể authorId là entityId

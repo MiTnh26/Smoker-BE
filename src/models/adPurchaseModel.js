@@ -70,6 +70,17 @@ async function findById(purchaseId) {
 }
 
 /**
+ * Tìm purchase theo PaymentId (orderCode từ PayOS)
+ */
+async function findByPaymentId(paymentId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("PaymentId", sql.NVarChar(255), paymentId)
+    .query("SELECT TOP 1 * FROM AdPurchases WHERE PaymentId = @PaymentId");
+  return result.recordset[0] || null;
+}
+
+/**
  * Lấy purchases của một ad
  */
 async function getPurchasesByUserAdId(userAdId) {
@@ -83,6 +94,22 @@ async function getPurchasesByUserAdId(userAdId) {
       ORDER BY PurchasedAt DESC
     `);
   return result.recordset;
+}
+
+/**
+ * Tìm purchase đầu tiên (active) theo UserAdId
+ */
+async function findByUserAdId(userAdId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("UserAdId", sql.UniqueIdentifier, userAdId)
+    .query(`
+      SELECT TOP 1 *
+      FROM AdPurchases
+      WHERE UserAdId = @UserAdId AND Status = 'active'
+      ORDER BY PurchasedAt DESC
+    `);
+  return result.recordset[0] || null;
 }
 
 /**
@@ -197,12 +224,21 @@ async function updatePurchaseStatus(purchaseId, status, paymentStatus = null) {
     updates.push("CancelledAt = GETDATE()");
   }
   
-  const result = await request.query(`
+  // Không dùng OUTPUT inserted.* vì có thể có trigger
+  await request.query(`
     UPDATE AdPurchases
     SET ${updates.join(", ")}
-    OUTPUT inserted.*
     WHERE PurchaseId = @PurchaseId
   `);
+  
+  // Query lại để lấy record đã update
+  const result = await pool.request()
+    .input("PurchaseId", sql.UniqueIdentifier, purchaseId)
+    .query(`
+      SELECT *
+      FROM AdPurchases
+      WHERE PurchaseId = @PurchaseId
+    `);
   
   return result.recordset[0] || null;
 }
@@ -333,6 +369,8 @@ async function getPurchaseStatsByPackage(packageId = null) {
 module.exports = {
   createPurchase,
   findById,
+  findByPaymentId,
+  findByUserAdId,
   getPurchasesByUserAdId,
   getPurchasesByBarPageId,
   getPurchasesByAccountId,
