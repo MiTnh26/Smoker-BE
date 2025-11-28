@@ -149,11 +149,11 @@ class ReviveAdServerService {
           // If response is already HTML (from ck.php or other methods)
           if (trimmedData.startsWith('<')) {
             console.log(`[ReviveAdServerService] Successfully retrieved banner HTML (${trimmedData.length} chars)`);
-            return {
-              html: response.data,
-              zoneId: zoneId
-            };
-          }
+        return {
+          html: response.data,
+          zoneId: zoneId
+        };
+      }
         }
         
         // If response is an object (JSON) - shouldn't happen but handle it
@@ -193,6 +193,81 @@ class ReviveAdServerService {
       url: `${invocationUrl}?${queryParams.toString()}`,
       code: `<script type="text/javascript" src="${invocationUrl}?${queryParams.toString()}"></script>`
     };
+  }
+
+  /**
+   * Query Revive database để lấy banner ID đang được serve cho zone
+   * @param {string} zoneId - Zone ID
+   * @returns {Promise<string|null>} Banner ID hoặc null
+   */
+  async getBannerIdFromZone(zoneId) {
+    // Kiểm tra xem có config Revive DB không
+    const reviveDbConfig = {
+      host: process.env.REVIVE_DB_HOST,
+      port: parseInt(process.env.REVIVE_DB_PORT || "3306"),
+      user: process.env.REVIVE_DB_USER,
+      password: process.env.REVIVE_DB_PASSWORD,
+      database: process.env.REVIVE_DB_NAME || "revive",
+    };
+
+    if (!reviveDbConfig.host || !reviveDbConfig.user || !reviveDbConfig.password) {
+      console.warn(`[ReviveAdServerService] Revive DB config not set, cannot query banner ID`);
+      return null;
+    }
+
+    const mysql = require("mysql2/promise");
+    let connection = null;
+
+    try {
+      connection = await mysql.createConnection(reviveDbConfig);
+      
+      // Query để lấy banner ID đang active cho zone
+      // Revive lưu trong bảng ox_banners và ox_ad_zone_assoc
+      // Hoặc có thể query từ ox_zones và ox_ad_zone_assoc
+      const [rows] = await connection.execute(`
+        SELECT b.bannerid
+        FROM ox_banners b
+        INNER JOIN ox_ad_zone_assoc aza ON b.bannerid = aza.ad_id
+        INNER JOIN ox_zones z ON aza.zone_id = z.zoneid
+        WHERE z.zoneid = ?
+          AND b.status = 1
+          AND b.type = 'html'
+        ORDER BY b.updated DESC
+        LIMIT 1
+      `, [zoneId]);
+
+      if (rows.length > 0) {
+        const bannerId = rows[0].bannerid.toString();
+        console.log(`[ReviveAdServerService] Found banner ID ${bannerId} for zone ${zoneId}`);
+        return bannerId;
+      }
+
+      // Fallback: Thử query từ bảng khác nếu tên table khác
+      const [fallbackRows] = await connection.execute(`
+        SELECT bannerid
+        FROM ox_banners
+        WHERE zoneid = ?
+          AND status = 1
+        ORDER BY updated DESC
+        LIMIT 1
+      `, [zoneId]);
+
+      if (fallbackRows.length > 0) {
+        const bannerId = fallbackRows[0].bannerid.toString();
+        console.log(`[ReviveAdServerService] Found banner ID ${bannerId} for zone ${zoneId} (fallback query)`);
+        return bannerId;
+      }
+
+      console.warn(`[ReviveAdServerService] No active banner found for zone ${zoneId}`);
+      return null;
+    } catch (error) {
+      console.error(`[ReviveAdServerService] Error querying banner ID from Revive DB:`, error.message);
+      return null;
+    } finally {
+      if (connection) {
+        await connection.end();
+      }
+    }
   }
 }
 
