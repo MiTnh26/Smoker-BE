@@ -49,7 +49,14 @@ app.use(
   cors({
     origin: "*",
     // methods: không chỉ định = cho phép tất cả methods
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"], // Explicitly include Authorization
+    allowedHeaders: [
+      "Content-Type", 
+      "Authorization", 
+      "X-Requested-With", 
+      "X-Locale", 
+      "x-locale",
+      "X-LOCALE"
+    ], // Explicitly include Authorization and X-Locale (all case variations)
     exposedHeaders: ["Authorization"],
     credentials: false, // Set to false when origin is "*"
     preflightContinue: false,
