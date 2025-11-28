@@ -357,13 +357,28 @@ POST /api/posts
   "musicId": "string",
   "entityAccountId": "string",
   "entityId": "string",
-  "entityType": "Account"
+  "entityType": "Account",
+  "repostedFromId": "string",
+  "repostedFromType": "post | media",
+  "mediaIds": ["string"]
 }
 ```
 
 **Lưu ý:** 
 - `type` nhận một trong các giá trị `"post"` hoặc `"story"`.
 - `entityType` nhận `"Account"`, `"BusinessAccount"` hoặc `"BarPage"`.
+  
+**Đăng lại bài viết / media (Repost):**
+
+- Để **đăng lại một bài viết**, gọi lại endpoint này với:
+  - `repostedFromId`: MongoDB `_id` của post gốc.
+  - (optional) `content` / `caption`: nội dung kèm khi repost (có thể để trống, backend cho phép).
+  - Nếu không truyền `images`/`videos`/`mediaIds`, backend sẽ tự copy `mediaIds` từ post gốc.
+- Để **đăng lại từ một media cụ thể** (ví dụ ảnh/video trong post):
+  - Gửi `repostedFromId`: MongoDB `_id` của chính `media`.
+  - Gửi `repostedFromType`: `"media"`.
+  - Nếu không truyền `mediaIds`, backend sẽ tự thêm media đó vào `mediaIds` của post mới.
+- Trường `repostedFromId` luôn được lưu trong post mới để FE có thể fetch và hiển thị **`originalPost`** (backend sẽ populate và expose dưới field này trong feed/profile).
 
 ### 3.4. Upload Post Media
 ```
