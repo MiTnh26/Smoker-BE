@@ -5,6 +5,89 @@ const { getPool, sql } = require("../db/sqlserver");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 const notificationService = require("./notificationService");
 
+const normalizeGuid = (value) => {
+  if (!value) return null;
+  return String(value).trim().toLowerCase();
+};
+
+const countCollectionItems = (value) => {
+  if (!value) return 0;
+  if (Array.isArray(value)) return value.length;
+  if (value instanceof Map) return value.size;
+  if (typeof value === "object") return Object.keys(value).length;
+  if (typeof value === "number") return value;
+  return 0;
+};
+
+const extractLikeEntityAccountId = (like, key) => {
+  if (like && typeof like === "object") {
+    return normalizeGuid(
+      like.entityAccountId ||
+      like.EntityAccountId
+    );
+  }
+  if (key && (typeof key === "string" || typeof key === "number")) {
+    return normalizeGuid(key);
+  }
+  return null;
+};
+
+const extractLikeAccountId = (like, key) => {
+  if (like && typeof like === "object") {
+    return normalizeGuid(
+      like.accountId ||
+      like.AccountId ||
+      like.id ||
+      like.Id
+    );
+  }
+  if (key && (typeof key === "string" || typeof key === "number")) {
+    return normalizeGuid(key);
+  }
+  return null;
+};
+
+const isCollectionLikedByViewer = (likes, viewerAccountId, viewerEntityAccountId) => {
+  if (!likes) return false;
+  if (!viewerAccountId && !viewerEntityAccountId) return false;
+
+  const checkMatch = (likeValue, key) => {
+    const likeEntity = extractLikeEntityAccountId(likeValue, key);
+    const likeAccount = extractLikeAccountId(likeValue, key);
+
+    if (viewerEntityAccountId && likeEntity && viewerEntityAccountId === likeEntity) {
+      return true;
+    }
+
+    if (!viewerEntityAccountId && viewerAccountId && likeAccount && viewerAccountId === likeAccount) {
+      return true;
+    }
+
+    if (viewerEntityAccountId && !likeEntity && viewerAccountId && likeAccount && viewerAccountId === likeAccount) {
+      return true;
+    }
+
+    return false;
+  };
+
+  if (Array.isArray(likes)) {
+    return likes.some((like) => checkMatch(like));
+  }
+
+  if (likes instanceof Map) {
+    for (const [key, value] of likes.entries()) {
+      if (checkMatch(value, key)) return true;
+    }
+    return false;
+  }
+
+  if (typeof likes === "object") {
+    return Object.entries(likes).some(([key, value]) => checkMatch(value, key));
+  }
+
+  return false;
+};
+
 class PostService {
   /**
    * Helper function để kiểm tra ownership dựa trên entityAccountId
@@ -40,10 +123,20 @@ class PostService {
   // Tạo post mới
   async createPost(postData) {
     try {
+      // Validate và fix status trước khi tạo post
+      const validStatuses = ["public", "private", "trashed", "deleted"];
+      if (postData.status && !validStatuses.includes(postData.status)) {
+        console.warn(`[PostService] Invalid status "${postData.status}" provided, setting to "public"`);
+        postData.status = "public";
+      } else if (!postData.status) {
+        postData.status = "public"; // Default
+      }
+
       console.log("[PostService] createPost - Input data:", {
         hasTitle: !!postData.title,
         hasContent: !!postData.content,
         type: postData.type,
+        status: postData.status,
         entityAccountId: postData.entityAccountId,
         entityId: postData.entityId,
         entityType: postData.entityType,
@@ -137,7 +230,7 @@ class PostService {
   }
 
   // Lấy tất cả posts
-  async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null) {
+    async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null, populateReposts = false) {
     try {
       // Filter posts: chỉ lấy posts có status = "public" (công khai, chưa trash, chưa xóa)
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
@@ -207,6 +300,10 @@ class PostService {
         query.populate('musicId');
       }
 
+      if (populateReposts) {
+        query.populate('repostedFromId');
+      }
+
       const posts = await query;
       
       // Check if there are more posts (we fetched limit + 1)
@@ -241,6 +338,13 @@ class PostService {
           });
           plain.comments = commentsObj;
         }
+        // If it's a repost, rename 'repostedFromId' to 'originalPost'
+        if (populateReposts && plain.repostedFromId) {
+          // Ensure originalPost is a plain object as well
+          plain.originalPost = plain.repostedFromId.toObject ? plain.repostedFromId.toObject({ flattenMaps: true }) : plain.repostedFromId;
+          delete plain.repostedFromId;
+        }
+
         return plain;
       });
       
@@ -344,9 +448,11 @@ class PostService {
   }
 
   // Lấy post theo ID
-  async getPostById(postId, includeMedias = false, includeMusic = false) {
+  async getPostById(postId, includeMedias = false, includeMusic = false, options = {}) {
     try {
       console.log('[PostService] getPostById - postId:', postId, 'includeMedias:', includeMedias, 'includeMusic:', includeMusic);
+      const viewerAccountId = options?.viewerAccountId || null;
+      const viewerEntityAccountId = options?.viewerEntityAccountId || null;
       
       // Chỉ lấy post có status = "public" (công khai, chưa trash, chưa xóa)
       // Hoặc status = "private" nếu user là owner
@@ -458,6 +564,7 @@ class PostService {
       
       // Enrich comments and replies with author information
       await this.enrichCommentsWithAuthorInfo([postData]);
+      this.applyViewerContextToComments([postData], viewerAccountId, viewerEntityAccountId);
 
       return {
         success: true,
@@ -1153,8 +1260,8 @@ class PostService {
   }
 
 
-  // Thích post (toggle behavior)
-  async likePost(postId, userId, typeRole) {
+  // Thích post (toggle behavior theo entityAccountId)
+  async likePost(postId, userId, typeRole, userEntityAccountId) {
     try {
       const post = await Post.findById(postId);
       if (!post) {
@@ -1164,10 +1271,26 @@ class PostService {
         };
       }
 
+      const normalizedEntityAccountId = normalizeGuid(userEntityAccountId);
+      const normalizedUserId = normalizeGuid(userId);
+
       // Tìm like hiện tại (nếu có)
       let existingLikeKey = null;
       for (const [likeId, like] of post.likes.entries()) {
-        if (like.accountId.toString() === userId.toString()) {
+        const likeEntityAccountId = normalizeGuid(like.entityAccountId);
+        const likeAccountId = normalizeGuid(like.accountId);
+
+        const matchByEntity =
+          normalizedEntityAccountId &&
+          likeEntityAccountId &&
+          likeEntityAccountId === normalizedEntityAccountId;
+
+        const matchLegacyAccount =
+          (!normalizedEntityAccountId || !likeEntityAccountId) &&
+          normalizedUserId &&
+          likeAccountId === normalizedUserId;
+
+        if (matchByEntity || matchLegacyAccount) {
           existingLikeKey = likeId;
           break;
         }
@@ -1191,6 +1314,7 @@ class PostService {
         const likeId = new mongoose.Types.ObjectId();
         const like = {
           accountId: userId,
+          entityAccountId: userEntityAccountId || null,
           TypeRole: typeRole || "Account"
         };
 
@@ -1203,7 +1327,10 @@ class PostService {
         // Tạo notification cho post owner (không gửi nếu like chính mình)
         try {
           // Lấy sender entityAccountId
-          const senderEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          let senderEntityAccountId = userEntityAccountId;
+          if (!senderEntityAccountId) {
+            senderEntityAccountId = await getEntityAccountIdByAccountId(userId);
+          }
           const receiverEntityAccountId = post.entityAccountId;
           
           // Chỉ tạo notification nếu sender !== receiver
@@ -1286,8 +1413,8 @@ class PostService {
     }
   }
 
-  // Bỏ thích post
-  async unlikePost(postId, userId) {
+  // Bỏ thích post (theo entityAccountId)
+  async unlikePost(postId, userId, userEntityAccountId) {
     try {
       const post = await Post.findById(postId);
       if (!post) {
@@ -1297,9 +1424,25 @@ class PostService {
         };
       }
 
+      const normalizedEntityAccountId = normalizeGuid(userEntityAccountId);
+      const normalizedUserId = normalizeGuid(userId);
+
       // Tìm và xóa like
       for (const [likeId, like] of post.likes.entries()) {
-        if (like.accountId.toString() === userId.toString()) {
+        const likeEntityAccountId = normalizeGuid(like.entityAccountId);
+        const likeAccountId = normalizeGuid(like.accountId);
+
+        const matchByEntity =
+          normalizedEntityAccountId &&
+          likeEntityAccountId &&
+          likeEntityAccountId === normalizedEntityAccountId;
+
+        const matchLegacyAccount =
+          (!normalizedEntityAccountId || !likeEntityAccountId) &&
+          normalizedUserId &&
+          likeAccountId === normalizedUserId;
+
+        if (matchByEntity || matchLegacyAccount) {
           post.likes.delete(likeId);
           break;
         }
@@ -1950,7 +2093,8 @@ class PostService {
   // Tăng số lượt xem của post
   async incrementView(postId, accountId = null) {
     try {
-      const post = await Post.findById(postId);
+      // Kiểm tra post có tồn tại không
+      const post = await Post.findById(postId).lean(); // Dùng lean() để tránh Mongoose document overhead
       if (!post) {
         return {
           success: false,
@@ -1958,19 +2102,62 @@ class PostService {
         };
       }
 
-      // Tăng views (không cần check duplicate vì có thể nhiều người xem)
-      post.views = (post.views || 0) + 1;
-      await post.save();
+      // Kiểm tra status hiện tại
+      const validStatuses = ["public", "private", "trashed", "deleted"];
+      const currentStatus = post.status;
+      const needsStatusFix = !currentStatus || !validStatuses.includes(currentStatus);
+
+      // Update views bằng $inc (atomic operation, không touch các field khác)
+      await Post.findByIdAndUpdate(
+        postId,
+        { $inc: { views: 1 } },
+        { 
+          runValidators: false, // Tắt validation để chỉ update views, không validate toàn bộ document
+          upsert: false
+        }
+      );
+
+      // Nếu status không hợp lệ, sửa riêng (sau khi đã update views)
+      if (needsStatusFix) {
+        const fixedStatus = "public"; // Default status
+        if (currentStatus && !validStatuses.includes(currentStatus)) {
+          console.warn(`[PostService] Invalid status "${currentStatus}" for post ${postId}, fixing to "public"`);
+        }
+        
+        try {
+          // Update status riêng với validation
+          await Post.findByIdAndUpdate(
+            postId,
+            { $set: { status: fixedStatus } },
+            { 
+              runValidators: true, // Validate chỉ status field
+              strict: true // Chỉ update field được specify
+            }
+          );
+        } catch (statusError) {
+          // Log lỗi nhưng không fail request vì views đã được update
+          console.error(`[PostService] Failed to fix invalid status for post ${postId}:`, statusError.message);
+        }
+      }
 
       // Cập nhật trending score sau khi tăng views
-      await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+      try {
+        await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+      } catch (trendingError) {
+        // Log nhưng không fail request
+        console.warn(`[PostService] Failed to update trending score for post ${postId}:`, trendingError.message);
+      }
+
+      // Lấy lại post đã update để trả về
+      const updatedPost = await Post.findById(postId);
 
       return {
         success: true,
-        data: post,
+        data: updatedPost,
         message: "View tracked successfully"
       };
     } catch (error) {
+      console.error(`[PostService] Error in incrementView for post ${postId}:`, error);
       return {
         success: false,
         message: "Error tracking view",
@@ -2460,6 +2647,193 @@ class PostService {
     } catch (error) {
       console.error('[PostService] Error enriching comments with author info:', error);
       // Không throw error, chỉ log để không ảnh hưởng đến việc lấy posts
+    }
+  }
+
+  isOwnedByViewer(resource, normalizedAccountId, normalizedEntityAccountId) {
+    if (!resource) return false;
+
+    const resourceEntityAccountId = normalizeGuid(
+      resource.authorEntityAccountId ||
+      resource.entityAccountId
+    );
+    const resourceAccountId = normalizeGuid(
+      resource.accountId ||
+      resource.authorAccountId
+    );
+
+    if (
+      normalizedEntityAccountId &&
+      resourceEntityAccountId &&
+      normalizedEntityAccountId === resourceEntityAccountId
+    ) {
+      return true;
+    }
+
+    if (
+      normalizedAccountId &&
+      resourceAccountId &&
+      normalizedAccountId === resourceAccountId
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  applyViewerContextToComments(posts, viewerAccountId, viewerEntityAccountId) {
+    if (!posts || posts.length === 0) return;
+
+    const normalizedAccountId = normalizeGuid(viewerAccountId);
+    const normalizedEntityAccountId = normalizeGuid(viewerEntityAccountId);
+
+    posts.forEach((post) => {
+      if (!post || !post.comments || typeof post.comments !== "object") return;
+
+      const commentsEntries = post.comments instanceof Map
+        ? Array.from(post.comments.entries())
+        : Object.entries(post.comments);
+
+      commentsEntries.forEach(([commentKey, comment]) => {
+        if (!comment || typeof comment !== "object") return;
+
+        comment.likesCount = countCollectionItems(comment.likes);
+        comment.likedByViewer = isCollectionLikedByViewer(
+          comment.likes,
+          normalizedAccountId,
+          normalizedEntityAccountId
+        );
+        comment.canManage = this.isOwnedByViewer(
+          comment,
+          normalizedAccountId,
+          normalizedEntityAccountId
+        );
+
+        if (comment.replies && typeof comment.replies === "object") {
+          const repliesEntries = comment.replies instanceof Map
+            ? Array.from(comment.replies.entries())
+            : Object.entries(comment.replies);
+
+          repliesEntries.forEach(([replyKey, reply]) => {
+            if (!reply || typeof reply !== "object") return;
+            reply.likesCount = countCollectionItems(reply.likes);
+            reply.likedByViewer = isCollectionLikedByViewer(
+              reply.likes,
+              normalizedAccountId,
+              normalizedEntityAccountId
+            );
+            reply.canManage = this.isOwnedByViewer(
+              reply,
+              normalizedAccountId,
+              normalizedEntityAccountId
+            );
+
+            if (comment.replies instanceof Map) {
+              comment.replies.set(replyKey, reply);
+            } else {
+              comment.replies[replyKey] = reply;
+            }
+          });
+        }
+
+        if (post.comments instanceof Map) {
+          post.comments.set(commentKey, comment);
+        } else {
+          post.comments[commentKey] = comment;
+        }
+      });
+    });
+  }
+
+  /**
+   * Lấy tất cả posts của một entity cụ thể, sắp xếp theo thời gian mới nhất.
+   * @param {string} entityAccountId - ID của entity cần lấy posts.
+   * @param {object} options - Các tùy chọn { limit, cursor, includeMedias, includeMusic, populateReposts }.
+   * @returns {Promise<object>} - Kết quả tương tự getAllPosts.
+   */
+  async getPostsByEntityAccountId(entityAccountId, { limit = 10, cursor = null, includeMedias = true, includeMusic = true, populateReposts = true }) {
+    try {
+      if (!entityAccountId) {
+        return { success: false, message: "Entity Account ID is required" };
+      }
+
+      const baseFilter = {
+        entityAccountId: String(entityAccountId).trim(),
+        status: { $in: ["public", "active"] },
+        $or: [
+          { type: "post" },
+          { type: { $exists: false } }
+        ]
+      };
+
+      const parsedCursor = this.parseCursor(cursor);
+
+      let queryFilter = { ...baseFilter };
+      if (parsedCursor) {
+        queryFilter = {
+          $and: [
+            baseFilter,
+            {
+              $or: [
+                { createdAt: { $lt: new Date(parsedCursor.createdAt) } },
+                {
+                  $and: [
+                    { createdAt: new Date(parsedCursor.createdAt) },
+                    { _id: { $lt: parsedCursor._id } }
+                  ]
+                }
+              ]
+            }
+          ]
+        };
+      }
+
+      const query = Post.find(queryFilter)
+        .sort({ createdAt: -1, _id: -1 })
+        .limit(limit + 1);
+
+      if (includeMedias) query.populate('mediaIds');
+      if (includeMusic) query.populate('songId');
+      if (populateReposts) query.populate('repostedFromId');
+
+      const posts = await query.lean();
+
+      const hasMore = posts.length > limit;
+      const postsToReturn = hasMore ? posts.slice(0, limit) : posts;
+
+      const postsPlain = postsToReturn.map(p => {
+        const plain = p.toObject ? p.toObject({ flattenMaps: true }) : p;
+        if (populateReposts && plain.repostedFromId) {
+          plain.originalPost = plain.repostedFromId.toObject ? plain.repostedFromId.toObject({ flattenMaps: true }) : plain.repostedFromId;
+          delete plain.repostedFromId;
+        }
+        return plain;
+      });
+
+      await this.enrichPostsWithAuthorInfo(postsPlain);
+
+      let nextCursor = null;
+      if (hasMore) {
+        const lastPost = postsToReturn[limit - 1];
+        if (lastPost) {
+            nextCursor = Buffer.from(JSON.stringify({ createdAt: lastPost.createdAt.toISOString(), _id: lastPost._id.toString() })).toString('base64');
+        }
+      }
+
+      return {
+        success: true,
+        data: postsPlain,
+        nextCursor,
+        hasMore,
+      };
+
+    } catch (error) {
+      console.error('[PostService] Error in getPostsByEntityAccountId:', error);
+      return {
+        success: false,
+        message: "Error fetching posts for entity",
+        error: error.message
+      };
     }
   }
 }

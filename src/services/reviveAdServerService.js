@@ -1,0 +1,274 @@
+const axios = require("axios");
+
+class ReviveAdServerService {
+  constructor() {
+    // Local URL
+    this.baseUrl = process.env.REVIVE_AD_SERVER_URL || "http://localhost/revive";
+  }
+
+  /**
+   * Lấy banner từ zone (Server-side)
+   * Vì Revive zone dùng async JavaScript invocation code (asyncjs.php),
+   * nên chúng ta cần dùng ajs.php để lấy banner HTML
+   */
+  async getBannerFromZone(zoneId, params = {}) {
+    try {
+      // Dùng ajs.php (async JavaScript) vì zone được cấu hình với async invocation code
+      const deliveryUrl = `${this.baseUrl}/www/delivery/ajs.php`;
+      
+      // Thêm cache buster để tránh cache và đảm bảo luôn lấy banner mới
+      const queryParams = new URLSearchParams({
+        zoneid: zoneId,
+        cb: Date.now(), // Cache buster - timestamp
+        ...params
+      });
+
+      const fullUrl = `${deliveryUrl}?${queryParams.toString()}`;
+      console.log(`[ReviveAdServerService] Fetching banner from: ${fullUrl}`);
+
+      const response = await axios.get(fullUrl, {
+        maxRedirects: 5, // Allow redirects (Revive may redirect to image URL)
+        validateStatus: (status) => status >= 200 && status < 400,
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'http://localhost:3000/', // Có thể cần Referer để Revive nhận diện đúng
+          'Cache-Control': 'no-cache'
+        },
+        // Cho phép redirect đến image URL nếu Revive redirect
+        followRedirect: true
+      });
+
+      console.log(`[ReviveAdServerService] Response status: ${response.status}`);
+      console.log(`[ReviveAdServerService] Response type: ${typeof response.data}`);
+      console.log(`[ReviveAdServerService] Response length: ${response.data ? (typeof response.data === 'string' ? response.data.length : 'object') : 'null'}`);
+      console.log(`[ReviveAdServerService] Content-Type: ${response.headers['content-type'] || 'unknown'}`);
+
+      // Handle different response types
+      if (response.data) {
+        // If response is a string (JavaScript code from ajs.php or HTML from ck.php)
+        if (typeof response.data === 'string') {
+          const contentType = response.headers['content-type'] || '';
+          
+          // Check if response is JavaScript (from ajs.php)
+          if (contentType.includes('javascript') || response.data.trim().startsWith('var OX_')) {
+            console.log(`[ReviveAdServerService] Received JavaScript response, parsing HTML from it...`);
+            
+            // Parse HTML from JavaScript: var OX_xxxxx = ''; OX_xxxxx += "<"+"a href=...
+            // Revive uses "<"+"a to prevent browser parsing, need to handle this
+            // Strategy: Extract all string literals after += and join them
+            
+            // Find all += statements and extract the concatenated strings
+            // Pattern: OX_xxx += "string1" + "string2" + 'string3'
+            const lines = response.data.split('\n');
+            let htmlParts = [];
+            
+            for (const line of lines) {
+              // Match lines like: OX_xxxxx += "..." or OX_xxxxx += '...'
+              if (line.includes('+=')) {
+                // Extract all string literals from this line
+                // Match: "..." or '...' (handling escaped quotes)
+                const stringMatches = line.matchAll(/(["'])((?:\\\1|(?!\1).)*?)\1/g);
+                for (const match of stringMatches) {
+                  htmlParts.push(match[2]);
+                }
+              }
+            }
+            
+            if (htmlParts.length > 0) {
+              // Join all parts and decode
+              let html = htmlParts.join('')
+                .replace(/\\\'/g, "'")           // Unescape single quotes: \' -> '
+                .replace(/\\"/g, '"')            // Unescape double quotes: \" -> "
+                .replace(/&amp;/g, '&')          // Decode HTML entities
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&nbsp;/g, ' ');
+              
+              if (html && html.trim().length > 0) {
+                console.log(`[ReviveAdServerService] Successfully extracted HTML from JavaScript (${html.length} chars)`);
+                return {
+                  html: html.trim(),
+                  zoneId: zoneId
+                };
+              }
+            }
+            
+            // Fallback: try to extract HTML tag directly (if not obfuscated)
+            const htmlTagMatch = response.data.match(/<a\s+[^>]*>.*?<\/a>/s);
+            if (htmlTagMatch) {
+              let html = htmlTagMatch[0]
+                .replace(/\\\'/g, "'")
+                .replace(/\\"/g, '"');
+              console.log(`[ReviveAdServerService] Extracted HTML using fallback method (${html.length} chars)`);
+              return {
+                html: html,
+                zoneId: zoneId
+              };
+            }
+            
+            console.warn(`[ReviveAdServerService] Could not parse HTML from JavaScript response`);
+            console.warn(`[ReviveAdServerService] Response preview: ${response.data.substring(0, 500)}`);
+          }
+          
+          // Check if response is empty or error message
+          const trimmedData = response.data.trim();
+          if (!trimmedData || trimmedData.length === 0) {
+            console.warn(`[ReviveAdServerService] Empty response from Revive for zone ${zoneId}`);
+            console.warn(`[ReviveAdServerService] Please check in Revive Admin Panel:`);
+            console.warn(`  1. Campaigns → [Campaign Name] → Status must be 'Active'`);
+            console.warn(`  2. Campaigns → [Campaign Name] → Start Date/End Date must include current date`);
+            console.warn(`  3. Inventory → Banners → [Banner Name] → Banner Status must be 'Active'`);
+            console.warn(`  4. Inventory → Zones → Zone ${zoneId} → Tab 'Linked Banners' → Must have banners linked`);
+            console.warn(`  5. If Campaign type is 'Remnant', check Delivery Rules settings`);
+            return null;
+          }
+          
+          // Check for common error indicators
+          if (trimmedData.includes('<!-- Error:') || 
+              trimmedData.includes('No ads available') ||
+              trimmedData.includes('<!-- No ads') ||
+              trimmedData.toLowerCase().includes('no banner')) {
+            console.warn(`[ReviveAdServerService] Revive returned error: ${trimmedData.substring(0, 200)}`);
+            return null;
+          }
+
+          // Check if response is an image redirect (sometimes Revive returns image directly)
+          if (contentType.startsWith('image/')) {
+            // If Revive redirects to image, wrap it in an anchor tag
+            const imageUrl = response.request.res.responseUrl || fullUrl;
+            return {
+              html: `<a href="${imageUrl}" target="_blank" rel="noopener noreferrer"><img src="${imageUrl}" alt="Advertisement" style="max-width: 100%; height: auto;" /></a>`,
+              zoneId: zoneId
+            };
+          }
+
+          // If response is already HTML (from ck.php or other methods)
+          if (trimmedData.startsWith('<')) {
+            console.log(`[ReviveAdServerService] Successfully retrieved banner HTML (${trimmedData.length} chars)`);
+        return {
+          html: response.data,
+          zoneId: zoneId
+        };
+      }
+        }
+        
+        // If response is an object (JSON) - shouldn't happen but handle it
+        if (typeof response.data === 'object') {
+          console.warn(`[ReviveAdServerService] Unexpected object response:`, JSON.stringify(response.data).substring(0, 200));
+          return null;
+        }
+      }
+
+      console.warn(`[ReviveAdServerService] No valid data in response`);
+      console.warn(`[ReviveAdServerService] Response headers:`, JSON.stringify(response.headers, null, 2));
+      return null;
+    } catch (error) {
+      console.error("[ReviveAdServerService] getBannerFromZone error:", {
+        message: error.message,
+        code: error.code,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data ? (typeof error.response.data === 'string' ? error.response.data.substring(0, 200) : JSON.stringify(error.response.data)) : null
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Lấy invocation code (JavaScript)
+   */
+  getInvocationCode(zoneId, params = {}) {
+    const invocationUrl = `${this.baseUrl}/www/delivery/ajs.php`;
+    const queryParams = new URLSearchParams({
+      zoneid: zoneId,
+      ...params
+    });
+    
+    return {
+      type: 'javascript',
+      url: `${invocationUrl}?${queryParams.toString()}`,
+      code: `<script type="text/javascript" src="${invocationUrl}?${queryParams.toString()}"></script>`
+    };
+  }
+
+  /**
+   * Query Revive database để lấy banner ID đang được serve cho zone
+   * @param {string} zoneId - Zone ID
+   * @returns {Promise<string|null>} Banner ID hoặc null
+   */
+  async getBannerIdFromZone(zoneId) {
+    // Kiểm tra xem có config Revive DB không
+    const reviveDbConfig = {
+      host: process.env.REVIVE_DB_HOST,
+      port: parseInt(process.env.REVIVE_DB_PORT || "3306"),
+      user: process.env.REVIVE_DB_USER,
+      password: process.env.REVIVE_DB_PASSWORD,
+      database: process.env.REVIVE_DB_NAME || "revive",
+    };
+
+    if (!reviveDbConfig.host || !reviveDbConfig.user || !reviveDbConfig.password) {
+      console.warn(`[ReviveAdServerService] Revive DB config not set, cannot query banner ID`);
+      return null;
+    }
+
+    const mysql = require("mysql2/promise");
+    let connection = null;
+
+    try {
+      connection = await mysql.createConnection(reviveDbConfig);
+      
+      // Query để lấy banner ID đang active cho zone
+      // Revive lưu trong bảng ox_banners và ox_ad_zone_assoc
+      // Hoặc có thể query từ ox_zones và ox_ad_zone_assoc
+      const [rows] = await connection.execute(`
+        SELECT b.bannerid
+        FROM ox_banners b
+        INNER JOIN ox_ad_zone_assoc aza ON b.bannerid = aza.ad_id
+        INNER JOIN ox_zones z ON aza.zone_id = z.zoneid
+        WHERE z.zoneid = ?
+          AND b.status = 1
+          AND b.type = 'html'
+        ORDER BY b.updated DESC
+        LIMIT 1
+      `, [zoneId]);
+
+      if (rows.length > 0) {
+        const bannerId = rows[0].bannerid.toString();
+        console.log(`[ReviveAdServerService] Found banner ID ${bannerId} for zone ${zoneId}`);
+        return bannerId;
+      }
+
+      // Fallback: Thử query từ bảng khác nếu tên table khác
+      const [fallbackRows] = await connection.execute(`
+        SELECT bannerid
+        FROM ox_banners
+        WHERE zoneid = ?
+          AND status = 1
+        ORDER BY updated DESC
+        LIMIT 1
+      `, [zoneId]);
+
+      if (fallbackRows.length > 0) {
+        const bannerId = fallbackRows[0].bannerid.toString();
+        console.log(`[ReviveAdServerService] Found banner ID ${bannerId} for zone ${zoneId} (fallback query)`);
+        return bannerId;
+      }
+
+      console.warn(`[ReviveAdServerService] No active banner found for zone ${zoneId}`);
+      return null;
+    } catch (error) {
+      console.error(`[ReviveAdServerService] Error querying banner ID from Revive DB:`, error.message);
+      return null;
+    } finally {
+      if (connection) {
+        await connection.end();
+      }
+    }
+  }
+}
+
+module.exports = new ReviveAdServerService();

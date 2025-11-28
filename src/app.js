@@ -28,11 +28,13 @@ const {
   livestreamRoutes,
   mediaRoutes,
   bookingTableRoutes,
- 
-
   bookingRoutes,
   adminRoutes,
-
+  payosRoutes,
+  adRoutes,
+  adminAdRoutes,
+  feedRoutes,
+  profileRoutes,
 } = require("./routes");
 
 
@@ -47,7 +49,8 @@ app.use(
   cors({
     origin: "*",
     // methods: không chỉ định = cho phép tất cả methods
-    allowedHeaders: "*", // Allow all headers
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-locale"], // Explicitly include Authorization
+    exposedHeaders: ["Authorization"],
     credentials: false, // Set to false when origin is "*"
     preflightContinue: false,
     optionsSuccessStatus: 204,
@@ -112,8 +115,24 @@ app.use((req, res, next) => {
 const { initializeAdmin } = require("./utils/adminSetup");
 initSQLConnection().then(() => {
   initializeAdmin();
+  
+  // Khởi động background job để sync stats từ Revive Ad Server
+  const ReviveSyncJob = require("./jobs/reviveSyncJob");
+  
+  // Interval từ env (mặc định: 15 phút)
+  const syncIntervalMinutes = process.env.REVIVE_SYNC_INTERVAL_MINUTES 
+    ? parseInt(process.env.REVIVE_SYNC_INTERVAL_MINUTES) 
+    : 15;
+  
+  // Chỉ start job nếu có config Revive
+  if (process.env.REVIVE_AD_SERVER_URL || process.env.REVIVE_DB_HOST) {
+    ReviveSyncJob.start(syncIntervalMinutes);
+    console.log(`[App] Revive sync job started (interval: ${syncIntervalMinutes} minutes)`);
+  } else {
+    console.log('[App] Revive sync job skipped (no Revive configuration found)');
+  }
 }).catch(err => {
-  console.error("⚠️  SQL connection failed, skipping admin initialization");
+  console.error("⚠️  SQL connection failed, skipping admin initialization and Revive sync job");
 });
 
 // Routes
@@ -141,9 +160,18 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/bank-info", bankInfoRoutes);
 app.use("/api/livestream", livestreamRoutes);
 app.use("/api/medias", mediaRoutes);
-app.use("/api/bookingtable",bookingTableRoutes)
+app.use("/api/bookingtable", bookingTableRoutes);
 app.use("/api/booking", bookingRoutes);
+app.use("/api/pay", payosRoutes);
+// UserReview & BarReview APIs
+app.use("/api/user-reviews", userReviewRoutes);
+app.use("/api/bar-reviews", barReviewRoutes);
+app.use("/api/ads", adRoutes);
+app.use("/api/admin", adminAdRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/event-advertisements", require("./routes/eventAdvertisementRoutes"));
+app.use("/api/feed", feedRoutes);
+app.use("/api/profile", profileRoutes);
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);

@@ -460,6 +460,16 @@ class PostController {
         // Ensure title is set (can be empty string for repost without comment)
         const postTitle = title || "";
 
+        // Validate và fix status - chỉ cho phép giá trị hợp lệ
+        const validStatuses = ["public", "private", "trashed", "deleted"];
+        let validStatus = status || "public";
+        
+        // Nếu status không hợp lệ (ví dụ: "active"), fix về "public"
+        if (!validStatuses.includes(validStatus)) {
+          console.warn(`[POST] Invalid status "${validStatus}" provided, setting to "public"`);
+          validStatus = "public";
+        }
+
         const postData = {
           title: postTitle,
           content: postContent,
@@ -473,7 +483,7 @@ class PostController {
           mediaIds: finalMediaIds,
           images: typeof images === "string" ? images : "",
           repostedFromId: repostedFromIdObjectId, // Reference đến post gốc nếu là repost (converted to ObjectId)
-          status: status || "public", // public, private, trashed, deleted
+          status: validStatus, // public, private, trashed, deleted (đã validate)
           expiredAt: expiredAt ? new Date(expiredAt) : null,
           type: type || "post"
         };
@@ -613,10 +623,17 @@ class PostController {
       
       console.log('[PostController] getPostById - postId:', id, 'includeMedias:', includeMedias, 'includeMusic:', includeMusic);
       
+      const viewerAccountId = req.user?.id || null;
+      const viewerEntityAccountId = req.user?.entityAccountId || null;
+
       const result = await postService.getPostById(
         id,
         String(includeMedias) === 'true',
-        String(includeMusic) === 'true'
+        String(includeMusic) === 'true',
+        {
+          viewerAccountId,
+          viewerEntityAccountId
+        }
       );
 
       console.log('[PostController] getPostById - result.success:', result.success);
@@ -991,7 +1008,7 @@ class PostController {
   async likePost(req, res) {
     try {
       const { postId } = req.params;
-      const { typeRole = "Account" } = req.body;
+      const { typeRole = "Account", entityAccountId } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -1001,7 +1018,16 @@ class PostController {
         });
       }
 
-      const result = await postService.likePost(postId, userId, typeRole);
+      let userEntityAccountId = entityAccountId || req.user?.entityAccountId;
+      if (!userEntityAccountId) {
+        try {
+          userEntityAccountId = await getEntityAccountIdByAccountId(userId);
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId for like post:", err);
+        }
+      }
+
+      const result = await postService.likePost(postId, userId, typeRole, userEntityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -1266,6 +1292,7 @@ class PostController {
     try {
       const { postId } = req.params;
       const userId = req.user?.id;
+      const { entityAccountId } = req.body;
 
       if (!userId) {
         return res.status(401).json({
@@ -1274,7 +1301,16 @@ class PostController {
         });
       }
 
-      const result = await postService.unlikePost(postId, userId);
+      let userEntityAccountId = entityAccountId || req.user?.entityAccountId;
+      if (!userEntityAccountId) {
+        try {
+          userEntityAccountId = await getEntityAccountIdByAccountId(userId);
+        } catch (err) {
+          console.warn("[POST] Could not get EntityAccountId for unlike post:", err);
+        }
+      }
+
+      const result = await postService.unlikePost(postId, userId, userEntityAccountId);
 
       if (result.success) {
         res.status(200).json(result);
@@ -1434,7 +1470,7 @@ class PostController {
       // Build query - chỉ tìm theo entityAccountId hoặc entityId và status = "public"
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
       const query = {
-        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active"
+        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active" (posts cũ có thể có "active", nhưng posts mới chỉ dùng "public")
         $or: [
           { entityAccountId: entityAccountId },
           { entityId: authorId } // Có thể authorId là entityId

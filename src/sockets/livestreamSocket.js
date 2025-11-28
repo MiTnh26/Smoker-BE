@@ -42,15 +42,6 @@ function registerLivestreamSocket(socket, io) {
     io.to(room).emit("new-chat-message", payload);
   });
 
-  socket.on("reaction", (payload = {}) => {
-    const { channelName } = payload;
-    if (!channelName) {
-      return;
-    }
-    const room = buildRoomName(channelName);
-    io.to(room).emit("new-reaction", payload);
-  });
-
   socket.on("disconnecting", () => {
     for (const room of socket.rooms) {
       if (room.startsWith(ROOM_PREFIX)) {

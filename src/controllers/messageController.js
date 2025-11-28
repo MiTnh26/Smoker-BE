@@ -455,7 +455,7 @@ class MessageController {
       if (postId) {
         try {
           const postService = require("../services/postService");
-          const postResult = await postService.getPostById(postId, true, false); // includeMedias = true
+          const postResult = await postService.getPostById(postId, true, false, {});
           
           if (postResult && postResult.success !== false && postResult.data) {
             const post = postResult.data;
