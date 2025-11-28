@@ -11,7 +11,7 @@ router.post('/conversation', checkBannedStatus, messageController.getOrCreateCon
 // Lấy danh sách cuộc trò chuyện của user
 router.get('/conversations', messageController.getUserConversations);
 // Lấy tổng số tin nhắn chưa đọc
-router.get('/unread-count', messageController.getTotalUnreadMessagesCount);
+router.get('/messages/unread-count', messageController.getTotalUnreadMessagesCount);
 // Gửi tin nhắn
 router.post('/message', checkBannedStatus, messageController.sendMessage);
 // Lấy danh sách tin nhắn của 1 cuộc trò chuyện
