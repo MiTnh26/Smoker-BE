@@ -19,6 +19,8 @@ class BookingTableController {
         bookingDate,
         startTime,
         endTime,
+        paymentStatus, // "Pending" hoặc "Paid"
+        scheduleStatus, // "Pending" hoặc "Confirmed"
       } = req.body;
 
       const result = await bookingTableService.createBarTableBooking({
@@ -30,6 +32,8 @@ class BookingTableController {
         bookingDate,
         startTime,
         endTime,
+        paymentStatus: paymentStatus || "Pending", // Mặc định Pending
+        scheduleStatus: scheduleStatus || "Confirmed", // Mặc định Confirmed (không cần bar xác nhận)
       });
 
       return res.status(result.success ? 201 : 400).json(result);
@@ -102,8 +106,19 @@ class BookingTableController {
   // GET /api/booking-tables/receiver/:receiverId
   async getByReceiver(req, res) {
     try {
-      const accountId = req.user?.id;
-      const result = await bookingTableService.getByReceiver(accountId, req.query);
+      // receiverId từ params là EntityAccountId của bar
+      const receiverId = req.params.receiverId;
+      if (!receiverId) {
+        return res.status(400).json({
+          success: false,
+          message: "receiverId is required"
+        });
+      }
+
+      // Service cần AccountId của bar, nhưng frontend gửi EntityAccountId
+      // Cần lấy AccountId từ EntityAccountId
+      // Tạm thời, sửa service để nhận EntityAccountId trực tiếp
+      const result = await bookingTableService.getByReceiverEntityId(receiverId, req.query);
       return res.status(result.success ? 200 : 400).json(result);
     } catch (error) {
       console.error("getByReceiver error:", error);
