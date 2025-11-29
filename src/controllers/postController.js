@@ -80,7 +80,13 @@ class PostController {
         }
       }
       
-      console.log("[POST] Final entity info:", {
+      // Normalize entityAccountId để đảm bảo format nhất quán (lowercase, trim)
+      // Điều này quan trọng để getStories có thể match đúng story với userEntityAccountId
+      if (postEntityAccountId) {
+        postEntityAccountId = String(postEntityAccountId).trim().toLowerCase();
+      }
+      
+      console.log("[POST] Final entity info (normalized):", {
         postEntityAccountId,
         postEntityId,
         postEntityType,
@@ -516,22 +522,40 @@ class PostController {
       }
 
       // Enrich post với author info (authorName, authorAvatar) ngay sau khi tạo
-      // Chỉ enrich cho text post (không có music hoặc media), vì music post và media post đã enrich ở trên
-      if (result.success && result.data && !result.data.post && !result.data.medias) {
+      // Enrich cho tất cả các loại post (text, music, media)
+      if (result.success && result.data) {
         try {
-          // Convert post data to plain object nếu cần
-          let postDataToEnrich = result.data;
+          let postDataToEnrich = null;
           
-          // Convert to plain object nếu là Mongoose document
-          if (postDataToEnrich.toObject) {
-            postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
+          // Xử lý các format response khác nhau:
+          // 1. Text post: result.data là post object trực tiếp
+          // 2. Music post: result.data = {post: ..., music: ...}
+          // 3. Media post: result.data = {post: ..., medias: ...}
+          
+          if (result.data.post) {
+            // Music post hoặc media post - enrich post trong nested object
+            postDataToEnrich = result.data.post;
+          } else if (result.data._id || result.data.id) {
+            // Text post - result.data là post object trực tiếp
+            postDataToEnrich = result.data;
           }
           
-          // Enrich với author info
-          await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
-          
-          // Update result.data với enriched data
-          result.data = postDataToEnrich;
+          if (postDataToEnrich) {
+            // Convert to plain object nếu là Mongoose document
+            if (postDataToEnrich.toObject) {
+              postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
+            }
+            
+            // Enrich với author info
+            await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
+            
+            // Update result.data với enriched data
+            if (result.data.post) {
+              result.data.post = postDataToEnrich;
+            } else {
+              result.data = postDataToEnrich;
+            }
+          }
         } catch (enrichError) {
           console.warn("[POST] Error enriching post with author info:", enrichError.message);
           // Không fail request nếu enrich lỗi, chỉ log warning
