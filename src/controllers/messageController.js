@@ -258,8 +258,7 @@ class MessageController {
       res.status(500).json({ success: false, message: "Internal server error", error: error.message });
     }
   }
-
-  // Lấy tổng số tin nhắn chưa đọc từ tất cả người dùng khác
+// Lấy tổng số tin nhắn chưa đọc từ tất cả người dùng khác
   async getTotalUnreadMessagesCount(req, res) {
     try {
       const accountId = req.user?.id; // AccountId từ JWT
@@ -338,7 +337,6 @@ class MessageController {
       res.status(500).json({ success: false, message: "Internal server error", error: error.message });
     }
   }
-
   // Gửi tin nhắn
   async sendMessage(req, res) {
     try {
@@ -723,12 +721,20 @@ class MessageController {
 
       // Get current user's entityAccountIds
       const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
+    
+      // console.log('[DEBUG getMessages] allUserEntityAccountIds:', allUserEntityAccountIds);
+      // console.log('[DEBUG getMessages] conversation._id:', conversation._id);
+      
+      const allUserEntityAccountIdsUpper = allUserEntityAccountIds.map(id => id.toUpperCase());
       
       // Get participant info to retrieve last_read_message_id
       const currentUserParticipant = await Participant.findOne({
         conversation_id: conversation._id,
-        user_id: { $in: allUserEntityAccountIds }
+        user_id: { $in: allUserEntityAccountIdsUpper }
       }).lean();
+      // console.log('[DEBUG getMessages] currentUserParticipant:', currentUserParticipant);
+      // console.log('[DEBUG getMessages] last_read_message_id:', currentUserParticipant?.last_read_message_id);
+      // console.log('[DEBUG getMessages] last_read_at:', currentUserParticipant?.last_read_at);
 
       // Build query with pagination
       const query = { conversation_id: conversation._id };
