@@ -111,10 +111,13 @@ async function endLivestream(livestreamId, hostAccountId) {
     throw err;
   }
 
-  return await livestreamRepository.updateStatus(livestreamId, {
+  const updatedLivestream = await livestreamRepository.updateStatus(livestreamId, {
     status: "ended",
     endTime: new Date(),
   });
+  
+  // Trả về livestream với đầy đủ thông tin (bao gồm agoraChannelName) để emit socket event
+  return updatedLivestream || livestream;
 }
 
 module.exports = {

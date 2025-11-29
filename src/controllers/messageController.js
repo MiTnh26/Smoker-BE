@@ -448,81 +448,15 @@ class MessageController {
         }
       }
       
-      // Handle post sharing - fetch post details if postId is provided
-      let postData = null;
+      // Validate postId format if provided
+      let validPostId = null;
       if (postId) {
-        try {
-          const postService = require("../services/postService");
-          const postResult = await postService.getPostById(postId, true, false, {});
-          
-          if (postResult && postResult.success !== false && postResult.data) {
-            const post = postResult.data;
-            
-            // Get first image from medias or images field
-            let postImage = null;
-            if (post.medias && Array.isArray(post.medias) && post.medias.length > 0) {
-              const firstImage = post.medias.find(m => m.type === 'image' || !m.type || m.type === 'image');
-              if (firstImage) {
-                postImage = firstImage.url;
-              } else if (post.medias[0]) {
-                postImage = post.medias[0].url;
-              }
-            } else if (post.images) {
-              postImage = typeof post.images === 'string' ? post.images : (post.images[0] || null);
-            }
-            
-            // Get author info
-            let postAuthorName = "Người dùng";
-            let postAuthorAvatar = null;
-            
-            if (post.entityAccountId) {
-              try {
-                const authorQuery = await pool.request()
-                  .input("EntityAccountId", sql.UniqueIdentifier, post.entityAccountId)
-                  .query(`
-                    SELECT TOP 1 
-                      a.UserName,
-                      a.Avatar,
-                      bp.BarName,
-                      bp.Avatar as BarAvatar,
-                      ba.UserName as BusinessName,
-                      ba.Avatar as BusinessAvatar
-                    FROM EntityAccounts ea
-                    LEFT JOIN Accounts a ON ea.EntityId = a.AccountId AND ea.EntityType = 'Account'
-                    LEFT JOIN BarPages bp ON ea.EntityId = bp.BarPageId AND ea.EntityType = 'BarPage'
-                    LEFT JOIN BussinessAccounts ba ON ea.EntityId = ba.BussinessAccountId AND ea.EntityType = 'BusinessAccount'
-                    WHERE ea.EntityAccountId = @EntityAccountId
-                  `);
-                
-                if (authorQuery.recordset.length > 0) {
-                  const row = authorQuery.recordset[0];
-                  postAuthorName = row.UserName || row.BarName || row.BusinessName || postAuthorName;
-                  postAuthorAvatar = row.Avatar || row.BarAvatar || row.BusinessAvatar || null;
-                }
-              } catch (err) {
-                console.warn('[MessageController] Error getting post author info:', err);
-              }
-            }
-            
-            // Create summary from content or title
-            const postContent = post.content || post.title || "";
-            const postSummary = postContent.length > 150 
-              ? postContent.substring(0, 150) + "..." 
-              : postContent;
-            
-            postData = {
-              post_id: String(postId),
-              post_summary: postSummary,
-              post_image: postImage,
-              post_author_name: postAuthorName,
-              post_author_avatar: postAuthorAvatar,
-              post_title: post.title || null,
-              post_content: post.content || null,
-            };
-          }
-        } catch (error) {
-          console.error('[MessageController] Error fetching post data:', error);
-          // Continue without post data if fetch fails
+        const postIdStr = String(postId).trim();
+        // Validate MongoDB ObjectId format (24 hex characters)
+        if (mongoose.Types.ObjectId.isValid(postIdStr)) {
+          validPostId = postIdStr;
+        } else {
+          console.warn('[MessageController] Invalid postId format:', postIdStr);
         }
       }
       
@@ -536,14 +470,8 @@ class MessageController {
         is_story_reply: req.body.isStoryReply || false,
         story_id: req.body.storyId || null,
         story_url: req.body.storyUrl || null,
-        is_post_share: !!postId,
-        post_id: postData?.post_id || null,
-        post_summary: postData?.post_summary || null,
-        post_image: postData?.post_image || null,
-        post_author_name: postData?.post_author_name || null,
-        post_author_avatar: postData?.post_author_avatar || null,
-        post_title: postData?.post_title || null,
-        post_content: postData?.post_content || null,
+        is_post_share: !!validPostId,
+        post_id: validPostId,
       });
       
       await message.save();
@@ -651,12 +579,6 @@ class MessageController {
           story_url: message.story_url,
           is_post_share: message.is_post_share,
           post_id: message.post_id,
-          post_summary: message.post_summary,
-          post_image: message.post_image,
-          post_author_name: message.post_author_name,
-          post_author_avatar: message.post_author_avatar,
-          post_title: message.post_title,
-          post_content: message.post_content,
           createdAt: message.createdAt,
         };
         
