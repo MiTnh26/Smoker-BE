@@ -755,6 +755,7 @@ class MessageController {
         success: true, 
         data: sortedMessages, 
         message: "Messages retrieved",
+        entityAccountReadId: sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1].sender_id : null,
         last_read_message_id: currentUserParticipant?.last_read_message_id || null,
         last_read_at: currentUserParticipant?.last_read_at || null,
         pagination: {
