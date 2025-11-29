@@ -228,12 +228,23 @@ async function getEntityAccountId(req, res) {
     if (!accountId) return res.status(400).json(error("Thiếu accountId"));
 
     console.log("[getEntityAccountId] Request for AccountId:", accountId);
-    const entityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(accountId);
-    console.log("[getEntityAccountId] Result:", entityAccountId);
+    
+    // getEntityAccountIdByAccountId will automatically create EntityAccount if it doesn't exist
+    let entityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(accountId);
+    console.log("[getEntityAccountId] Result after first call:", entityAccountId);
+    
+    // If still null, try one more time after a short delay (in case of race condition)
+    if (!entityAccountId) {
+      console.log("[getEntityAccountId] EntityAccountId is null, retrying after 200ms...");
+      await new Promise(resolve => setTimeout(resolve, 200));
+      entityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(accountId);
+      console.log("[getEntityAccountId] Result after retry:", entityAccountId);
+    }
     
     if (!entityAccountId) {
-      console.error("[getEntityAccountId] EntityAccountId is null after getEntityAccountIdByAccountId");
-      return res.status(404).json(error("Không tìm thấy EntityAccountId. Có thể EntityAccount chưa được tạo."));
+      console.error("[getEntityAccountId] EntityAccountId is still null after retry. AccountId may not exist in Accounts table.");
+      // Return 404 but with a more helpful message
+      return res.status(404).json(error("Không tìm thấy EntityAccountId. AccountId có thể không tồn tại hoặc EntityAccount không thể được tạo."));
     }
 
     const entityAccountIdStr = String(entityAccountId);
