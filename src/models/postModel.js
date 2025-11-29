@@ -11,6 +11,15 @@ const likeSchema = new mongoose.Schema(
       type: String, // EntityAccountId của người tương tác
       default: null,
     },
+    entityId: {
+      type: String, // EntityId của người like
+      default: null,
+    },
+    entityType: {
+      type: String, // EntityType của người like
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+    },
     TypeRole: {
       type: String,
       enum: ["Account", "BusinessAccount", "BarPage"],

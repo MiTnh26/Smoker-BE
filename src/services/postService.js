@@ -609,7 +609,7 @@ class PostService {
         const senderEntityAccountId = commentData.entityAccountId;
         const receiverEntityAccountId = post.entityAccountId;
         
-        // Chỉ tạo notification nếu sender !== receiver
+        // Chỉ tạo notification nếu có đầy đủ entityAccountId và sender !== receiver
         if (senderEntityAccountId && receiverEntityAccountId && 
             String(senderEntityAccountId).trim().toLowerCase() !== String(receiverEntityAccountId).trim().toLowerCase()) {
           
@@ -703,6 +703,19 @@ class PostService {
           success: false,
           message: "Comment not found"
         };
+      }
+
+      // Fallback: lấy entityAccountId từ accountId nếu thiếu (cho các post cũ)
+      if (!post.entityAccountId && post.accountId) {
+        try {
+          const entityAccountId = await getEntityAccountIdByAccountId(post.accountId);
+          if (entityAccountId) {
+            post.entityAccountId = entityAccountId;
+            await post.save();
+          }
+        } catch (err) {
+          console.warn(`[PostService] Could not get EntityAccountId for accountId ${post.accountId}:`, err.message);
+        }
       }
 
       // Tạo ID mới cho reply
@@ -1111,11 +1124,32 @@ class PostService {
         };
       } else {
         // Chưa like → like (toggle on)
+        // Lấy entityId và entityType từ SQL Server nếu chưa có
+        let userEntityId = null;
+        let userEntityType = null;
+        
+        if (userEntityAccountId) {
+          try {
+            const pool = await getPool();
+            const result = await pool.request()
+              .input("EntityAccountId", sql.UniqueIdentifier, userEntityAccountId)
+              .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+            if (result.recordset.length > 0) {
+              userEntityType = result.recordset[0].EntityType;
+              userEntityId = String(result.recordset[0].EntityId);
+            }
+          } catch (err) {
+            console.warn("[PostService] Could not get entity info for like reply:", err);
+          }
+        }
+        
         const likeId = new mongoose.Types.ObjectId();
         const like = {
           accountId: userId, // Backward compatibility
           entityAccountId: userEntityAccountId,
-          TypeRole: typeRole || "Account"
+          entityId: userEntityId,
+          entityType: userEntityType,
+          TypeRole: typeRole || userEntityType || "Account"
         };
 
         reply.likes.set(likeId.toString(), like);
@@ -1311,11 +1345,32 @@ class PostService {
         };
       } else {
         // Chưa like → like (toggle on)
+        // Lấy entityId và entityType từ SQL Server nếu chưa có
+        let userEntityId = null;
+        let userEntityType = null;
+        
+        if (userEntityAccountId) {
+          try {
+            const pool = await getPool();
+            const result = await pool.request()
+              .input("EntityAccountId", sql.UniqueIdentifier, userEntityAccountId)
+              .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+            if (result.recordset.length > 0) {
+              userEntityType = result.recordset[0].EntityType;
+              userEntityId = String(result.recordset[0].EntityId);
+            }
+          } catch (err) {
+            console.warn("[PostService] Could not get entity info for like post:", err);
+          }
+        }
+        
         const likeId = new mongoose.Types.ObjectId();
         const like = {
           accountId: userId,
           entityAccountId: userEntityAccountId || null,
-          TypeRole: typeRole || "Account"
+          entityId: userEntityId,
+          entityType: userEntityType,
+          TypeRole: typeRole || userEntityType || "Account"
         };
 
         post.likes.set(likeId.toString(), like);
@@ -1326,14 +1381,10 @@ class PostService {
 
         // Tạo notification cho post owner (không gửi nếu like chính mình)
         try {
-          // Lấy sender entityAccountId
-          let senderEntityAccountId = userEntityAccountId;
-          if (!senderEntityAccountId) {
-            senderEntityAccountId = await getEntityAccountIdByAccountId(userId);
-          }
+          const senderEntityAccountId = userEntityAccountId;
           const receiverEntityAccountId = post.entityAccountId;
           
-          // Chỉ tạo notification nếu sender !== receiver
+          // Chỉ tạo notification nếu có đầy đủ entityAccountId và sender !== receiver
           if (senderEntityAccountId && receiverEntityAccountId && 
               String(senderEntityAccountId).trim().toLowerCase() !== String(receiverEntityAccountId).trim().toLowerCase()) {
             const isStory = post.type === "story";
@@ -1517,11 +1568,32 @@ class PostService {
         };
       } else {
         // Chưa like → like (toggle on)
+        // Lấy entityId và entityType từ SQL Server nếu chưa có
+        let userEntityId = null;
+        let userEntityType = null;
+        
+        if (userEntityAccountId) {
+          try {
+            const pool = await getPool();
+            const result = await pool.request()
+              .input("EntityAccountId", sql.UniqueIdentifier, userEntityAccountId)
+              .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+            if (result.recordset.length > 0) {
+              userEntityType = result.recordset[0].EntityType;
+              userEntityId = String(result.recordset[0].EntityId);
+            }
+          } catch (err) {
+            console.warn("[PostService] Could not get entity info for like comment:", err);
+          }
+        }
+        
         const likeId = new mongoose.Types.ObjectId();
         const like = {
           accountId: userId, // Backward compatibility
           entityAccountId: userEntityAccountId,
-          TypeRole: typeRole || "Account"
+          entityId: userEntityId,
+          entityType: userEntityType,
+          TypeRole: typeRole || userEntityType || "Account"
         };
 
         comment.likes.set(likeId.toString(), like);
@@ -2462,9 +2534,9 @@ class PostService {
     try {
       const pool = await getPool();
       
-      // Collect all accountIds and entityAccountIds from comments and replies
+      // Collect all accountIds and entityAccountIds from comments and replies (giữ nguyên format gốc)
       const accountIds = new Set();
-      const entityAccountIds = new Set();
+      const entityAccountIds = new Set(); // Giữ format gốc, không normalize
       
       for (const post of posts) {
         if (!post.comments || typeof post.comments !== 'object') continue;
@@ -2477,7 +2549,7 @@ class PostService {
         for (const [, comment] of commentsEntries) {
           if (!comment || typeof comment !== 'object') continue;
           
-          // Collect entityAccountId or accountId
+          // Collect entityAccountId hoặc accountId (giữ format gốc)
           if (comment.entityAccountId) {
             entityAccountIds.add(String(comment.entityAccountId).trim());
           } else if (comment.accountId) {
@@ -2509,7 +2581,7 @@ class PostService {
           try {
             const entityAccountId = await getEntityAccountIdByAccountId(accountId);
             if (entityAccountId) {
-              entityAccountIds.add(String(entityAccountId).trim());
+              entityAccountIds.add(String(entityAccountId).trim()); // Giữ format gốc
             }
           } catch (err) {
             console.warn(`[PostService] Could not get EntityAccountId for accountId ${accountId}:`, err.message);
@@ -2563,7 +2635,9 @@ class PostService {
       const entityMap = new Map();
       if (entityQuery && entityQuery.recordset) {
         entityQuery.recordset.forEach(row => {
-          const entityAccountIdStr = String(row.EntityAccountId).trim();
+          // Normalize entityAccountId to lowercase for consistent matching (so sánh case-insensitive)
+          const originalEntityAccountId = String(row.EntityAccountId).trim();
+          const entityAccountIdStr = originalEntityAccountId.toLowerCase();
           entityMap.set(entityAccountIdStr, {
             userName: row.UserName || 'Người dùng',
             avatar: row.Avatar || null,
@@ -2572,6 +2646,8 @@ class PostService {
           });
         });
       }
+      
+      console.log(`[PostService] EnrichComments: Queried ${entityAccountIdsArray.length} entityAccountIds, found ${entityMap.size} matches`);
 
       // Enrich comments and replies with author info
       for (const post of posts) {
@@ -2595,15 +2671,32 @@ class PostService {
           }
           
           if (commentEntityAccountId) {
-            const entityAccountIdStr = String(commentEntityAccountId).trim();
+            // Normalize entityAccountId to lowercase for consistent matching
+            const entityAccountIdStr = String(commentEntityAccountId).trim().toLowerCase();
             const entityInfo = entityMap.get(entityAccountIdStr);
             
             if (entityInfo) {
               comment.authorName = entityInfo.userName;
               comment.authorAvatar = entityInfo.avatar;
-              comment.authorEntityAccountId = entityAccountIdStr;
+              comment.authorEntityAccountId = String(commentEntityAccountId).trim(); // Keep original format for reference
               comment.authorEntityType = entityInfo.entityType;
               comment.authorEntityId = entityInfo.entityId;
+            } else {
+              // Fallback: set default if not found
+              if (!comment.authorName) {
+                comment.authorName = 'Người dùng';
+              }
+              if (comment.authorAvatar === undefined) {
+                comment.authorAvatar = null;
+              }
+            }
+          } else {
+            // Fallback: set default if no entityAccountId
+            if (!comment.authorName) {
+              comment.authorName = 'Người dùng';
+            }
+            if (comment.authorAvatar === undefined) {
+              comment.authorAvatar = null;
             }
           }
           
@@ -2627,15 +2720,32 @@ class PostService {
               }
               
               if (replyEntityAccountId) {
-                const entityAccountIdStr = String(replyEntityAccountId).trim();
+                // Normalize entityAccountId to lowercase for consistent matching
+                const entityAccountIdStr = String(replyEntityAccountId).trim().toLowerCase();
                 const entityInfo = entityMap.get(entityAccountIdStr);
                 
                 if (entityInfo) {
                   reply.authorName = entityInfo.userName;
                   reply.authorAvatar = entityInfo.avatar;
-                  reply.authorEntityAccountId = entityAccountIdStr;
+                  reply.authorEntityAccountId = String(replyEntityAccountId).trim(); // Keep original format for reference
                   reply.authorEntityType = entityInfo.entityType;
                   reply.authorEntityId = entityInfo.entityId;
+                } else {
+                  // Fallback: set default if not found
+                  if (!reply.authorName) {
+                    reply.authorName = 'Người dùng';
+                  }
+                  if (reply.authorAvatar === undefined) {
+                    reply.authorAvatar = null;
+                  }
+                }
+              } else {
+                // Fallback: set default if no entityAccountId
+                if (!reply.authorName) {
+                  reply.authorName = 'Người dùng';
+                }
+                if (reply.authorAvatar === undefined) {
+                  reply.authorAvatar = null;
                 }
               }
             }
