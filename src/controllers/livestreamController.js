@@ -49,6 +49,24 @@ exports.endLivestream = async (req, res) => {
     const { id } = req.params;
     const hostAccountId = req.user.id;
     const endedLivestream = await livestreamService.endLivestream(id, hostAccountId);
+    
+    // Emit socket event để thông báo cho tất cả viewers
+    try {
+      const { getIO } = require("../utils/socket");
+      const io = getIO();
+      if (io && endedLivestream?.agoraChannelName) {
+        const room = `livestream:${endedLivestream.agoraChannelName}`;
+        io.to(room).emit("livestream-ended", {
+          livestreamId: id,
+          channelName: endedLivestream.agoraChannelName,
+          message: "Phiên live đã kết thúc"
+        });
+        console.log(`[LivestreamController] Emitted livestream-ended event to room ${room}`);
+      }
+    } catch (socketErr) {
+      console.warn("[LivestreamController] Could not emit livestream-ended event:", socketErr.message);
+    }
+    
     return res.json(success("Livestream ended successfully", endedLivestream));
   } catch (err) {
     console.error("endLivestream error:", err);

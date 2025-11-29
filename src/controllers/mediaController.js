@@ -4,8 +4,153 @@ const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel"
 const { getPool, sql } = require("../db/sqlserver");
 const notificationService = require("../services/notificationService");
 
+// Helper function to enrich comments with author info from SQL Server
+async function enrichCommentsWithAuthorInfo(comments) {
+  if (!comments || typeof comments !== 'object') return;
+  
+  // Collect all unique entityAccountIds from comments and replies
+  // Fallback sang entityAccountId nếu authorEntityAccountId không có
+  const entityAccountIds = new Set();
+  
+  Object.keys(comments).forEach(key => {
+    const comment = comments[key];
+    if (!comment || typeof comment !== 'object') return;
+    
+    // Fallback: dùng entityAccountId nếu authorEntityAccountId không có
+    const commentEntityAccountId = comment.authorEntityAccountId || comment.entityAccountId;
+    if (commentEntityAccountId) {
+      entityAccountIds.add(String(commentEntityAccountId).trim().toLowerCase());
+    }
+    
+    if (comment.replies && typeof comment.replies === 'object') {
+      Object.keys(comment.replies).forEach(replyKey => {
+        const reply = comment.replies[replyKey];
+        if (!reply || typeof reply !== 'object') return;
+        
+        // Fallback: dùng entityAccountId nếu authorEntityAccountId không có
+        const replyEntityAccountId = reply.authorEntityAccountId || reply.entityAccountId;
+        if (replyEntityAccountId) {
+          entityAccountIds.add(String(replyEntityAccountId).trim().toLowerCase());
+        }
+      });
+    }
+  });
+  
+  if (entityAccountIds.size === 0) return;
+  
+  // Query SQL Server for all entity info
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+    const entityAccountIdsArray = Array.from(entityAccountIds);
+    
+    // Build query with placeholders
+    const placeholders = entityAccountIdsArray.map((_, i) => `@EntityAccountId${i}`).join(',');
+    entityAccountIdsArray.forEach((id, i) => {
+      request.input(`EntityAccountId${i}`, sql.UniqueIdentifier, id);
+    });
+    
+    const result = await request.query(`
+      SELECT 
+        EA.EntityAccountId,
+        EA.EntityType,
+        EA.EntityId,
+        CASE 
+          WHEN EA.EntityType = 'Account' THEN A.UserName
+          WHEN EA.EntityType = 'BarPage' THEN BP.BarName
+          WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
+          ELSE NULL
+        END AS EntityName,
+        CASE 
+          WHEN EA.EntityType = 'Account' THEN A.Avatar
+          WHEN EA.EntityType = 'BarPage' THEN BP.Avatar
+          WHEN EA.EntityType = 'BusinessAccount' THEN BA.Avatar
+          ELSE NULL
+        END AS EntityAvatar
+      FROM EntityAccounts EA
+      LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
+      LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
+      LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
+      WHERE EA.EntityAccountId IN (${placeholders})
+    `);
+    
+    // Create a map of entityAccountId -> { name, avatar, entityId, entityType }
+    const entityMap = new Map();
+    if (result && result.recordset) {
+      result.recordset.forEach(row => {
+        const entityAccountId = String(row.EntityAccountId).trim().toLowerCase();
+        entityMap.set(entityAccountId, {
+          name: row.EntityName || 'Người dùng',
+          avatar: row.EntityAvatar || null,
+          entityId: String(row.EntityId).trim(),
+          entityType: row.EntityType,
+        });
+      });
+    }
+    
+    // Enrich comments
+    Object.keys(comments).forEach(key => {
+      const comment = comments[key];
+      if (!comment || typeof comment !== 'object') return;
+      
+      // Fallback: dùng entityAccountId nếu authorEntityAccountId không có
+      const commentEntityAccountId = comment.authorEntityAccountId || comment.entityAccountId;
+      if (commentEntityAccountId) {
+        const entityAccountId = String(commentEntityAccountId).trim().toLowerCase();
+        const entityInfo = entityMap.get(entityAccountId);
+        if (entityInfo) {
+          comment.authorName = entityInfo.name;
+          comment.authorAvatar = entityInfo.avatar;
+          comment.authorEntityId = entityInfo.entityId;
+          comment.authorEntityType = entityInfo.entityType;
+          // Set authorEntityAccountId nếu chưa có
+          if (!comment.authorEntityAccountId) {
+            comment.authorEntityAccountId = String(commentEntityAccountId).trim();
+          }
+        } else if (!comment.authorName) {
+          comment.authorName = 'Người dùng';
+        }
+      } else if (!comment.authorName) {
+        comment.authorName = 'Người dùng';
+      }
+      
+      // Enrich replies
+      if (comment.replies && typeof comment.replies === 'object') {
+        Object.keys(comment.replies).forEach(replyKey => {
+          const reply = comment.replies[replyKey];
+          if (!reply || typeof reply !== 'object') return;
+          
+          // Fallback: dùng entityAccountId nếu authorEntityAccountId không có
+          const replyEntityAccountId = reply.authorEntityAccountId || reply.entityAccountId;
+          if (replyEntityAccountId) {
+            const entityAccountId = String(replyEntityAccountId).trim().toLowerCase();
+            const entityInfo = entityMap.get(entityAccountId);
+            if (entityInfo) {
+              reply.authorName = entityInfo.name;
+              reply.authorAvatar = entityInfo.avatar;
+              reply.authorEntityId = entityInfo.entityId;
+              reply.authorEntityType = entityInfo.entityType;
+              // Set authorEntityAccountId nếu chưa có
+              if (!reply.authorEntityAccountId) {
+                reply.authorEntityAccountId = String(replyEntityAccountId).trim();
+              }
+            } else if (!reply.authorName) {
+              reply.authorName = 'Người dùng';
+            }
+          } else if (!reply.authorName) {
+            reply.authorName = 'Người dùng';
+          }
+        });
+      }
+    });
+  } catch (error) {
+    console.error("[MEDIA] Error enriching comments with author info:", error);
+    // Don't fail the request, just log the error
+  }
+}
+
 class MediaController {
-  // Lấy chi tiết media theo ID
+  // Lấy chi tiết media theo ID (backward compatibility)
   async getMediaById(req, res) {
     try {
       const { mediaId } = req.params;
@@ -65,6 +210,9 @@ class MediaController {
             comment.replies = {}; // Ensure replies exists
           }
         });
+        
+        // Enrich comments with author info from SQL Server
+        await enrichCommentsWithAuthorInfo(mediaData.comments);
       }
 
       return res.json({
@@ -81,7 +229,30 @@ class MediaController {
     }
   }
 
-  // Lấy media theo postId và URL
+  // Lấy chi tiết media (dùng mediaDetailService - enrich đầy đủ comments với author info)
+  async getMediaDetail(req, res) {
+    try {
+      const { mediaId } = req.params;
+      const mediaDetailService = require("../services/mediaDetailService");
+
+      const result = await mediaDetailService.getMediaDetail(mediaId);
+
+      if (result.success) {
+        return res.json(result);
+      } else {
+        return res.status(result.message === "Media not found" ? 404 : 400).json(result);
+      }
+    } catch (error) {
+      console.error("[MEDIA] Error getting media detail:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to get media detail",
+        error: error.message
+      });
+    }
+  }
+
+  // Lấy media theo postId và URL (backward compatibility)
   async getMediaByUrl(req, res) {
     try {
       const { postId, url } = req.query;
@@ -149,6 +320,9 @@ class MediaController {
             comment.replies = {}; // Ensure replies exists
           }
         });
+        
+        // Enrich comments with author info from SQL Server
+        await enrichCommentsWithAuthorInfo(mediaData.comments);
       }
 
       return res.json({
@@ -160,6 +334,36 @@ class MediaController {
       return res.status(500).json({
         success: false,
         message: "Failed to get media",
+        error: error.message
+      });
+    }
+  }
+
+  // Lấy chi tiết media theo URL (dùng mediaDetailService - enrich đầy đủ comments với author info)
+  async getMediaDetailByUrl(req, res) {
+    try {
+      const { postId, url } = req.query;
+      const mediaDetailService = require("../services/mediaDetailService");
+
+      if (!url) {
+        return res.status(400).json({
+          success: false,
+          message: "url is required"
+        });
+      }
+
+      const result = await mediaDetailService.getMediaDetailByUrl(postId, url);
+
+      if (result.success) {
+        return res.json(result);
+      } else {
+        return res.status(result.message === "Media not found" ? 404 : 400).json(result);
+      }
+    } catch (error) {
+      console.error("[MEDIA] Error getting media detail by URL:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to get media detail",
         error: error.message
       });
     }
@@ -200,16 +404,10 @@ class MediaController {
       let commentEntityType = entityType;
 
       if (!commentEntityAccountId) {
-        // Fallback: lấy EntityAccountId của Account chính
-        try {
-          commentEntityAccountId = await getEntityAccountIdByAccountId(userId);
-          if (commentEntityAccountId && !commentEntityId) {
-            commentEntityId = String(userId);
-            commentEntityType = "Account";
-          }
-        } catch (err) {
-          console.warn("[MEDIA] Could not get EntityAccountId for comment:", err);
-        }
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required for commenting"
+        });
       }
 
       // Normalize entityType nếu chưa có
@@ -406,15 +604,10 @@ class MediaController {
       let replyEntityType = entityType;
 
       if (!replyEntityAccountId) {
-        try {
-          replyEntityAccountId = await getEntityAccountIdByAccountId(userId);
-          if (replyEntityAccountId && !replyEntityId) {
-            replyEntityId = String(userId);
-            replyEntityType = "Account";
-          }
-        } catch (err) {
-          console.warn("[MEDIA] Could not get EntityAccountId for reply:", err);
-        }
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required for replying"
+        });
       }
 
       // Normalize entityType nếu chưa có
@@ -614,15 +807,10 @@ class MediaController {
       let replyEntityType = entityType;
 
       if (!replyEntityAccountId) {
-        try {
-          replyEntityAccountId = await getEntityAccountIdByAccountId(userId);
-          if (replyEntityAccountId && !replyEntityId) {
-            replyEntityId = String(userId);
-            replyEntityType = "Account";
-          }
-        } catch (err) {
-          console.warn("[MEDIA] Could not get EntityAccountId for reply to reply:", err);
-        }
+        return res.status(400).json({
+          success: false,
+          message: "entityAccountId is required for replying"
+        });
       }
 
       // Normalize entityType nếu chưa có
@@ -810,6 +998,9 @@ class MediaController {
 
       // Lấy entityAccountId từ request body hoặc từ accountId
       let userEntityAccountId = entityAccountId;
+      let userEntityId = req.body.entityId || null;
+      let userEntityType = req.body.entityType || null;
+      
       if (!userEntityAccountId) {
         try {
           userEntityAccountId = await getEntityAccountIdByAccountId(userId);
@@ -825,6 +1016,22 @@ class MediaController {
         });
       }
 
+      // Lấy entityId và entityType từ SQL Server nếu chưa có
+      if (userEntityAccountId && (!userEntityId || !userEntityType)) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, userEntityAccountId)
+            .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+          if (result.recordset.length > 0) {
+            userEntityType = result.recordset[0].EntityType;
+            userEntityId = String(result.recordset[0].EntityId);
+          }
+        } catch (err) {
+          console.warn("[MEDIA] Could not get entity info for like comment:", err);
+        }
+      }
+
       // Kiểm tra xem đã like chưa
       const likeKey = userEntityAccountId.toString();
       if (comment.likes.has(likeKey)) {
@@ -834,10 +1041,13 @@ class MediaController {
         });
       }
 
-      // Thêm like
+      // Thêm like với đầy đủ thông tin entity
       comment.likes.set(likeKey, {
         accountId: userId,
-        TypeRole: typeRole || "Account"
+        entityAccountId: userEntityAccountId,
+        entityId: userEntityId,
+        entityType: userEntityType,
+        TypeRole: typeRole || userEntityType || "Account"
       });
 
       media.markModified('comments');
@@ -987,6 +1197,9 @@ class MediaController {
 
       // Lấy entityAccountId từ request body hoặc từ accountId
       let userEntityAccountId = entityAccountId;
+      let userEntityId = req.body.entityId || null;
+      let userEntityType = req.body.entityType || null;
+      
       if (!userEntityAccountId) {
         try {
           userEntityAccountId = await getEntityAccountIdByAccountId(userId);
@@ -1002,6 +1215,22 @@ class MediaController {
         });
       }
 
+      // Lấy entityId và entityType từ SQL Server nếu chưa có
+      if (userEntityAccountId && (!userEntityId || !userEntityType)) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, userEntityAccountId)
+            .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+          if (result.recordset.length > 0) {
+            userEntityType = result.recordset[0].EntityType;
+            userEntityId = String(result.recordset[0].EntityId);
+          }
+        } catch (err) {
+          console.warn("[MEDIA] Could not get entity info for like reply:", err);
+        }
+      }
+
       // Kiểm tra xem đã like chưa
       const likeKey = userEntityAccountId.toString();
       if (reply.likes.has(likeKey)) {
@@ -1011,10 +1240,13 @@ class MediaController {
         });
       }
 
-      // Thêm like
+      // Thêm like với đầy đủ thông tin entity
       reply.likes.set(likeKey, {
         accountId: userId,
-        TypeRole: typeRole || "Account"
+        entityAccountId: userEntityAccountId,
+        entityId: userEntityId,
+        entityType: userEntityType,
+        TypeRole: typeRole || userEntityType || "Account"
       });
 
       media.markModified('comments');
@@ -1407,7 +1639,7 @@ class MediaController {
   async likeMedia(req, res) {
     try {
       const { mediaId } = req.params;
-      const { typeRole } = req.body;
+      const { typeRole, entityAccountId, entityId, entityType } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -1432,20 +1664,40 @@ class MediaController {
         });
       }
 
-      // Kiểm tra xem user đã like chưa
-      const likeKey = String(userId);
-      if (media.likes.has(likeKey)) {
-        return res.status(400).json({
-          success: false,
-          message: "Already liked"
-        });
+      // Lấy entityAccountId từ request body hoặc từ accountId
+      let userEntityAccountId = entityAccountId;
+      let userEntityId = entityId || null;
+      let userEntityType = entityType || null;
+      
+      if (!userEntityAccountId) {
+        try {
+          userEntityAccountId = await getEntityAccountIdByAccountId(userId);
+        } catch (err) {
+          console.warn("[MEDIA] Could not get EntityAccountId for like media:", err);
+        }
       }
 
-      // Lấy TypeRole từ request body hoặc mặc định là "Account"
-      let userTypeRole = typeRole || "Account";
+      // Lấy entityId và entityType từ SQL Server nếu chưa có
+      if (userEntityAccountId && (!userEntityId || !userEntityType)) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, userEntityAccountId)
+            .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
+          if (result.recordset.length > 0) {
+            userEntityType = result.recordset[0].EntityType;
+            userEntityId = String(result.recordset[0].EntityId);
+          }
+        } catch (err) {
+          console.warn("[MEDIA] Could not get entity info for like media:", err);
+        }
+      }
+
+      // Lấy TypeRole từ request body hoặc từ entityType hoặc mặc định là "Account"
+      let userTypeRole = typeRole || userEntityType || "Account";
       
-      // Nếu chưa có, lấy từ user role hoặc từ SQL Server
-      if (!typeRole) {
+      // Nếu chưa có, lấy từ user role
+      if (!typeRole && !userEntityType) {
         const userRole = req.user?.role;
         if (userRole) {
           const normalizedRole = String(userRole).toLowerCase();
@@ -1459,9 +1711,23 @@ class MediaController {
         }
       }
 
-      // Thêm like vào Map với TypeRole
+      // Sử dụng entityAccountId làm likeKey nếu có, nếu không thì dùng userId
+      const likeKey = userEntityAccountId ? String(userEntityAccountId) : String(userId);
+      
+      // Kiểm tra xem user đã like chưa
+      if (media.likes.has(likeKey)) {
+        return res.status(400).json({
+          success: false,
+          message: "Already liked"
+        });
+      }
+
+      // Thêm like vào Map với đầy đủ thông tin entity
       media.likes.set(likeKey, {
         accountId: userId,
+        entityAccountId: userEntityAccountId,
+        entityId: userEntityId,
+        entityType: userEntityType,
         TypeRole: userTypeRole,
         createdAt: new Date()
       });
@@ -1488,6 +1754,7 @@ class MediaController {
   async unlikeMedia(req, res) {
     try {
       const { mediaId } = req.params;
+      const { entityAccountId } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -1512,8 +1779,20 @@ class MediaController {
         });
       }
 
+      // Lấy entityAccountId từ request body hoặc từ accountId
+      let userEntityAccountId = entityAccountId;
+      if (!userEntityAccountId) {
+        try {
+          userEntityAccountId = await getEntityAccountIdByAccountId(userId);
+        } catch (err) {
+          console.warn("[MEDIA] Could not get EntityAccountId for unlike media:", err);
+        }
+      }
+
+      // Sử dụng entityAccountId làm likeKey nếu có, nếu không thì dùng userId
+      const likeKey = userEntityAccountId ? String(userEntityAccountId) : String(userId);
+      
       // Xóa like khỏi Map
-      const likeKey = String(userId);
       if (media.likes.has(likeKey)) {
         media.likes.delete(likeKey);
         media.markModified('likes');

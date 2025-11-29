@@ -57,6 +57,8 @@ router.post("/:id/trash", verifyToken, checkBannedStatus, requireActiveEntity, p
 router.post("/:id/restore", verifyToken, checkBannedStatus, requireActiveEntity, postController.restorePost);
 
 // Routes không cần authentication (public routes) - phải đặt cuối
+// Route cho post detail (enrich đầy đủ comments với author info) - đặt trước route :id
+router.get("/:id/detail", optionalVerifyToken, postController.getPostDetail);
 router.get("/:id", optionalVerifyToken, postController.getPostById);
 
 module.exports = router;

@@ -5,6 +5,8 @@ const { verifyToken } = require("../middleware/authMiddleware");
 
 // GET /medias/by-url?postId=xxx&url=xxx - Lấy media theo postId và URL
 router.get("/by-url", mediaController.getMediaByUrl);
+// GET /medias/by-url/detail?postId=xxx&url=xxx - Lấy chi tiết media theo URL (enrich comments)
+router.get("/by-url/detail", mediaController.getMediaDetailByUrl);
 
 // Routes cho Comments (cần auth) - phải đặt trước routes có :mediaId
 router.post("/:mediaId/comments", verifyToken, mediaController.addComment);
@@ -33,6 +35,8 @@ router.delete("/:mediaId/like", verifyToken, mediaController.unlikeMedia);
 router.post("/:mediaId/share", verifyToken, mediaController.trackShare); // Track share
 
 // GET /medias/:mediaId - Lấy chi tiết media theo ID (phải đặt sau các routes comments)
+// Route cho media detail (enrich đầy đủ comments với author info) - đặt trước route :mediaId
+router.get("/:mediaId/detail", mediaController.getMediaDetail);
 router.get("/:mediaId", mediaController.getMediaById);
 
 module.exports = router;
