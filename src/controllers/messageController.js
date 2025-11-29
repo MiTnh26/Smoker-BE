@@ -641,6 +641,15 @@ class MessageController {
         return res.status(403).json({ success: false, message: "Access denied" });
       }
 
+      // Get current user's entityAccountIds
+      const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
+      
+      // Get participant info to retrieve last_read_message_id
+      const currentUserParticipant = await Participant.findOne({
+        conversation_id: conversation._id,
+        user_id: { $in: allUserEntityAccountIds }
+      }).lean();
+
       // Build query with pagination
       const query = { conversation_id: conversation._id };
       if (before && mongoose.Types.ObjectId.isValid(before)) {
@@ -660,6 +669,8 @@ class MessageController {
         success: true, 
         data: sortedMessages, 
         message: "Messages retrieved",
+        last_read_message_id: currentUserParticipant?.last_read_message_id || null,
+        last_read_at: currentUserParticipant?.last_read_at || null,
         pagination: {
           limit: parseInt(limit),
           offset: parseInt(offset),
