@@ -721,12 +721,10 @@ class MessageController {
 
       // Get current user's entityAccountIds
       const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
+    
+      // console.log('[DEBUG getMessages] allUserEntityAccountIds:', allUserEntityAccountIds);
+      // console.log('[DEBUG getMessages] conversation._id:', conversation._id);
       
-      // Debug: log allUserEntityAccountIds và conversation._id
-      console.log('[DEBUG getMessages] allUserEntityAccountIds:', allUserEntityAccountIds);
-      console.log('[DEBUG getMessages] conversation._id:', conversation._id);
-      
-      // Convert to uppercase for database query (since EntityAccountIds are stored as uppercase GUIDs)
       const allUserEntityAccountIdsUpper = allUserEntityAccountIds.map(id => id.toUpperCase());
       
       // Get participant info to retrieve last_read_message_id
@@ -734,11 +732,9 @@ class MessageController {
         conversation_id: conversation._id,
         user_id: { $in: allUserEntityAccountIdsUpper }
       }).lean();
-
-      // Debug: log currentUserParticipant và các trường
-      console.log('[DEBUG getMessages] currentUserParticipant:', currentUserParticipant);
-      console.log('[DEBUG getMessages] last_read_message_id:', currentUserParticipant?.last_read_message_id);
-      console.log('[DEBUG getMessages] last_read_at:', currentUserParticipant?.last_read_at);
+      // console.log('[DEBUG getMessages] currentUserParticipant:', currentUserParticipant);
+      // console.log('[DEBUG getMessages] last_read_message_id:', currentUserParticipant?.last_read_message_id);
+      // console.log('[DEBUG getMessages] last_read_at:', currentUserParticipant?.last_read_at);
 
       // Build query with pagination
       const query = { conversation_id: conversation._id };
