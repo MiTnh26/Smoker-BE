@@ -453,25 +453,28 @@ POST /api/posts/:postId/like
 **Yêu cầu JSON body:** `Content-Type: application/json`
 ```json
 {
-  "typeRole": "Account",
-  "entityAccountId": "EA-..."
+  "typeRole": "Account",        // Optional, default: "Account"
+  "entityAccountId": "EA-..."  // Optional – nếu không gửi, backend lấy từ userId
 }
 ```
 - `typeRole` nhận `"Account"`, `"BusinessAccount"` hoặc `"BarPage"`.
-- **Luôn** gửi `entityAccountId` của entity đang hoạt động (kể cả Account thông thường). Backend lưu like bằng EntityAccountId nên thiếu field này có thể khiến tim không hiển thị đúng sau khi reload feed/profile.
+- `entityAccountId` là optional - nếu không gửi, backend tự động lấy EntityAccountId của Account chính từ `userId`.
+- Để like với vai trò khác (Bar/DJ), **bắt buộc** gửi `entityAccountId` tương ứng.
+- **Notification tự động được tạo** cho post owner khi có like mới (trừ khi like chính mình).
 
 ### 3.12. Unlike Post
 ```
 DELETE /api/posts/:postId/like
 ```
-**Auth:** Required
+**Auth:** Required  
 **Yêu cầu JSON body:** `Content-Type: application/json`
 ```json
 {
-  "entityAccountId": "EA-..."
+  "entityAccountId": "EA-..."  // Optional – nếu không gửi, backend lấy từ userId
 }
 ```
-- Unlike cũng cần `entityAccountId` để xác định đúng lượt like phải gỡ (đặc biệt với DJ/Bar). Nếu không gửi, backend chỉ còn fallback bằng `accountId` và có thể không tìm thấy like tương ứng.
+- `entityAccountId` là optional - nếu không gửi, backend tự động lấy EntityAccountId của Account chính từ `userId`.
+- Để unlike với vai trò khác (Bar/DJ), **bắt buộc** gửi `entityAccountId` tương ứng.
 
 ### 3.13. Track View
 ```
@@ -866,7 +869,7 @@ POST /api/posts/:postId/comments
 {
   "content": "Nice post!",          // Required
   "images": [{ "url": "https://..." }],  // Optional
-  "entityAccountId": "EA-...",      // Optional nhưng nên gửi (activeEntity)
+  "entityAccountId": "EA-...",      // BẮT BUỘC – không có fallback
   "entityId": "Account/Bar/DJ id",  // Optional – backend sẽ tự resolve nếu thiếu
   "entityType": "Account",          // Optional – backend sẽ auto detect
   "typeRole": "Account"             // Optional – fallback = entityType
@@ -874,8 +877,9 @@ POST /api/posts/:postId/comments
 ```
 **Behavior:**
 - Backend validate user không bị ban, lấy `userId` từ token.  
-- Nếu thiếu `entityAccountId`, backend fallback về Account chính (Customer). Để comment bằng vai trò khác (Bar/DJ) **bắt buộc** gửi `entityAccountId` tương ứng.  
+- **`entityAccountId` là bắt buộc** – không có fallback. Nếu thiếu sẽ trả `400: "entityAccountId is required for commenting"`.  
 - Comment được lưu dưới dạng Map (`post.comments`) nhưng backend convert sang array khi trả về post/profile/search, nên FE nhận list bình thường.  
+- **Notification tự động được tạo** cho post owner khi có comment mới (trừ khi comment chính mình).  
 - Thành công trả `{ success: true, data: <post-with-new-comment> }`.
 
 ### 7.2. Update Comment
@@ -910,7 +914,8 @@ DELETE /api/posts/:postId/comments/:commentId
 POST /api/posts/:postId/comments/:commentId/replies
 ```
 **Auth:** Required  
-**Body:** giống Add Comment (content + optional images/entity info). Backend cũng tự resolve entity nếu thiếu.  
+**Body:** giống Add Comment (content + optional images/entity info). **`entityAccountId` là bắt buộc** – không có fallback.  
+- **Notification tự động được tạo** cho comment owner khi có reply mới (trừ khi reply chính mình).  
 Trả `{ success: true, data: <post-with-new-reply> }`.
 
 ### 7.5. Add Reply to Reply
@@ -918,7 +923,9 @@ Trả `{ success: true, data: <post-with-new-reply> }`.
 POST /api/posts/:postId/comments/:commentId/replies/:replyId
 ```
 **Auth:** Required  
-**Body:** giống add reply. Backend **luôn** lấy `entityAccountId` trusted từ token và sẽ log nếu body gửi ID khác (tránh spoof).
+**Body:** giống add reply (content + optional images/entity info).  
+- Backend sẽ validate `entityAccountId` từ body với trusted `entityAccountId` từ token. Nếu không khớp, sẽ dùng trusted ID và log warning.  
+- **Notification tự động được tạo** cho reply owner khi có reply mới (trừ khi reply chính mình).
 
 ### 7.6. Update Reply
 ```
@@ -963,39 +970,65 @@ Backend tái sử dụng cùng service nên response format giống nhau.
 
 ## 8. Likes
 
-> **Tất cả endpoint trong mục này yêu cầu gửi body JSON với header `Content-Type: application/json` và bao gồm `entityAccountId` của entity đang hoạt động.** Backend lưu like bằng EntityAccountId nên việc gửi đầy đủ ID là bắt buộc để đảm bảo tim hiển thị đúng (đặc biệt khi người dùng chuyển đổi giữa Account/DJ/Bar).
+> **Tất cả endpoint trong mục này yêu cầu gửi body JSON với header `Content-Type: application/json`.**  
+> **Lưu ý:** `entityAccountId` là optional - nếu không gửi, backend sẽ tự động lấy từ `userId` (Account chính). Tuy nhiên, để like với vai trò khác (Bar/DJ), **bắt buộc** phải gửi `entityAccountId` tương ứng.
 
 ### 8.1. Like Comment
 ```
 POST /api/posts/:postId/comments/:commentId/like
 ```
 **Auth:** Required  
-**Yêu cầu JSON body:** `{}` hoặc
+**Yêu cầu JSON body:** `Content-Type: application/json`
 ```json
 {
-  "typeRole": "BarPage",
-  "entityAccountId": "EA-456"
+  "typeRole": "BarPage",        // Optional, default: "Account"
+  "entityAccountId": "EA-456"   // Optional – nếu không gửi, backend lấy từ userId
 }
 ```
+**Behavior:**
+- Nếu không gửi `entityAccountId`, backend tự động lấy EntityAccountId của Account chính từ `userId`.
+- Để like với vai trò khác (Bar/DJ), **bắt buộc** gửi `entityAccountId` tương ứng.
+- **Notification tự động được tạo** cho comment owner khi có like mới (trừ khi like chính mình).
 
 ### 8.2. Unlike Comment
 ```
 DELETE /api/posts/:postId/comments/:commentId/like
 ```
-**Auth:** Required
+**Auth:** Required  
+**Yêu cầu JSON body:** `Content-Type: application/json`
+```json
+{
+  "entityAccountId": "EA-456"   // Optional – nếu không gửi, backend lấy từ userId
+}
+```
 
 ### 8.3. Like Reply
 ```
 POST /api/posts/:postId/comments/:commentId/replies/:replyId/like
 ```
 **Auth:** Required  
-**Yêu cầu JSON body:** `{}` hoặc thêm `typeRole`, `entityAccountId`.
+**Yêu cầu JSON body:** `Content-Type: application/json`
+```json
+{
+  "typeRole": "BarPage",        // Optional, default: "Account"
+  "entityAccountId": "EA-456"   // Optional – nếu không gửi, backend lấy từ userId
+}
+```
+**Behavior:**
+- Tương tự Like Comment.
+- **Notification tự động được tạo** cho reply owner khi có like mới (trừ khi like chính mình).
 
 ### 8.4. Unlike Reply
 ```
 DELETE /api/posts/:postId/comments/:commentId/replies/:replyId/like
 ```
-**Auth:** Required
+**Auth:** Required  
+**Yêu cầu JSON body:** `Content-Type: application/json`
+```json
+{
+  "entityAccountId": "EA-456"   // Optional – nếu không gửi, backend lấy từ userId
+}
+```
 
 ### 8.5. Media Comment Likes (Same structure)
 ```
@@ -1080,6 +1113,21 @@ GET /api/follow/check?followerId=xxx&followingId=xxx
 ## 10. Notifications
 
 > **Lưu ý quan trọng:** Tất cả endpoint trong phần này yêu cầu JWT token và **bắt buộc** phải có `entityAccountId` trong query params (trừ Create Notification). Backend sử dụng `entityAccountId` để xác định vai trò đang hoạt động (Account/BarPage/BusinessAccount) và chỉ trả về thông báo liên quan đến entity đó. Thông báo loại `"Messages"` được xử lý riêng và không xuất hiện trong các endpoint này.
+>
+> **Notification tự động:** Backend tự động tạo notification khi:
+> - User comment vào post → notification cho post owner (type: `"Comment"`)
+> - User reply vào comment → notification cho comment owner (type: `"Comment"`)
+> - User reply vào reply → notification cho reply owner (type: `"Comment"`)
+> - User like post/comment/reply → notification cho owner (type: `"Like"`)
+> - User follow entity → notification cho entity được follow (type: `"Follow"`)
+>
+> **GUID Normalization:** Tất cả `entityAccountId` được normalize về lowercase khi lưu và query để đảm bảo tính nhất quán. Query sử dụng case-insensitive matching để tương thích với dữ liệu cũ.
+>
+> **Real-time Updates:** Backend tự động emit socket event `new_notification` khi có notification mới. Frontend cần:
+> - Kết nối Socket.IO với path `/api/socket.io`
+> - Join room bằng `join_notification` event với `entityAccountId` (normalized to lowercase)
+> - Listen event `new_notification` để cập nhật badge và danh sách notification real-time
+> - Payload: `{ notificationId, type, senderEntityAccountId, receiverEntityAccountId, content, link, status, createdAt, sender: { name, avatar } }`
 
 ### 10.1. Create Notification
 ```
@@ -1142,10 +1190,11 @@ GET /api/notifications?entityAccountId=<EA-ID>&page=1&limit=10
 - `limit` (number, optional, default `10`) – Số lượng thông báo mỗi trang.
 
 **Behavior:**
-- Backend chỉ trả về thông báo có `receiverEntityAccountId` trùng với `entityAccountId` trong query.
+- Backend chỉ trả về thông báo có `receiverEntityAccountId` trùng với `entityAccountId` trong query (case-insensitive matching).
 - Loại trừ thông báo có `type = "Messages"` (được xử lý riêng trong Messages API).
 - Thông báo được sắp xếp theo `createdAt` DESC (mới nhất trước).
 - Mỗi thông báo đã được enrich với thông tin người gửi (`sender.name`, `sender.avatar`) từ SQL Server (Accounts/BarPages/BussinessAccounts).
+- Tất cả `entityAccountId` được normalize về lowercase để đảm bảo matching chính xác.
 
 **Response:**
 ```json
@@ -1188,7 +1237,7 @@ GET /api/notifications/unread-count?entityAccountId=<EA-ID>
 - `entityAccountId` (string, **bắt buộc**) – EntityAccountId của vai trò đang hoạt động.
 
 **Behavior:**
-- Đếm số thông báo có `status = "Unread"` và `receiverEntityAccountId` trùng với `entityAccountId`.
+- Đếm số thông báo có `status = "Unread"` và `receiverEntityAccountId` trùng với `entityAccountId` (case-insensitive matching).
 - Loại trừ thông báo có `type = "Messages"`.
 
 **Response:**
@@ -1216,7 +1265,7 @@ PUT /api/notifications/:notificationId/read?entityAccountId=<EA-ID>
 - `entityAccountId` (string, **bắt buộc**) – EntityAccountId của vai trò đang hoạt động.
 
 **Behavior:**
-- Chỉ cập nhật thông báo có `_id = notificationId` và `receiverEntityAccountId = entityAccountId`.
+- Chỉ cập nhật thông báo có `_id = notificationId` và `receiverEntityAccountId = entityAccountId` (case-insensitive matching).
 - Cập nhật `status` từ `"Unread"` sang `"Read"`.
 
 **Response:**
@@ -1245,7 +1294,7 @@ PUT /api/notifications/read-all?entityAccountId=<EA-ID>
 - `entityAccountId` (string, **bắt buộc**) – EntityAccountId của vai trò đang hoạt động.
 
 **Behavior:**
-- Cập nhật tất cả thông báo có `status = "Unread"` và `receiverEntityAccountId = entityAccountId` sang `"Read"`.
+- Cập nhật tất cả thông báo có `status = "Unread"` và `receiverEntityAccountId = entityAccountId` (case-insensitive matching) sang `"Read"`.
 - Loại trừ thông báo có `type = "Messages"`.
 
 **Response:**
@@ -2668,7 +2717,7 @@ DELETE /api/bank-info/:bankInfoId
 
 ## 24. Feed
 
-> **Mục đích:** Lấy feed tổng hợp (posts + stories) đã được sắp xếp theo thuật toán trending.
+> **Mục đích:** Lấy feed tổng hợp (posts + livestreams) đã được merge và sắp xếp. Livestreams được chèn ngẫu nhiên vào các vị trí giữa posts để tăng tính đa dạng và engagement.
 
 ### 24.1. Get Feed
 ```
@@ -2681,9 +2730,14 @@ GET /api/feed?limit=10&cursor=<base64>
 
 **Behavior:**
 - Backend tự động lấy `currentUser` từ token.
-- Feed được sắp xếp theo `trendingScore` (DESC) và `createdAt` (DESC).
-- Bao gồm posts và stories từ những entity mà user đang follow + posts/stories của chính user.
+- Posts được sắp xếp theo timestamp (newest first).
+- Livestreams được shuffle ngẫu nhiên và chèn vào các vị trí ngẫu nhiên trong feed với weighted distribution:
+  - 30% đầu feed (0-30% của length)
+  - 40% giữa feed (30-70% của length)
+  - 30% cuối feed (70-100% của length)
+- Mỗi lần gọi API, thứ tự livestreams sẽ được shuffle lại (ngẫu nhiên mới).
 - Sử dụng cursor-based pagination.
+- Feed items đã được enrich với thông tin tác giả (authorName, authorAvatar) cho cả posts và livestreams.
 
 **Response:**
 ```json
@@ -2691,14 +2745,38 @@ GET /api/feed?limit=10&cursor=<base64>
   "success": true,
   "message": "Feed retrieved successfully",
   "data": {
-    "items": [
+    "feed": [
       {
-        "_id": "postId",
         "type": "post",
-        "title": "My Post",
-        "content": "...",
-        "trendingScore": 15.32,
-        "createdAt": "2025-11-24T10:00:00.000Z"
+        "timestamp": "2025-11-24T10:00:00.000Z",
+        "data": {
+          "_id": "postId",
+          "title": "My Post",
+          "content": "...",
+          "authorName": "User Name",
+          "authorAvatar": "https://cdn/.../avatar.jpg",
+          "entityAccountId": "EA-123",
+          "canManage": false,
+          "isLikedByCurrentUser": true,
+          "likes": {},
+          "comments": {},
+          "createdAt": "2025-11-24T10:00:00.000Z"
+        }
+      },
+      {
+        "type": "livestream",
+        "timestamp": "2025-11-24T09:30:00.000Z",
+        "data": {
+          "livestreamId": "livestreamId",
+          "title": "Live Stream Title",
+          "description": "Live description",
+          "hostEntityAccountId": "EA-456",
+          "broadcasterName": "Bar Name",
+          "broadcasterAvatar": "https://cdn/.../bar-avatar.jpg",
+          "agoraChannelName": "channel-name",
+          "status": "live",
+          "startTime": "2025-11-24T09:30:00.000Z"
+        }
       }
     ],
     "nextCursor": "base64...",
@@ -2706,6 +2784,12 @@ GET /api/feed?limit=10&cursor=<base64>
   }
 }
 ```
+
+**Lưu ý:**
+- Mỗi item trong `feed` array có cấu trúc `{ type: 'post' | 'livestream', timestamp: Date, data: {...} }`.
+- Posts đã được transform với `canManage` và `isLikedByCurrentUser` dựa trên viewer hiện tại.
+- Livestreams đã được enrich với `broadcasterName` và `broadcasterAvatar` từ EntityAccounts table.
+- Frontend chỉ cần render feed items theo `type`, không cần merge hay sort thêm.
 
 ---
 
@@ -2915,7 +2999,11 @@ Xem chi tiết tại: `docs/FEED_ALGORITHM.md`
    - Show upload status to user
 
 4. **Real-time Updates:**
-   - Use WebSocket or polling for notifications
+   - **Socket.IO cho Notifications:**
+     - Connect: `socket = io('http://localhost:9999', { path: '/api/socket.io' })`
+     - Join notification room: `socket.emit('join_notification', entityAccountId.toLowerCase())`
+     - Listen: `socket.on('new_notification', (data) => { updateBadge(); addToNotificationList(data); })`
+     - Event payload: `{ notificationId, type, content, link, status, sender: { name, avatar }, ... }`
    - Refresh feed after user actions (like, comment, etc.)
 
 5. **Error Handling:**
@@ -2931,5 +3019,17 @@ Xem chi tiết tại: `docs/FEED_ALGORITHM.md`
 
 ---
 
-**Cập nhật lần cuối:** 2024-01-10  
-**Version:** 1.0
+**Cập nhật lần cuối:** 2025-11-29  
+**Version:** 1.1
+
+**Changelog:**
+- **v1.1 (2025-11-29):**
+  - Notification tự động được tạo khi comment/like/reply/follow
+  - **Real-time notification updates** qua Socket.IO - badge tự động cập nhật khi có notification mới
+  - Socket event: `new_notification` emit đến room `entityAccountId` (lowercase)
+  - Frontend cần join room bằng `join_notification` event với `entityAccountId`
+  - `entityAccountId` **bắt buộc** cho comment/reply operations (không có fallback)
+  - `entityAccountId` **optional** cho like operations (có fallback về Account chính nếu không gửi)
+  - Normalize GUID về lowercase để đảm bảo tính nhất quán
+  - Query notification sử dụng case-insensitive matching
+  - Enrich sender info (name, avatar) từ SQL Server cho tất cả notifications

@@ -26,10 +26,6 @@ const messageSchema = new mongoose.Schema(
       type: String,
       default: "text",
     },
-    attachments: {
-      type: [String],
-      default: [],
-    },
     is_story_reply: {
       type: Boolean,
       default: false,
@@ -47,30 +43,6 @@ const messageSchema = new mongoose.Schema(
       default: false,
     },
     post_id: {
-      type: String,
-      default: null,
-    },
-    post_summary: {
-      type: String,
-      default: null,
-    },
-    post_image: {
-      type: String,
-      default: null,
-    },
-    post_author_name: {
-      type: String,
-      default: null,
-    },
-    post_author_avatar: {
-      type: String,
-      default: null,
-    },
-    post_title: {
-      type: String,
-      default: null,
-    },
-    post_content: {
       type: String,
       default: null,
     },

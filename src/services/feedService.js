@@ -102,22 +102,46 @@ class FeedService {
     await this._enrichItemsWithAuthorInfo(postResult.data);
     await this._enrichItemsWithAuthorInfo(livestreams);
 
-    // 3. Chuyển đổi posts và livestreams thành một cấu trúc chung
+    // 3. Chuyển đổi posts thành feed items và sort theo timestamp (newest first)
     const postItems = postResult.data.map(post => ({
       type: 'post',
       timestamp: new Date(post.createdAt),
       data: this.transformPost(post, currentUser),
-    }));
+    })).sort((a, b) => b.timestamp - a.timestamp);
 
-    const livestreamItems = livestreams.map(stream => ({
+    // 4. Shuffle livestreams và chuyển đổi thành feed items
+    const shuffledLivestreams = [...livestreams].sort(() => Math.random() - 0.5);
+    const livestreamItems = shuffledLivestreams.map(stream => ({
       type: 'livestream',
       timestamp: new Date(stream.startTime),
       data: this.transformLivestream(stream, currentUser),
     }));
 
-    // 4. Gộp và sắp xếp
-    const feedItems = [...postItems, ...livestreamItems];
-    feedItems.sort((a, b) => b.timestamp - a.timestamp);
+    // 5. Insert livestreams vào các vị trí ngẫu nhiên trong posts
+    const feedItems = [...postItems];
+    livestreamItems.forEach(livestreamItem => {
+      const random = Math.random();
+      let insertIndex;
+      
+      if (random < 0.3) {
+        // 30% đầu feed (0 đến 30% của length)
+        insertIndex = Math.floor(Math.random() * Math.max(1, Math.floor(feedItems.length * 0.3)));
+      } else if (random < 0.7) {
+        // 40% giữa feed (30% đến 70% của length)
+        const start = Math.floor(feedItems.length * 0.3);
+        const end = Math.floor(feedItems.length * 0.7);
+        insertIndex = start + Math.floor(Math.random() * Math.max(1, end - start));
+      } else {
+        // 30% cuối feed (70% đến 100% của length)
+        const start = Math.floor(feedItems.length * 0.7);
+        insertIndex = start + Math.floor(Math.random() * Math.max(1, feedItems.length - start));
+      }
+      
+      // Đảm bảo insertIndex không vượt quá length
+      insertIndex = Math.min(insertIndex, feedItems.length);
+      
+      feedItems.splice(insertIndex, 0, livestreamItem);
+    });
 
     return {
       feed: feedItems,
