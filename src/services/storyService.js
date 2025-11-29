@@ -16,14 +16,15 @@ class StoryService {
             // Tất cả roles (customer, bar, dj, dancer) đều áp dụng logic filter giống nhau
             let allowedEntityAccountIds = [];
             let userEntityAccountIdLower = null;
+            let followingIds = []; // Khai báo ở ngoài để dùng trong logging
             if (userEntityAccountId) {
                 try {
                     userEntityAccountIdLower = String(userEntityAccountId).trim().toLowerCase();
-                    console.log(`[StoryService] User entityAccountId: ${userEntityAccountIdLower}`);
+                    console.log(`[StoryService] User entityAccountId (normalized): ${userEntityAccountIdLower}`);
                     
                     // Lấy danh sách những người mà user đang follow
                     const following = await FollowModel.getFollowing(userEntityAccountId);
-                    const followingIds = following.map(f => String(f.FollowingId).trim().toLowerCase());
+                    followingIds = following.map(f => String(f.FollowingId).trim().toLowerCase());
                     console.log(`[StoryService] Following ${followingIds.length} users:`, followingIds.slice(0, 3));
                     
                     // Chỉ bao gồm: following + chính user (KHÔNG bao gồm followers)
@@ -35,12 +36,13 @@ class StoryService {
                     ];
                     
                     console.log(`[StoryService] User ${userEntityAccountIdLower} can see stories from: ${allowedEntityAccountIds.length} entities (${followingIds.length} following + self)`);
-                    console.log(`[StoryService] Allowed entityAccountIds (first 5):`, allowedEntityAccountIds.slice(0, 5));
+                    console.log(`[StoryService] Allowed entityAccountIds (normalized, first 5):`, allowedEntityAccountIds.slice(0, 5));
                 } catch (err) {
                     console.warn('[StoryService] Error getting follow lists:', err.message);
                     // Nếu lỗi, vẫn cho phép xem story của chính mình
                     userEntityAccountIdLower = String(userEntityAccountId).trim().toLowerCase();
                     allowedEntityAccountIds = [userEntityAccountIdLower];
+                    followingIds = [];
                 }
             }
             
@@ -67,7 +69,8 @@ class StoryService {
             // Filter stories theo danh sách allowed (case-insensitive)
             if (allowedEntityAccountIds.length > 0) {
                 console.log(`[StoryService] Filtering ${stories.length} stories with ${allowedEntityAccountIds.length} allowed entities`);
-                console.log(`[StoryService] Allowed entityAccountIds:`, allowedEntityAccountIds);
+                console.log(`[StoryService] Allowed entityAccountIds (normalized):`, allowedEntityAccountIds);
+                console.log(`[StoryService] User entityAccountId (normalized):`, userEntityAccountIdLower);
                 const beforeFilter = stories.length;
                 const filteredStories = [];
                 const rejectedStories = [];
@@ -80,6 +83,21 @@ class StoryService {
                     }
                     const storyEntityAccountId = String(story.entityAccountId).trim().toLowerCase();
                     const isAllowed = allowedEntityAccountIds.includes(storyEntityAccountId);
+                    
+                    // Debug: Log chi tiết cho story mới tạo (trong vòng 5 phút)
+                    const storyAge = now - new Date(story.createdAt);
+                    const isRecentStory = storyAge < 5 * 60 * 1000; // 5 phút
+                    if (isRecentStory) {
+                        console.log(`[StoryService] 🔍 Recent story ${story._id}:`, {
+                            storyEntityAccountId,
+                            userEntityAccountIdLower,
+                            isOwn: storyEntityAccountId === userEntityAccountIdLower,
+                            isInFollowing: followingIds.includes(storyEntityAccountId),
+                            isAllowed,
+                            createdAt: story.createdAt,
+                            ageMinutes: Math.round(storyAge / 1000 / 60)
+                        });
+                    }
                     
                     if (isAllowed) {
                         console.log(`[StoryService] ✓ Story ${story._id} from ${storyEntityAccountId} is ALLOWED (in following list or own story)`);
