@@ -11,6 +11,10 @@ router.post("/create", verifyToken, payosController.createPayment);
 // POST /api/pay/webhook
 router.post("/webhook", payosController.handleWebhook);
 
+// Test endpoint để simulate webhook (chỉ dùng cho development)
+// POST /api/pay/test-webhook
+router.post("/test-webhook", payosController.testWebhook.bind(payosController));
+
 // Lấy thông tin payment
 // GET /api/pay/info/:orderCode
 router.get("/info/:orderCode", verifyToken, payosController.getPaymentInfo);

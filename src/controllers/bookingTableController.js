@@ -129,6 +129,135 @@ class BookingTableController {
       });
     }
   }
+
+  // POST /api/booking-tables/:id/create-payment - Tạo payment link cho table booking (cọc)
+  async createPayment(req, res) {
+    try {
+      const { id } = req.params; // BookedScheduleId
+      const { depositAmount } = req.body; // Số tiền cọc (mặc định = số bàn * 100k)
+      const payosService = require("../services/payosService");
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+      const { getPool, sql } = require("../db/sqlserver");
+
+      // Lấy booking
+      const booking = await bookedScheduleModel.getBookedScheduleById(id);
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: "Booking not found"
+        });
+      }
+
+      // Kiểm tra nếu đã thanh toán cọc
+      if (booking.PaymentStatus === "Paid") {
+        return res.status(400).json({
+          success: false,
+          message: "Booking deposit already paid"
+        });
+      }
+
+      // Sử dụng depositAmount từ request hoặc tính từ số bàn (mỗi bàn 100k)
+      const deposit = depositAmount || 100000;
+
+      if (deposit <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Deposit amount must be greater than 0"
+        });
+      }
+
+      // Tạo orderCode từ timestamp
+      const orderCode = Date.now();
+
+      // Tạo PayOS payment link
+      const frontendUrl = process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:3000';
+      const returnUrl = `${frontendUrl}/payment-return?type=table-booking&bookingId=${id}&orderCode=${orderCode}`;
+      const cancelUrl = `${frontendUrl}/customer/newsfeed`;
+
+      // PayOS description tối đa 25 ký tự
+      const description = `Coc dat ban`.substring(0, 25);
+
+      const paymentData = {
+        amount: parseInt(deposit), // PayOS cần số nguyên (VND) - tiền cọc
+        orderCode: orderCode,
+        description: description,
+        returnUrl: returnUrl,
+        cancelUrl: cancelUrl
+      };
+
+      const payosResult = await payosService.createPayment(paymentData);
+
+      // ✅ QUAN TRỌNG: Sử dụng orderCode từ PayOS response
+      const actualOrderCode = payosResult.orderCode || orderCode;
+      
+      console.log("[BookingTableController] Payment link created:", {
+        localOrderCode: orderCode,
+        payosOrderCode: payosResult.orderCode,
+        actualOrderCode: actualOrderCode,
+        bookingId: id,
+        paymentUrl: payosResult.paymentUrl
+      });
+
+      // Lưu orderCode vào database
+      const pool = await getPool();
+      try {
+        // Tạo bảng nếu chưa tồn tại
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'BookingPayments')
+          BEGIN
+            CREATE TABLE BookingPayments (
+              Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+              BookedScheduleId UNIQUEIDENTIFIER NOT NULL,
+              OrderCode BIGINT NOT NULL UNIQUE,
+              CreatedAt DATETIME DEFAULT GETDATE(),
+              FOREIGN KEY (BookedScheduleId) REFERENCES BookedSchedules(BookedScheduleId)
+            );
+            CREATE INDEX IX_BookingPayments_OrderCode ON BookingPayments(OrderCode);
+          END
+        `);
+        
+        // Insert orderCode mapping
+        console.log("[BookingTableController] Saving orderCode mapping to BookingPayments:", {
+          bookedScheduleId: id,
+          orderCode: actualOrderCode
+        });
+        
+        const insertResult = await pool.request()
+          .input("BookedScheduleId", sql.UniqueIdentifier, id)
+          .input("OrderCode", sql.BigInt, actualOrderCode)
+          .query(`
+            INSERT INTO BookingPayments (BookedScheduleId, OrderCode)
+            VALUES (@BookedScheduleId, @OrderCode);
+          `);
+        
+        console.log("[BookingTableController] ✅ OrderCode mapping saved successfully:", {
+          bookedScheduleId: id,
+          orderCode: actualOrderCode,
+          rowsAffected: insertResult.rowsAffected
+        });
+      } catch (dbError) {
+        console.error("[BookingTableController] ❌ Error saving orderCode mapping:", dbError);
+        // Continue anyway
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          paymentUrl: payosResult.paymentUrl,
+          orderCode: payosResult.orderCode,
+          bookingId: id
+        },
+        message: "Payment link created successfully"
+      });
+    } catch (error) {
+      console.error("[BookingTableController] createPayment error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error creating payment link",
+        error: error.message
+      });
+    }
+  }
 }
 
 module.exports = new BookingTableController();

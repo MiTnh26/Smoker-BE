@@ -51,15 +51,24 @@ class PayOSController {
    */
   async handleWebhook(req, res) {
     try {
+      // Log ngay từ đầu để biết webhook có được gọi không
+      console.log("[PayOS Controller] ========== WEBHOOK REQUEST RECEIVED ==========");
+      console.log("[PayOS Controller] Request method:", req.method);
+      console.log("[PayOS Controller] Request URL:", req.url);
+      console.log("[PayOS Controller] Request headers:", {
+        "content-type": req.headers["content-type"],
+        "x-client-id": req.headers["x-client-id"],
+        "x-api-key": req.headers["x-api-key"] ? "***" : null,
+        "user-agent": req.headers["user-agent"]
+      });
+      
       const webhookData = req.body;
       
-      console.log("[PayOS Controller] Webhook received:", {
+      console.log("[PayOS Controller] Webhook body received:", {
         hasBody: !!webhookData,
+        bodyType: typeof webhookData,
         bodyKeys: webhookData ? Object.keys(webhookData) : [],
-        headers: {
-          clientId: req.headers["x-client-id"],
-          apiKey: req.headers["x-api-key"] ? "***" : null
-        }
+        bodyString: JSON.stringify(webhookData, null, 2)
       });
 
       // 1. Kiểm tra headers (x-client-id, x-api-key) hoặc signature theo doc PayOS
@@ -95,7 +104,8 @@ class PayOSController {
       console.log("[PayOS Controller] Webhook verified successfully");
 
       // 3. Xử lý webhook data đã được verify
-      const processedData = await payosService.processWebhook(verifiedData);
+      // Truyền thêm webhook gốc để có thể lấy code/desc từ đó
+      const processedData = await payosService.processWebhook(verifiedData, webhookData);
       console.log("[PayOS Controller] Processed webhook data:", {
         orderCode: processedData.orderCode,
         status: processedData.status,
@@ -103,12 +113,16 @@ class PayOSController {
       });
 
       // 4. Cập nhật order trong DB
+      console.log("[PayOS Controller] ========== STEP 4: Looking for purchase/booking ==========");
+      console.log("[PayOS Controller] Searching with orderCode:", processedData.orderCode);
+      console.log("[PayOS Controller] orderCode type:", typeof processedData.orderCode);
+      
       // Tìm AdPurchase theo orderCode (PaymentId)
       const adPurchaseModel = require("../models/adPurchaseModel");
       const purchase = await adPurchaseModel.findByPaymentId(processedData.orderCode.toString());
       
       if (purchase) {
-        console.log("[PayOS Controller] Found purchase:", {
+        console.log("[PayOS Controller] ✅ Found purchase:", {
           purchaseId: purchase.PurchaseId,
           currentPaymentStatus: purchase.PaymentStatus,
           currentStatus: purchase.Status
@@ -116,8 +130,100 @@ class PayOSController {
         // Xử lý AdPurchase payment
         await this.handleAdPurchasePayment(purchase, processedData);
       } else {
-        // Có thể là booking hoặc order khác - xử lý ở đây nếu cần
-        console.log("[PayOS Controller] Purchase not found for orderCode:", processedData.orderCode);
+        console.log("[PayOS Controller] No purchase found, searching for booking...");
+        // Tìm booking theo orderCode
+        const { getPool, sql } = require("../db/sqlserver");
+        const pool = await getPool();
+        
+        try {
+          console.log("[PayOS Controller] Querying BookingPayments table with orderCode:", processedData.orderCode);
+          
+          // Kiểm tra xem bảng BookingPayments có tồn tại không
+          const tableCheck = await pool.request().query(`
+            SELECT COUNT(*) as TableExists
+            FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_NAME = 'BookingPayments'
+          `);
+          
+          console.log("[PayOS Controller] BookingPayments table exists:", tableCheck.recordset[0]?.TableExists > 0);
+          
+          // Query với orderCode - Convert sang BigInt để đảm bảo type match
+          const orderCodeBigInt = BigInt(processedData.orderCode);
+          console.log("[PayOS Controller] Querying with orderCode (converted to BigInt):", {
+            original: processedData.orderCode,
+            originalType: typeof processedData.orderCode,
+            converted: orderCodeBigInt.toString(),
+            convertedType: typeof orderCodeBigInt
+          });
+          
+          const bookingResult = await pool.request()
+            .input("OrderCode", sql.BigInt, orderCodeBigInt)
+            .query(`
+              SELECT BookedScheduleId, OrderCode, CreatedAt
+              FROM BookingPayments 
+              WHERE OrderCode = @OrderCode
+            `);
+          
+          console.log("[PayOS Controller] BookingPayments query result:", {
+            orderCode: processedData.orderCode,
+            orderCodeBigInt: orderCodeBigInt.toString(),
+            recordCount: bookingResult.recordset.length,
+            records: bookingResult.recordset.map(r => ({
+              BookedScheduleId: r.BookedScheduleId,
+              OrderCode: r.OrderCode?.toString(),
+              CreatedAt: r.CreatedAt
+            }))
+          });
+          
+          // Nếu không tìm thấy, thử query tất cả để debug
+          if (bookingResult.recordset.length === 0) {
+            console.log("[PayOS Controller] ⚠️ No booking found, querying all BookingPayments for debugging...");
+            const allBookings = await pool.request().query(`
+              SELECT TOP 10 BookedScheduleId, OrderCode, CreatedAt
+              FROM BookingPayments 
+              ORDER BY CreatedAt DESC
+            `);
+            console.log("[PayOS Controller] Recent BookingPayments records:", allBookings.recordset);
+          }
+          
+          if (bookingResult.recordset.length > 0) {
+            const bookedScheduleId = bookingResult.recordset[0].BookedScheduleId;
+            console.log("[PayOS Controller] ✅ Found booking:", {
+              bookedScheduleId: bookedScheduleId,
+              orderCode: processedData.orderCode,
+              createdAt: bookingResult.recordset[0].CreatedAt
+            });
+            // Xử lý booking payment
+            try {
+              await this.handleBookingPayment(bookedScheduleId, processedData);
+              console.log("[PayOS Controller] ✅ handleBookingPayment completed successfully");
+            } catch (paymentError) {
+              console.error("[PayOS Controller] ❌ Error in handleBookingPayment:", paymentError);
+              console.error("[PayOS Controller] Payment error details:", {
+                message: paymentError.message,
+                stack: paymentError.stack,
+                code: paymentError.code,
+                number: paymentError.number
+              });
+              // Re-throw để outer catch có thể xử lý
+              throw paymentError;
+            }
+          } else {
+            console.error("[PayOS Controller] ❌ Purchase/Booking not found for orderCode:", processedData.orderCode);
+            console.error("[PayOS Controller] This means webhook cannot update payment status!");
+            // Không throw error ở đây vì có thể là purchase, không phải booking
+          }
+        } catch (bookingError) {
+          console.error("[PayOS Controller] ❌ Error finding/processing booking:", bookingError);
+          console.error("[PayOS Controller] Error details:", {
+            message: bookingError.message,
+            stack: bookingError.stack,
+            code: bookingError.code,
+            number: bookingError.number
+          });
+          // Re-throw để outer catch có thể xử lý và log
+          throw bookingError;
+        }
       }
 
       console.log("[PayOS Controller] Webhook processed successfully:", {
@@ -332,6 +438,230 @@ class PayOSController {
       console.error("[PayOS Controller] Error handling AdPurchase payment:", error);
       console.error("[PayOS Controller] Error stack:", error.stack);
       throw error;
+    }
+  }
+
+  /**
+   * Xử lý thanh toán cho Booking
+   */
+  async handleBookingPayment(bookedScheduleId, processedData) {
+    try {
+      console.log("[PayOS Controller] ========== handleBookingPayment STARTED ==========");
+      console.log("[PayOS Controller] Input parameters:", {
+        bookedScheduleId: bookedScheduleId,
+        bookedScheduleIdType: typeof bookedScheduleId,
+        processedStatus: processedData.status,
+        processedData: JSON.stringify(processedData, null, 2)
+      });
+
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+      const paymentHistoryModel = require("../models/paymentHistoryModel");
+      const { getPool, sql } = require("../db/sqlserver");
+
+      console.log("[PayOS Controller] Checking payment status:", {
+        status: processedData.status,
+        isPAID: processedData.status === "PAID"
+      });
+
+      if (processedData.status === "PAID") {
+        // Thanh toán thành công
+        console.log("[PayOS Controller] Booking payment successful:", bookedScheduleId);
+
+        // 1. Lấy thông tin booking
+        console.log("[PayOS Controller] STEP 1: Fetching booking from DB...");
+        const booking = await bookedScheduleModel.getBookedScheduleById(bookedScheduleId);
+        if (!booking) {
+          console.error("[PayOS Controller] ❌ Booking not found:", bookedScheduleId);
+          throw new Error("Booking not found");
+        }
+        console.log("[PayOS Controller] ✅ Booking found:", {
+          bookedScheduleId: booking.BookedScheduleId,
+          currentPaymentStatus: booking.PaymentStatus,
+          currentScheduleStatus: booking.ScheduleStatus,
+          totalAmount: booking.TotalAmount
+        });
+
+        // 2. Tạo PaymentHistory cho tiền cọc (chuyển cho platform, receiverId = null)
+        console.log("[PayOS Controller] Creating PaymentHistory for deposit...");
+        const depositAmount = 100000; // Tiền cọc cố định 100.000 VND
+        const paymentHistory = await paymentHistoryModel.createPaymentHistory({
+          type: 'booking',
+          senderId: booking.BookerId,
+          receiverId: null, // Platform giữ tiền cọc
+          transferContent: `Tiền cọc booking ${booking.Type || 'Performer'}`,
+          transferAmount: depositAmount
+        });
+        console.log("[PayOS Controller] PaymentHistory created for deposit:", paymentHistory.PaymentHistoryId);
+
+        // 3. Kiểm tra payment status hiện tại trước khi update
+        console.log("[PayOS Controller] Current booking payment status:", booking.PaymentStatus);
+        
+        // 4. Update booking payment status - cập nhật thành Paid (đã thanh toán cọc)
+        console.log("[PayOS Controller] STEP 4: Updating booking payment status to 'Paid'...");
+        console.log("[PayOS Controller] Before update:", {
+          bookedScheduleId: bookedScheduleId,
+          currentPaymentStatus: booking.PaymentStatus,
+          targetPaymentStatus: "Paid"
+        });
+        
+        const updatedBooking = await bookedScheduleModel.updateBookedScheduleStatuses(bookedScheduleId, {
+          paymentStatus: "Paid" // Đã thanh toán cọc (SQL chỉ có enum Paid)
+        });
+        
+        if (!updatedBooking) {
+          console.error("[PayOS Controller] ❌ Failed to update booking status - updatedBooking is null");
+          console.error("[PayOS Controller] This means UPDATE query returned no rows!");
+          throw new Error("Failed to update booking payment status");
+        }
+        
+        console.log("[PayOS Controller] ✅ Booking payment status updated (from updateBookedScheduleStatuses):", {
+          bookedScheduleId: updatedBooking?.BookedScheduleId,
+          paymentStatus: updatedBooking?.PaymentStatus,
+          previousStatus: booking.PaymentStatus,
+          updateSuccess: updatedBooking?.PaymentStatus === "Paid"
+        });
+        
+        // 5. Verify update bằng cách query lại từ database
+        console.log("[PayOS Controller] STEP 5: Verifying update by querying DB again...");
+        const verifyBooking = await bookedScheduleModel.getBookedScheduleById(bookedScheduleId);
+        
+        if (!verifyBooking) {
+          console.error("[PayOS Controller] ❌ CRITICAL: Cannot find booking after update! BookingId:", bookedScheduleId);
+        } else {
+          console.log("[PayOS Controller] ✅ Verified booking status from DB:", {
+            bookedScheduleId: verifyBooking?.BookedScheduleId,
+            paymentStatus: verifyBooking?.PaymentStatus,
+            scheduleStatus: verifyBooking?.ScheduleStatus,
+            verificationSuccess: verifyBooking?.PaymentStatus === "Paid"
+          });
+          
+          if (verifyBooking?.PaymentStatus !== "Paid") {
+            console.error("[PayOS Controller] ❌ CRITICAL: PaymentStatus is NOT 'Paid' after update!");
+            console.error("[PayOS Controller] Expected: 'Paid', Actual:", verifyBooking?.PaymentStatus);
+          }
+        }
+
+        console.log("[PayOS Controller] ========== handleBookingPayment COMPLETED SUCCESSFULLY ==========");
+      } else {
+        // Thanh toán thất bại
+        console.log("[PayOS Controller] ⚠️ Booking payment status is NOT 'PAID':", {
+          bookedScheduleId: bookedScheduleId,
+          status: processedData.status
+        });
+        await bookedScheduleModel.updateBookedScheduleStatuses(bookedScheduleId, {
+          paymentStatus: "Failed"
+        });
+        console.log("[PayOS Controller] Updated payment status to 'Failed'");
+      }
+    } catch (error) {
+      console.error("[PayOS Controller] ========== handleBookingPayment ERROR ==========");
+      console.error("[PayOS Controller] Error handling booking payment:", error);
+      console.error("[PayOS Controller] Error message:", error.message);
+      console.error("[PayOS Controller] Error stack:", error.stack);
+      console.error("[PayOS Controller] Error details:", {
+        name: error.name,
+        code: error.code,
+        number: error.number,
+        state: error.state,
+        class: error.class,
+        serverName: error.serverName,
+        procName: error.procName,
+        lineNumber: error.lineNumber
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Test endpoint để simulate webhook (chỉ dùng cho development)
+   * POST /api/pay/test-webhook
+   * Body: { orderCode: number, bookingId?: string }
+   */
+  async testWebhook(req, res) {
+    try {
+      const { orderCode, bookingId } = req.body;
+
+      if (!orderCode) {
+        return res.status(400).json({
+          success: false,
+          message: "orderCode is required"
+        });
+      }
+
+      console.log("[PayOS Controller] ========== TEST WEBHOOK CALLED ==========");
+      console.log("[PayOS Controller] Test webhook parameters:", {
+        orderCode: orderCode,
+        bookingId: bookingId
+      });
+
+      // Tìm booking theo orderCode hoặc bookingId
+      const { getPool, sql } = require("../db/sqlserver");
+      const pool = await getPool();
+
+      let bookedScheduleId = null;
+
+      if (bookingId) {
+        // Nếu có bookingId, dùng trực tiếp
+        bookedScheduleId = bookingId;
+        console.log("[PayOS Controller] Using provided bookingId:", bookedScheduleId);
+      } else {
+        // Tìm booking theo orderCode
+        console.log("[PayOS Controller] Searching for booking by orderCode:", orderCode);
+        const bookingResult = await pool.request()
+          .input("OrderCode", sql.BigInt, orderCode)
+          .query(`
+            SELECT BookedScheduleId, OrderCode, CreatedAt
+            FROM BookingPayments 
+            WHERE OrderCode = @OrderCode
+          `);
+
+        console.log("[PayOS Controller] BookingPayments query result:", {
+          orderCode: orderCode,
+          recordCount: bookingResult.recordset.length,
+          records: bookingResult.recordset
+        });
+
+        if (bookingResult.recordset.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: `No booking found for orderCode: ${orderCode}`,
+            suggestion: "Check if orderCode exists in BookingPayments table"
+          });
+        }
+
+        bookedScheduleId = bookingResult.recordset[0].BookedScheduleId;
+        console.log("[PayOS Controller] Found bookingId:", bookedScheduleId);
+      }
+
+      // Simulate processedData từ webhook
+      const processedData = {
+        orderCode: orderCode,
+        status: "PAID",
+        amount: 100000,
+        description: "Test webhook payment"
+      };
+
+      console.log("[PayOS Controller] Simulating webhook with processedData:", processedData);
+
+      // Gọi handleBookingPayment
+      await this.handleBookingPayment(bookedScheduleId, processedData);
+
+      return res.status(200).json({
+        success: true,
+        message: "Test webhook processed successfully",
+        data: {
+          orderCode: orderCode,
+          bookedScheduleId: bookedScheduleId
+        }
+      });
+    } catch (error) {
+      console.error("[PayOS Controller] Test webhook error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Test webhook processing error",
+        error: error.message,
+        stack: error.stack
+      });
     }
   }
 }
