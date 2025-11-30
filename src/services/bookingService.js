@@ -188,19 +188,35 @@ class BookingService {
   async _autoCompleteIfNeeded(schedule) {
     if (!schedule) return schedule;
 
-    const { EndTime, ScheduleStatus, BookedScheduleId } = schedule;
+    const { EndTime, ScheduleStatus, BookedScheduleId, PaymentStatus } = schedule;
 
     if (!EndTime) return schedule;
 
     const endTimeDate = new Date(EndTime);
     const now = new Date();
 
-    if (endTimeDate <= now && ScheduleStatus !== "Completed" && ScheduleStatus !== "Canceled") {
-      const completedSchedule = await bookedScheduleModel.updateBookedScheduleStatuses(
-        BookedScheduleId,
-        { scheduleStatus: "Completed" }
-      );
-      return completedSchedule;
+    // Tự động complete sau 7 ngày kể từ khi booking kết thúc (nếu không có khiếu nại)
+    // Chỉ áp dụng cho booking đã được confirm và đã thanh toán cọc
+    if (endTimeDate <= now && 
+        ScheduleStatus === "Confirmed" && 
+        PaymentStatus === "Paid" &&
+        ScheduleStatus !== "Completed" && 
+        ScheduleStatus !== "Canceled") {
+      
+      // Tính số ngày đã trôi qua kể từ khi booking kết thúc
+      const daysSinceEnd = Math.floor((now - endTimeDate) / (1000 * 60 * 60 * 24));
+      
+      // Nếu đã qua 7 ngày, tự động complete
+      if (daysSinceEnd >= 7) {
+        const completedSchedule = await bookedScheduleModel.updateBookedScheduleStatuses(
+          BookedScheduleId,
+          { 
+            scheduleStatus: "Completed",
+            paymentStatus: "Paid" // Tự động chuyển payment status thành Paid
+          }
+        );
+        return completedSchedule;
+      }
     }
 
     return schedule;
