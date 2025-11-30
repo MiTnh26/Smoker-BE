@@ -1,5 +1,6 @@
 // src/services/eventService.js
 const EventModel = require("../models/eventModel");
+const EventFeedModel = require("../models/eventFeedModel");
 const { success, error } = require("../utils/response");
 
 // Dùng chung regex validate UUID để tránh phụ thuộc package `uuid` (ESM only)
@@ -137,7 +138,81 @@ async update(eventId, payload) {
     EventId: eventId,
     Status: newStatus  // frontend chỉ cần biết Status mới
   });
-}
+},
+
+  async getBarsWithNewEvents(reqQuery) {
+    const hoursFromNow = Number.parseInt(reqQuery.hours || "168", 10); // Mặc định 7 ngày
+    const skip = Math.max(Number.parseInt(reqQuery.skip ?? "0", 10), 0);
+    const take = Math.min(Math.max(Number.parseInt(reqQuery.take ?? "20", 10), 1), 100);
+
+    const [items, total] = await Promise.all([
+      EventFeedModel.getBarsWithNewEvents({ hoursFromNow, skip, take }),
+      EventFeedModel.getBarsWithNewEventsCount({ hoursFromNow })
+    ]);
+
+    return success("Lấy danh sách bars có events mới thành công", {
+      total,
+      items: items.map(bar => ({
+        barPageId: String(bar.BarPageId),
+        accountId: bar.AccountId ? String(bar.AccountId) : null,
+        barName: bar.BarName,
+        avatar: bar.Avatar,
+        background: bar.Background,
+        address: bar.Address,
+        phoneNumber: bar.PhoneNumber,
+        email: bar.Email,
+        role: bar.Role,
+        status: bar.Status,
+        createdAt: bar.created_at,
+        entityAccountId: bar.EntityAccountId ? String(bar.EntityAccountId) : null,
+        reviewCount: bar.ReviewCount || 0,
+        averageRating: bar.AverageRating != null ? Number(bar.AverageRating.toFixed(1)) : null,
+        eventCount: bar.EventCount || 0,
+        latestEventStartTime: bar.LatestEventStartTime,
+        nearestEventStartTime: bar.NearestEventStartTime
+      }))
+    });
+  },
+
+  async getEventsWithBarRating(reqQuery) {
+    const hoursFromNow = Number.parseInt(reqQuery.hours || "168", 10); // Mặc định 7 ngày
+    const skip = Math.max(Number.parseInt(reqQuery.skip ?? "0", 10), 0);
+    const take = Math.min(Math.max(Number.parseInt(reqQuery.take ?? "20", 10), 1), 100);
+
+    const [items, total] = await Promise.all([
+      EventFeedModel.getEventsWithBarRating({ hoursFromNow, skip, take }),
+      EventFeedModel.getEventsWithBarRatingCount({ hoursFromNow })
+    ]);
+
+    return success("Lấy danh sách events với bar rating thành công", {
+      total,
+      items: items.map(event => ({
+        eventId: String(event.EventId),
+        barPageId: String(event.BarPageId),
+        eventName: event.EventName,
+        description: event.Description,
+        picture: event.Picture,
+        startTime: event.StartTime,
+        endTime: event.EndTime,
+        status: event.Status,
+        createdAt: event.CreatedAt,
+        updatedAt: event.UpdatedAt,
+        bar: {
+          barPageId: String(event.BarPageId),
+          barName: event.BarName,
+          avatar: event.BarAvatar,
+          background: event.BarBackground,
+          address: event.BarAddress,
+          phoneNumber: event.BarPhone,
+          email: event.BarEmail,
+          role: event.BarRole,
+          entityAccountId: event.EntityAccountId ? String(event.EntityAccountId) : null,
+          reviewCount: event.BarReviewCount || 0,
+          averageRating: event.BarAverageRating != null ? Number(event.BarAverageRating.toFixed(1)) : null
+        }
+      }))
+    });
+  }
 };
 
 module.exports = EventService;

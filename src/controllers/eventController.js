@@ -128,7 +128,7 @@ async function update(req, res) {
     // Validate và parse datetime
     if (payload.StartTime) {
       const startDate = new Date(payload.StartTime);
-      if (isNaN(startDate.getTime())) {
+      if (Number.isNaN(startDate.getTime())) {
         console.log("❌ Invalid StartTime:", payload.StartTime);
         return res.status(400).json(error("Thời gian bắt đầu không hợp lệ"));
       }
@@ -137,7 +137,7 @@ async function update(req, res) {
 
     if (payload.EndTime) {
       const endDate = new Date(payload.EndTime);
-      if (isNaN(endDate.getTime())) {
+      if (Number.isNaN(endDate.getTime())) {
         console.log("❌ Invalid EndTime:", payload.EndTime);
         return res.status(400).json(error("Thời gian kết thúc không hợp lệ"));
       }
@@ -237,6 +237,28 @@ async function search(req, res) {
   }
 }
 
+// GET /api/events/bars-with-events?hours=168&skip=0&take=20
+async function getBarsWithNewEvents(req, res) {
+  try {
+    const result = await EventService.getBarsWithNewEvents(req.query);
+    res.status(result.statusCode || 200).json(result);
+  } catch (e) {
+    console.error("getBarsWithNewEvents error:", e);
+    res.status(500).json(error("Lỗi máy chủ"));
+  }
+}
+
+// GET /api/events/feed?hours=168&skip=0&take=20
+async function getEventsWithBarRating(req, res) {
+  try {
+    const result = await EventService.getEventsWithBarRating(req.query);
+    res.status(result.statusCode || 200).json(result);
+  } catch (e) {
+    console.error("getEventsWithBarRating error:", e);
+    res.status(500).json(error("Lỗi máy chủ"));
+  }
+}
+
 module.exports = {
   getByBar,
   toggleStatus,
@@ -246,4 +268,6 @@ module.exports = {
   remove,
   getAll,     // mới
   search,
+  getBarsWithNewEvents,
+  getEventsWithBarRating,
 };

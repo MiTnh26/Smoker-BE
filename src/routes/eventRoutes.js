@@ -47,5 +47,7 @@ router.delete("/:id", EventController.remove);
 router.patch("/toggle/:id", EventController.toggleStatus);
 router.get("/getall", EventController.getAll);
 router.get("/search", EventController.search);
+router.get("/bars-with-events", EventController.getBarsWithNewEvents);
+router.get("/feed", EventController.getEventsWithBarRating);
 
 module.exports = router;
