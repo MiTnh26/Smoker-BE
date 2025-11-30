@@ -1543,16 +1543,33 @@ POST /api/messages/messages/read
 
 **Behavior:**
 - Xác thực `entityAccountId` thuộc account hiện tại và là participant của conversation.
-- Cập nhật `Participant.last_read_message_id` + `last_read_at`.
+- **QUAN TRỌNG**: Check `lastMessage.sender_id !== entityAccountId` (người đọc không phải người gửi)
+  - Nếu người đọc là người gửi tin nhắn cuối → Return `skipped: true` (không update)
+  - Nếu người đọc không phải người gửi → Cập nhật `Participant.last_read_message_id` + `last_read_at`
 - Đồng thời mark các notification `"Messages"` từ đối phương → `status = "Read"`.
 
-**Response:**
+**Response Success:**
 ```json
 {
   "success": true,
   "message": "Messages marked as read"
 }
 ```
+
+**Response Skipped** (khi người đọc là người gửi):
+```json
+{
+  "success": true,
+  "message": "Cannot mark own message as read",
+  "skipped": true,
+  "reason": "Reader cannot mark their own message as read"
+}
+```
+
+**Lưu ý:**
+- Frontend/App **KHÔNG nên** tự động gọi API này khi user gửi message
+- Chỉ gọi khi user thực sự đọc (mở conversation, scroll đến cuối)
+- Người gửi không thể mark message của chính mình là "đã đọc"
 
 ---
 
@@ -3019,10 +3036,16 @@ Xem chi tiết tại: `docs/FEED_ALGORITHM.md`
 
 ---
 
-**Cập nhật lần cuối:** 2025-11-29  
-**Version:** 1.1
+**Cập nhật lần cuối:** 2025-11-30  
+**Version:** 1.2
 
 **Changelog:**
+- **v1.2 (2025-11-30):**
+  - **Fix Message Read Status**: Người gửi không thể mark message của chính mình là "đã đọc"
+  - Backend `markMessagesRead` check `lastMessage.sender_id !== entityAccountId` trước khi update
+  - Response `skipped: true` khi người đọc là người gửi tin nhắn cuối
+  - Frontend/App không nên tự động update `lastReadMessageId` khi gửi message
+  - Chỉ hiển thị "đã xem" cho message của người khác (không phải của mình)
 - **v1.1 (2025-11-29):**
   - Notification tự động được tạo khi comment/like/reply/follow
   - **Real-time notification updates** qua Socket.IO - badge tự động cập nhật khi có notification mới
