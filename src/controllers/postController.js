@@ -80,10 +80,9 @@ class PostController {
         }
       }
       
-      // Normalize entityAccountId để đảm bảo format nhất quán (lowercase, trim)
-      // Điều này quan trọng để getStories có thể match đúng story với userEntityAccountId
+      // Normalize entityAccountId - chỉ trim, giữ nguyên format gốc (uppercase/lowercase)
       if (postEntityAccountId) {
-        postEntityAccountId = String(postEntityAccountId).trim().toLowerCase();
+        postEntityAccountId = String(postEntityAccountId).trim();
       }
       
       console.log("[POST] Final entity info (normalized):", {
@@ -1527,13 +1526,16 @@ class PostController {
       // Nếu có query parameter entityAccountId thì dùng nó, không thì coi authorId là entityAccountId
       const entityAccountId = req.query.entityAccountId || authorId;
       
-      // Build query - chỉ tìm theo entityAccountId hoặc entityId và status = "public"
+      // Build query - chỉ tìm theo entityAccountId, entityId hoặc accountId và status = "public"
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
+      // Note: Schema chỉ có status: "public", "private", "trashed", "deleted" - không có "active"
+      // Sử dụng regex case-insensitive để tìm entityAccountId (vì có thể lưu dạng uppercase hoặc lowercase)
       const query = {
-        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active" (posts cũ có thể có "active", nhưng posts mới chỉ dùng "public")
+        status: "public", // Chỉ lấy posts công khai
         $or: [
-          { entityAccountId: entityAccountId },
-          { entityId: authorId } // Có thể authorId là entityId
+          { entityAccountId: { $regex: new RegExp(`^${entityAccountId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }, // Case-insensitive match
+          { entityId: authorId }, // Có thể authorId là entityId
+          { accountId: authorId } // Backward compatibility: tìm theo accountId nếu entityAccountId không khớp
         ],
         $and: [
           {

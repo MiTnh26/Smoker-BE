@@ -19,6 +19,69 @@ const countCollectionItems = (value) => {
   return 0;
 };
 
+/**
+ * Lấy top N comments có nhiều like nhất
+ * @param {Object|Map} comments - Comments object hoặc Map
+ * @param {Number} limit - Số lượng comments cần lấy (default: 2)
+ * @returns {Array} Mảng các comments đã sắp xếp theo số like giảm dần
+ */
+const getTopComments = (comments, limit = 2) => {
+  if (!comments) return [];
+
+  let commentsArray = [];
+
+  // Convert comments to array
+  if (comments instanceof Map) {
+    for (const [key, value] of comments.entries()) {
+      const comment = value.toObject ? value.toObject() : value;
+      commentsArray.push({
+        id: String(key),
+        ...comment
+      });
+    }
+  } else if (typeof comments === 'object' && !Array.isArray(comments)) {
+    for (const [key, value] of Object.entries(comments)) {
+      const comment = value.toObject ? value.toObject() : value;
+      commentsArray.push({
+        id: String(key),
+        ...comment
+      });
+    }
+  } else if (Array.isArray(comments)) {
+    commentsArray = comments.map((comment, index) => ({
+      id: comment._id || comment.id || String(index),
+      ...comment
+    }));
+  }
+
+  // Count likes for each comment
+  const commentsWithLikeCount = commentsArray.map(comment => {
+    let likeCount = 0;
+    if (comment.likes) {
+      if (comment.likes instanceof Map) {
+        likeCount = comment.likes.size;
+      } else if (Array.isArray(comment.likes)) {
+        likeCount = comment.likes.length;
+      } else if (typeof comment.likes === 'object') {
+        likeCount = Object.keys(comment.likes).length;
+      } else if (typeof comment.likes === 'number') {
+        likeCount = comment.likes;
+      }
+    }
+    return {
+      ...comment,
+      likeCount
+    };
+  });
+
+  // Sort by like count (descending) and take top N
+  const topComments = commentsWithLikeCount
+    .sort((a, b) => b.likeCount - a.likeCount)
+    .slice(0, limit);
+
+  return topComments;
+};
+
 const extractLikeEntityAccountId = (like, key) => {
   if (like && typeof like === "object") {
     return normalizeGuid(
@@ -411,6 +474,11 @@ class PostService {
       // Enrich comments and replies with author information
       await this.enrichCommentsWithAuthorInfo(postsPlain);
 
+      // Add top 2 comments for each post
+      postsPlain.forEach(post => {
+        post.topComments = getTopComments(post.comments, 2);
+      });
+
       // Create next cursor from last post
       let nextCursor = null;
       if (postsPlain.length > 0) {
@@ -565,6 +633,9 @@ class PostService {
       // Enrich comments and replies with author information
       await this.enrichCommentsWithAuthorInfo([postData]);
       this.applyViewerContextToComments([postData], viewerAccountId, viewerEntityAccountId);
+
+      // Add top 2 comments
+      postData.topComments = getTopComments(postData.comments, 2);
 
       return {
         success: true,
