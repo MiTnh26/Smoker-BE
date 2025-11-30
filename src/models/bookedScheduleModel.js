@@ -176,6 +176,14 @@ async function getBookedSchedulesByReceiver(receiverId, { limit = 50, offset = 0
 }
 
 async function updateBookedScheduleStatuses(bookedScheduleId, { paymentStatus, scheduleStatus }) {
+  console.log("[bookedScheduleModel] ========== updateBookedScheduleStatuses STARTED ==========");
+  console.log("[bookedScheduleModel] Input parameters:", {
+    bookedScheduleId: bookedScheduleId,
+    bookedScheduleIdType: typeof bookedScheduleId,
+    paymentStatus: paymentStatus,
+    scheduleStatus: scheduleStatus
+  });
+
   if (paymentStatus === undefined && scheduleStatus === undefined) {
     throw new Error("At least one of paymentStatus or scheduleStatus must be provided");
   }
@@ -189,15 +197,44 @@ async function updateBookedScheduleStatuses(bookedScheduleId, { paymentStatus, s
   if (paymentStatus !== undefined) {
     request.input("PaymentStatus", sql.NVarChar(20), paymentStatus);
     setClauses.push("PaymentStatus = @PaymentStatus");
+    console.log("[bookedScheduleModel] Will update PaymentStatus to:", paymentStatus);
   }
 
   if (scheduleStatus !== undefined) {
     request.input("ScheduleStatus", sql.NVarChar(20), scheduleStatus);
     setClauses.push("ScheduleStatus = @ScheduleStatus");
+    console.log("[bookedScheduleModel] Will update ScheduleStatus to:", scheduleStatus);
   }
 
   const setClause = setClauses.join(", ");
+  console.log("[bookedScheduleModel] SET clause:", setClause);
 
+  // Kiểm tra booking có tồn tại không trước khi update
+  try {
+    const checkResult = await pool.request()
+      .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
+      .query(`
+        SELECT BookedScheduleId, PaymentStatus, ScheduleStatus
+        FROM BookedSchedules
+        WHERE BookedScheduleId = @BookedScheduleId
+      `);
+    
+    console.log("[bookedScheduleModel] Booking exists check:", {
+      found: checkResult.recordset.length > 0,
+      currentPaymentStatus: checkResult.recordset[0]?.PaymentStatus,
+      currentScheduleStatus: checkResult.recordset[0]?.ScheduleStatus
+    });
+
+    if (checkResult.recordset.length === 0) {
+      console.error("[bookedScheduleModel] ❌ Booking not found in BookedSchedules table!");
+      console.error("[bookedScheduleModel] BookedScheduleId:", bookedScheduleId);
+      return null;
+    }
+  } catch (checkError) {
+    console.error("[bookedScheduleModel] ❌ Error checking booking existence:", checkError);
+  }
+
+  console.log("[bookedScheduleModel] Executing UPDATE query...");
   const result = await request.query(`
     UPDATE BookedSchedules
     SET ${setClause}
@@ -220,7 +257,27 @@ async function updateBookedScheduleStatuses(bookedScheduleId, { paymentStatus, s
     WHERE BookedScheduleId = @BookedScheduleId;
   `);
 
-  return result.recordset[0] || null;
+  console.log("[bookedScheduleModel] UPDATE query executed:", {
+    rowsAffected: result.rowsAffected?.[0] || result.rowsAffected || 0,
+    recordsetLength: result.recordset?.length || 0,
+    hasResult: !!result.recordset?.[0]
+  });
+
+  const updatedRecord = result.recordset[0] || null;
+  
+  if (updatedRecord) {
+    console.log("[bookedScheduleModel] ✅ Updated record:", {
+      bookedScheduleId: updatedRecord.BookedScheduleId,
+      paymentStatus: updatedRecord.PaymentStatus,
+      scheduleStatus: updatedRecord.ScheduleStatus
+    });
+  } else {
+    console.error("[bookedScheduleModel] ❌ UPDATE query returned no rows!");
+    console.error("[bookedScheduleModel] This means the UPDATE did not match any rows or the SELECT returned nothing");
+  }
+
+  console.log("[bookedScheduleModel] ========== updateBookedScheduleStatuses COMPLETED ==========");
+  return updatedRecord;
 }
 
 async function updateBookedScheduleTiming(bookedScheduleId, { bookingDate, startTime, endTime }) {
