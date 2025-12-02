@@ -275,12 +275,18 @@ class PostController {
         // Prepare medias array
         const allMedias = { ...images, ...videos };
 
-        // Build array for creation
+        // Build array for creation (giữ lại type để lưu đúng vào Media.type)
         const mediaPayloads = Object.keys(allMedias).map(key => {
           const mediaItem = allMedias[key];
+
+          // Nếu FE gửi type thì dùng luôn, nếu không thì suy ra từ nguồn (videos vs images)
+          const isVideoKey = videos && Object.prototype.hasOwnProperty.call(videos, key);
+          const inferredType = isVideoKey ? "video" : "image";
+
           return {
             url: mediaItem.url || mediaItem,
-            caption: mediaItem.caption || "" // Chỉ dùng caption của media, không fallback sang post.content
+            caption: mediaItem.caption || "", // Chỉ dùng caption của media, không fallback sang post.content
+            type: mediaItem.type || inferredType
           };
         });
 
@@ -377,6 +383,7 @@ class PostController {
             entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
             entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
             url: mediaValue.url,
+            type: mediaValue.type || "image", // Lưu đúng type: image / video
             caption: mediaValue.caption || "",
             comments: new Map(),
             likes: new Map()
