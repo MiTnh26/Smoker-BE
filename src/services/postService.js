@@ -2938,12 +2938,26 @@ class PostService {
         return { success: false, message: "Entity Account ID is required" };
       }
 
+      // Normalize và build filter tương tự getPostsByAuthor (case-insensitive, fallback theo entityId/accountId)
+      const normalizedEntityAccountId = String(entityAccountId).trim();
+      const escapedEntityAccountId = normalizedEntityAccountId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
       const baseFilter = {
-        entityAccountId: String(entityAccountId).trim(),
-        status: { $in: ["public", "active"] },
+        status: "public", // Chỉ lấy post public cho profile
         $or: [
-          { type: "post" },
-          { type: { $exists: false } }
+          // Match entityAccountId không phân biệt hoa thường (vì trong DB có thể lưu khác case)
+          { entityAccountId: { $regex: new RegExp(`^${escapedEntityAccountId}$`, 'i') } },
+          // Backward compatibility: một số post cũ lưu theo entityId hoặc accountId
+          { entityId: normalizedEntityAccountId },
+          { accountId: normalizedEntityAccountId }
+        ],
+        $and: [
+          {
+            $or: [
+              { type: "post" },
+              { type: { $exists: false } } // posts cũ không có field type
+            ]
+          }
         ]
       };
 
@@ -2974,7 +2988,11 @@ class PostService {
         .limit(limit + 1);
 
       if (includeMedias) query.populate('mediaIds');
-      if (includeMusic) query.populate('songId');
+      if (includeMusic) {
+        // Populate cả musicId và songId để đảm bảo nhạc luôn đầy đủ giống các API khác
+        query.populate('musicId');
+        query.populate('songId');
+      }
       if (populateReposts) query.populate('repostedFromId');
 
       const posts = await query.lean();
