@@ -1592,37 +1592,9 @@ class PostController {
 
       // Transform populated mediaIds to medias array
       for (const p of postsPlain) {
-        if (Array.isArray(p.mediaIds) && p.mediaIds.length > 0) {
-          p.medias = p.mediaIds.map(media => {
-            const mediaObj = media.toObject ? media.toObject() : media;
-            const url = (mediaObj.url || '').toLowerCase();
-            
-            // Detect type from URL extension
-            let detectedType = mediaObj.type;
-            if (url.includes('.mp4') || url.includes('.webm') || url.includes('.mov') || 
-                url.includes('.avi') || url.includes('.mkv') || url.includes('video')) {
-              detectedType = 'video';
-            } else if (url.includes('.mp3') || url.includes('.wav') || url.includes('.m4a') || 
-                       url.includes('.ogg') || url.includes('.aac') || url.includes('audio')) {
-              detectedType = 'audio';
-            } else if (!detectedType || detectedType === 'image') {
-              detectedType = detectedType || 'image';
-            }
-            
-            return {
-              _id: mediaObj._id,
-              id: mediaObj._id,
-              url: mediaObj.url,
-              caption: mediaObj.caption || "",
-              type: detectedType,
-              createdAt: mediaObj.createdAt,
-              uploadDate: mediaObj.createdAt
-            };
-          });
-        } else {
-          p.medias = [];
-        }
-        
+        // Giữ nguyên mediaIds để FE dùng, KHÔNG build thêm p.medias ở API này
+        // (tránh trả về trùng dữ liệu medias + mediaIds)
+
         // Transform music
         if (p.musicId) {
           p.music = p.musicId.toObject ? p.musicId.toObject() : p.musicId;
