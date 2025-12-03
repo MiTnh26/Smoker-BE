@@ -726,7 +726,7 @@ class PostController {
   async addComment(req, res) {
     try {
       const { postId } = req.params;
-      const { content, images, typeRole, entityAccountId, entityId, entityType } = req.body;
+      const { content, images, typeRole, entityAccountId, entityId, entityType, isAnonymous } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -778,6 +778,8 @@ class PostController {
         content,
         images,
         typeRole: typeRole || commentEntityType || "Account",
+        // Flag ẩn danh (logic gán anonymousIndex xử lý trong postService)
+        isAnonymous: Boolean(isAnonymous),
       };
       
       console.log("[POST] Adding comment with entityAccountId:", normalizedEntityAccountId, "entityType:", commentEntityType);
@@ -802,7 +804,7 @@ class PostController {
   async addReply(req, res) {
     try {
       const { postId, commentId } = req.params;
-      const { content, images, typeRole, entityAccountId, entityId, entityType } = req.body;
+      const { content, images, typeRole, entityAccountId, entityId, entityType, isAnonymous } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -853,7 +855,8 @@ class PostController {
         entityType: replyEntityType,
         content,
         images,
-        typeRole: typeRole || replyEntityType || "Account"
+        typeRole: typeRole || replyEntityType || "Account",
+        isAnonymous: Boolean(isAnonymous)
       };
       
       console.log("[POST] Adding reply with entityAccountId:", normalizedReplyEntityAccountId, "entityType:", replyEntityType);
@@ -878,7 +881,7 @@ class PostController {
   async addReplyToReply(req, res) {
     try {
       const { postId, commentId, replyId } = req.params;
-      const { content, images, typeRole, entityAccountId, entityId, entityType } = req.body;
+      const { content, images, typeRole, entityAccountId, entityId, entityType, isAnonymous } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -939,7 +942,8 @@ class PostController {
         entityType: replyEntityType,
         content,
         images,
-        typeRole: typeRole || replyEntityType || "Account"
+        typeRole: typeRole || replyEntityType || "Account",
+        isAnonymous: Boolean(isAnonymous)
       };
 
       const result = await postService.addReplyToReply(postId, commentId, replyId, replyData);
