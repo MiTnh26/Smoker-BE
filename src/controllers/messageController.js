@@ -200,12 +200,26 @@ class MessageController {
       // Normalize entityAccountIds for comparison
       const entityAccountIdsNormalized = entityAccountIds.map(id => normalizeParticipant(id));
       
-      // Find conversations where user is a participant
-      const conversations = await Conversation.find({
-        participants: { $in: entityAccountIds }
+      // Find active participants (not deleted) for this user
+      const activeParticipants = await Participant.find({
+        user_id: { $in: entityAccountIds },
+        $or: [{ is_deleted: { $exists: false } }, { is_deleted: false }],
       })
-      .sort({ last_message_time: -1, updatedAt: -1 })
-      .lean();
+        .select("conversation_id user_id")
+        .lean();
+
+      if (!activeParticipants || activeParticipants.length === 0) {
+        return res.status(200).json({ success: true, data: [], message: "Conversations retrieved successfully" });
+      }
+
+      const activeConversationIds = [...new Set(activeParticipants.map((p) => p.conversation_id))];
+
+      // Find conversations where user is an active participant
+      const conversations = await Conversation.find({
+        _id: { $in: activeConversationIds },
+      })
+        .sort({ last_message_time: -1, updatedAt: -1 })
+        .lean();
       
       // Get participants and unread counts for each conversation
       const enrichedConversations = await Promise.all(
@@ -288,9 +302,26 @@ class MessageController {
       // Normalize entityAccountIds for comparison
       const entityAccountIdsNormalized = entityAccountIds.map(id => normalizeParticipant(id));
       
-      // Find conversations where user is a participant
+      // Chỉ tính unread cho các cuộc trò chuyện mà user chưa xóa (is_deleted = false)
+      const activeParticipants = await Participant.find({
+        user_id: { $in: entityAccountIds },
+        $or: [{ is_deleted: { $exists: false } }, { is_deleted: false }],
+      })
+        .select("conversation_id user_id")
+        .lean();
+
+      if (!activeParticipants || activeParticipants.length === 0) {
+        return res.status(200).json({
+          success: true,
+          data: { totalUnreadCount: 0 },
+          message: "Total unread messages count retrieved successfully",
+        });
+      }
+
+      const activeConversationIds = [...new Set(activeParticipants.map((p) => p.conversation_id))];
+
       const conversations = await Conversation.find({
-        participants: { $in: entityAccountIds }
+        _id: { $in: activeConversationIds },
       }).lean();
       
       let totalUnreadCount = 0;
@@ -553,13 +584,16 @@ class MessageController {
         return res.status(404).json({ success: false, message: "Conversation not found" });
       }
       
-      // Check if user is a participant - use helper function for consistency
+      // Get current user's entityAccountIds
+      const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
+
+      // Check if user is a participant AND has not deleted this conversation
       let isParticipant = false;
       try {
-        const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
-        isParticipant = conversation.participants.some(p => {
+        const normalizedIds = allUserEntityAccountIds.map((id) => normalizeParticipant(id));
+        isParticipant = conversation.participants.some((p) => {
           const pNormalized = normalizeParticipant(p);
-          return allUserEntityAccountIds.includes(pNormalized);
+          return normalizedIds.includes(pNormalized);
         });
       } catch (error) {
         console.error('Error checking participant status:', error);
@@ -569,9 +603,15 @@ class MessageController {
         return res.status(403).json({ success: false, message: "Access denied" });
       }
 
-      // Get current user's entityAccountIds
-      const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
-    
+      // Check soft-delete on Participant: nếu user đã xóa cuộc trò chuyện này thì không cho load messages
+      const participantDoc = await Participant.findOne({
+        conversation_id: conversation._id,
+        user_id: { $in: allUserEntityAccountIds.map((id) => String(id).trim()) },
+      }).lean();
+
+      if (participantDoc && participantDoc.is_deleted) {
+        return res.status(404).json({ success: false, message: "Conversation not found" });
+      }
       // console.log('[DEBUG getMessages] allUserEntityAccountIds:', allUserEntityAccountIds);
       // console.log('[DEBUG getMessages] conversation._id:', conversation._id);
       
@@ -857,6 +897,100 @@ class MessageController {
       
       res.status(200).json({ success: true, message: "Messages marked as read" });
     } catch (error) {
+      res.status(500).json({ success: false, message: "Internal server error", error: error.message });
+    }
+  }
+
+  // Xóa toàn bộ cuộc trò chuyện (và tất cả tin nhắn bên trong)
+  async deleteConversation(req, res) {
+    try {
+      const { conversationId } = req.params;
+      const { entityAccountId: requestedEntityAccountId } = req.body || {};
+      const accountId = req.user?.id;
+
+      if (!accountId || !conversationId) {
+        return res.status(400).json({ success: false, message: "Missing required fields" });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+        return res.status(400).json({ success: false, message: "Invalid conversationId" });
+      }
+
+      const conversation = await Conversation.findById(conversationId);
+      if (!conversation) {
+        return res.status(404).json({ success: false, message: "Conversation not found" });
+      }
+
+      const userEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
+      if (!userEntityAccountIds || userEntityAccountIds.length === 0) {
+        return res.status(403).json({ success: false, message: "No EntityAccountId for this account" });
+      }
+
+      const normalizedSet = new Set(userEntityAccountIds.map((id) => normalizeParticipant(id)));
+      const participantsNormalized = conversation.participants.map((p) => normalizeParticipant(p));
+
+      // Check if user owns at least one participant
+      let participantIndex = -1;
+      for (let i = 0; i < participantsNormalized.length; i += 1) {
+        if (normalizedSet.has(participantsNormalized[i])) {
+          participantIndex = i;
+          break;
+        }
+      }
+      if (participantIndex === -1) {
+        return res.status(403).json({ success: false, message: "EntityAccountId is not a participant in this conversation." });
+      }
+
+      // Determine acting entity for logging/sockets (keep original formatting)
+      let actingEntityAccountId = conversation.participants[participantIndex];
+      if (requestedEntityAccountId) {
+        const requestedNormalized = normalizeParticipant(requestedEntityAccountId);
+        if (normalizedSet.has(requestedNormalized)) {
+          let matchIndex = -1;
+          for (let i = 0; i < participantsNormalized.length; i += 1) {
+            if (participantsNormalized[i] === requestedNormalized) {
+              matchIndex = i;
+              break;
+            }
+          }
+          if (matchIndex !== -1) {
+            actingEntityAccountId = conversation.participants[matchIndex];
+          }
+        }
+      }
+
+      // Soft delete ONLY for this participant: mark Participant.is_deleted/deleted_at
+      await Participant.findOneAndUpdate(
+        {
+          conversation_id: conversation._id,
+          user_id: actingEntityAccountId,
+        },
+        {
+          $set: {
+            is_deleted: true,
+            deleted_at: new Date(),
+          },
+        },
+        { new: true }
+      );
+
+      // Emit socket event chỉ cho chính actor, để FE ẩn cuộc trò chuyện phía người đó
+      try {
+        const io = getIO();
+        const payload = {
+          conversationId: conversationId.toString(),
+          actorEntityAccountId: actingEntityAccountId,
+        };
+
+        const actorRoom = String(actingEntityAccountId).trim();
+        io.to(actorRoom).emit('conversation_deleted', payload);
+      } catch (socketError) {
+        console.warn('[MessageController] Could not emit socket event for conversation_deleted:', socketError.message);
+      }
+
+      return res.status(200).json({ success: true, message: "Conversation deleted" });
+    } catch (error) {
+      console.error('Error in deleteConversation:', error);
       res.status(500).json({ success: false, message: "Internal server error", error: error.message });
     }
   }
