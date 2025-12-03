@@ -661,11 +661,56 @@ class PostService {
         };
       }
 
+      // Đảm bảo anonymousIdentityMap tồn tại (cho bình luận ẩn danh)
+      if (!post.anonymousIdentityMap) {
+        post.anonymousIdentityMap = new Map();
+      }
+
+      // Nếu là comment ẩn danh, gán anonymousIndex ổn định theo entityAccountId trong từng post
+      let resolvedAnonymousIndex = null;
+      if (commentData.isAnonymous) {
+        const rawEntityAccountId = commentData.entityAccountId || commentData.EntityAccountId;
+        const entityKey = rawEntityAccountId ? String(rawEntityAccountId).trim().toLowerCase() : null;
+
+        if (entityKey) {
+          let currentIndex = null;
+
+          // anonymousIdentityMap có thể là Map (mới) hoặc plain object (dữ liệu cũ)
+          if (post.anonymousIdentityMap instanceof Map) {
+            currentIndex = post.anonymousIdentityMap.get(entityKey) || null;
+          } else if (typeof post.anonymousIdentityMap === "object") {
+            currentIndex = post.anonymousIdentityMap[entityKey] || null;
+          }
+
+          if (!currentIndex) {
+            const size =
+              post.anonymousIdentityMap instanceof Map
+                ? post.anonymousIdentityMap.size
+                : Object.keys(post.anonymousIdentityMap || {}).length;
+            currentIndex = size + 1;
+
+            if (post.anonymousIdentityMap instanceof Map) {
+              post.anonymousIdentityMap.set(entityKey, currentIndex);
+            } else {
+              post.anonymousIdentityMap = {
+                ...(post.anonymousIdentityMap || {}),
+                [entityKey]: currentIndex,
+              };
+            }
+          }
+
+          resolvedAnonymousIndex = currentIndex;
+        }
+      }
+
       // Tạo ID mới cho comment
       const commentId = new mongoose.Types.ObjectId();
       const comment = {
         ...commentData,
-        _id: commentId
+        _id: commentId,
+        ...(resolvedAnonymousIndex !== null
+          ? { isAnonymous: true, anonymousIndex: resolvedAnonymousIndex }
+          : {}),
       };
 
       post.comments.set(commentId.toString(), comment);
@@ -735,7 +780,8 @@ class PostService {
             receiverEntityAccountId: String(receiverEntityAccountId),
             receiverEntityId: receiverEntityId,
             receiverEntityType: receiverEntityType,
-            postId: postId.toString()
+            postId: postId.toString(),
+            isAnonymousComment: Boolean(commentData.isAnonymous),
           });
         }
       } catch (notifError) {
@@ -865,7 +911,8 @@ class PostService {
             receiverEntityId: receiverEntityId,
             receiverEntityType: receiverEntityType,
             postId: postId.toString(),
-            commentId: commentId.toString() // Add commentId to scroll to the replied comment
+            commentId: commentId.toString(), // Add commentId to scroll to the replied comment
+            isAnonymousComment: Boolean(replyData.isAnonymous)
           });
         }
       } catch (notifError) {
@@ -991,7 +1038,8 @@ class PostService {
             receiverEntityId: receiverEntityId,
             receiverEntityType: receiverEntityType,
             postId: postId.toString(),
-            commentId: commentId.toString() // Add commentId to scroll to the replied comment
+            commentId: commentId.toString(), // Add commentId to scroll to the replied comment
+            isAnonymousComment: Boolean(replyData.isAnonymous)
           });
         }
       } catch (notifError) {
