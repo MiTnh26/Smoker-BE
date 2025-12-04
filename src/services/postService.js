@@ -380,6 +380,10 @@ class PostService {
                          typeof comments === 'object' ? Object.keys(comments).length :
                          typeof comments === 'number' ? comments : 0;
 
+    // Normalize viewer IDs before checking like status
+    const normalizedViewerAccountId = viewer.accountId ? String(viewer.accountId).trim() : null;
+    const normalizedViewerEntityAccountId = viewer.entityAccountId ? String(viewer.entityAccountId).trim() : null;
+
     const stats = {
       likeCount: likesCount,
       commentCount: commentsCount,
@@ -387,8 +391,8 @@ class PostService {
       viewCount: post.views || post.viewCount || 0,
       isLikedByMe: isCollectionLikedByViewer(
         post.likes,
-        viewer.accountId,
-        viewer.entityAccountId
+        normalizedViewerAccountId,
+        normalizedViewerEntityAccountId
       )
     };
 
@@ -3383,8 +3387,9 @@ class PostService {
   applyViewerContextToComments(posts, viewerAccountId, viewerEntityAccountId) {
     if (!posts || posts.length === 0) return;
 
-    const normalizedAccountId = normalizeGuid(viewerAccountId);
-    const normalizedEntityAccountId = normalizeGuid(viewerEntityAccountId);
+    // Normalize viewer IDs: trim whitespace (keep original case for storage, use toLowerCase for comparison in isCollectionLikedByViewer)
+    const normalizedAccountId = viewerAccountId ? String(viewerAccountId).trim() : null;
+    const normalizedEntityAccountId = viewerEntityAccountId ? String(viewerEntityAccountId).trim() : null;
 
     posts.forEach((post) => {
       if (!post || !post.comments || typeof post.comments !== "object") return;
