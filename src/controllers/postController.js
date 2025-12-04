@@ -687,7 +687,10 @@ class PostController {
       console.log('[PostController] getPostById - postId:', id, 'includeMedias:', includeMedias, 'includeMusic:', includeMusic);
       
       const viewerAccountId = req.user?.id || null;
-      const viewerEntityAccountId = req.user?.entityAccountId || null;
+      // Normalize viewerEntityAccountId để đảm bảo so sánh đúng (trim whitespace)
+      const viewerEntityAccountId = req.user?.entityAccountId 
+        ? String(req.user.entityAccountId).trim() 
+        : null;
 
       const result = await postService.getPostById(
         id,
@@ -1580,7 +1583,10 @@ class PostController {
 
       // Delegate sang PostService để xử lý giống feed (populate medias/music/reposts, enrich author, comments, topComments)
       const viewerAccountId = req.user?.id || null;
-      const viewerEntityAccountId = req.user?.entityAccountId || null;
+      // Normalize viewerEntityAccountId để đảm bảo so sánh đúng (trim whitespace)
+      const viewerEntityAccountId = req.user?.entityAccountId 
+        ? String(req.user.entityAccountId).trim() 
+        : null;
 
       const result = await postService.getPostsByEntityAccountId(entityAccountId, {
         limit: parseInt(limit, 10) || 10,
