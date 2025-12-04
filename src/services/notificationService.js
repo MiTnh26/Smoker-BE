@@ -89,6 +89,15 @@ class NotificationService {
 
     // 4. Gắn thông tin người gửi vào thông báo
     const enrichedNotifications = notifications.map(n => {
+      // If notification is anonymous, use anonymous info
+      if (n.isAnonymous) {
+        return {
+          ...n,
+          sender: { name: 'Ai đó', avatar: '/images/an-danh.png' },
+          isAnonymous: true
+        };
+      }
+      
       // Normalize senderEntityAccountId để match với map
       const normalizedSenderId = String(n.senderEntityAccountId || '').trim().toLowerCase();
       const senderInfo = senderInfoMap.get(normalizedSenderId);
@@ -99,7 +108,8 @@ class NotificationService {
       
       return {
         ...n,
-        sender: senderInfo || { name: 'Một người dùng', avatar: null }
+        sender: senderInfo || { name: 'Một người dùng', avatar: null },
+        isAnonymous: false
         };
     });
 
@@ -124,7 +134,8 @@ class NotificationService {
     receiverEntityAccountId,
     receiverEntityId,
     receiverEntityType,
-    postId
+    postId,
+    isAnonymousComment = false,
   }) {
     try {
       if (!senderEntityAccountId || !receiverEntityAccountId) {
@@ -138,29 +149,46 @@ class NotificationService {
 
       // Lấy thông tin người gửi từ SQL Server để tạo content
       let senderName = 'Một người dùng';
-      try {
-        const pool = await getPool();
-        const result = await pool.request()
-          .input("EntityAccountId", sql.UniqueIdentifier, senderEntityAccountId)
-          .query(`
-            SELECT TOP 1
-              CASE 
-                WHEN EA.EntityType = 'Account' THEN A.UserName
-                WHEN EA.EntityType = 'BarPage' THEN BP.BarName
-                WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
-                ELSE NULL
-              END AS name
-            FROM EntityAccounts EA
-            LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
-            LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
-            LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
-            WHERE EA.EntityAccountId = @EntityAccountId
-          `);
-        if (result.recordset.length > 0 && result.recordset[0].name) {
-          senderName = result.recordset[0].name;
+      let senderAvatar = null;
+      if (!isAnonymousComment) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, senderEntityAccountId)
+            .query(`
+              SELECT TOP 1
+                CASE 
+                  WHEN EA.EntityType = 'Account' THEN A.UserName
+                  WHEN EA.EntityType = 'BarPage' THEN BP.BarName
+                  WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
+                  ELSE NULL
+                END AS name,
+                CASE 
+                  WHEN EA.EntityType = 'Account' THEN A.Avatar
+                  WHEN EA.EntityType = 'BarPage' THEN BP.Avatar
+                  WHEN EA.EntityType = 'BusinessAccount' THEN BA.Avatar
+                  ELSE NULL
+                END AS avatar
+              FROM EntityAccounts EA
+              LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
+              LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
+              LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
+              WHERE EA.EntityAccountId = @EntityAccountId
+            `);
+          if (result.recordset.length > 0) {
+            if (result.recordset[0].name) {
+              senderName = result.recordset[0].name;
+            }
+            if (result.recordset[0].avatar) {
+              senderAvatar = result.recordset[0].avatar;
+            }
+          }
+        } catch (err) {
+          console.warn('[NotificationService] Could not get sender name for comment notification:', err);
         }
-      } catch (err) {
-        console.warn('[NotificationService] Could not get sender name for comment notification:', err);
+      } else {
+        senderName = 'Ai đó';
+        senderAvatar = '/images/an-danh.png';
       }
 
       const notification = new Notification({
@@ -175,7 +203,8 @@ class NotificationService {
         receiverEntityType: receiverEntityType || null,
         content: `${senderName} đã bình luận bài viết của bạn`,
         link: `/posts/${postId}`,
-        status: "Unread"
+        status: "Unread",
+        isAnonymous: isAnonymousComment
       });
 
       await notification.save();
@@ -193,9 +222,10 @@ class NotificationService {
           link: notification.link,
           status: notification.status,
           createdAt: notification.createdAt,
+          isAnonymous: notification.isAnonymous,
           sender: {
             name: senderName,
-            avatar: null // Có thể enrich thêm nếu cần
+            avatar: senderAvatar
           }
         };
         
@@ -226,7 +256,8 @@ class NotificationService {
     receiverEntityId,
     receiverEntityType,
     postId,
-    commentId
+    commentId,
+    isAnonymousComment = false,
   }) {
     try {
       if (!senderEntityAccountId || !receiverEntityAccountId) {
@@ -240,29 +271,46 @@ class NotificationService {
 
       // Lấy thông tin người gửi từ SQL Server để tạo content
       let senderName = 'Một người dùng';
-      try {
-        const pool = await getPool();
-        const result = await pool.request()
-          .input("EntityAccountId", sql.UniqueIdentifier, normalizedSenderEntityAccountId)
-          .query(`
-            SELECT TOP 1
-              CASE 
-                WHEN EA.EntityType = 'Account' THEN A.UserName
-                WHEN EA.EntityType = 'BarPage' THEN BP.BarName
-                WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
-                ELSE NULL
-              END AS name
-            FROM EntityAccounts EA
-            LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
-            LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
-            LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
-            WHERE EA.EntityAccountId = @EntityAccountId
-          `);
-        if (result.recordset.length > 0 && result.recordset[0].name) {
-          senderName = result.recordset[0].name;
+      let senderAvatar = null;
+      if (!isAnonymousComment) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("EntityAccountId", sql.UniqueIdentifier, normalizedSenderEntityAccountId)
+            .query(`
+              SELECT TOP 1
+                CASE 
+                  WHEN EA.EntityType = 'Account' THEN A.UserName
+                  WHEN EA.EntityType = 'BarPage' THEN BP.BarName
+                  WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
+                  ELSE NULL
+                END AS name,
+                CASE 
+                  WHEN EA.EntityType = 'Account' THEN A.Avatar
+                  WHEN EA.EntityType = 'BarPage' THEN BP.Avatar
+                  WHEN EA.EntityType = 'BusinessAccount' THEN BA.Avatar
+                  ELSE NULL
+                END AS avatar
+              FROM EntityAccounts EA
+              LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
+              LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
+              LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
+              WHERE EA.EntityAccountId = @EntityAccountId
+            `);
+          if (result.recordset.length > 0) {
+            if (result.recordset[0].name) {
+              senderName = result.recordset[0].name;
+            }
+            if (result.recordset[0].avatar) {
+              senderAvatar = result.recordset[0].avatar;
+            }
+          }
+        } catch (err) {
+          console.warn('[NotificationService] Could not get sender name for reply notification:', err);
         }
-      } catch (err) {
-        console.warn('[NotificationService] Could not get sender name for reply notification:', err);
+      } else {
+        senderName = 'Ai đó';
+        senderAvatar = '/images/an-danh.png';
       }
 
       const link = commentId 
@@ -281,7 +329,8 @@ class NotificationService {
         receiverEntityType: receiverEntityType || null,
         content: `${senderName} đã trả lời bình luận của bạn`,
         link: link,
-        status: "Unread"
+        status: "Unread",
+        isAnonymous: isAnonymousComment
       });
 
       await notification.save();
@@ -299,9 +348,10 @@ class NotificationService {
           link: notification.link,
           status: notification.status,
           createdAt: notification.createdAt,
+          isAnonymous: notification.isAnonymous,
           sender: {
             name: senderName,
-            avatar: null
+            avatar: senderAvatar
           }
         };
         

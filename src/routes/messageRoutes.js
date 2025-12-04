@@ -8,6 +8,8 @@ router.use(verifyToken);
 
 // Tạo hoặc lấy cuộc trò chuyện giữa 2 user
 router.post('/conversation', checkBannedStatus, messageController.getOrCreateConversation);
+// Xóa toàn bộ cuộc trò chuyện
+router.delete('/conversation/:conversationId', messageController.deleteConversation);
 // Lấy danh sách cuộc trò chuyện của user
 router.get('/conversations', messageController.getUserConversations);
 // Lấy tổng số tin nhắn chưa đọc

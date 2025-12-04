@@ -80,10 +80,9 @@ class PostController {
         }
       }
       
-      // Normalize entityAccountId để đảm bảo format nhất quán (lowercase, trim)
-      // Điều này quan trọng để getStories có thể match đúng story với userEntityAccountId
+      // Normalize entityAccountId - chỉ trim, giữ nguyên format gốc (uppercase/lowercase)
       if (postEntityAccountId) {
-        postEntityAccountId = String(postEntityAccountId).trim().toLowerCase();
+        postEntityAccountId = String(postEntityAccountId).trim();
       }
       
       console.log("[POST] Final entity info (normalized):", {
@@ -276,12 +275,18 @@ class PostController {
         // Prepare medias array
         const allMedias = { ...images, ...videos };
 
-        // Build array for creation
+        // Build array for creation (giữ lại type để lưu đúng vào Media.type)
         const mediaPayloads = Object.keys(allMedias).map(key => {
           const mediaItem = allMedias[key];
+
+          // Nếu FE gửi type thì dùng luôn, nếu không thì suy ra từ nguồn (videos vs images)
+          const isVideoKey = videos && Object.prototype.hasOwnProperty.call(videos, key);
+          const inferredType = isVideoKey ? "video" : "image";
+
           return {
             url: mediaItem.url || mediaItem,
-            caption: mediaItem.caption || "" // Chỉ dùng caption của media, không fallback sang post.content
+            caption: mediaItem.caption || "", // Chỉ dùng caption của media, không fallback sang post.content
+            type: mediaItem.type || inferredType
           };
         });
 
@@ -378,6 +383,7 @@ class PostController {
             entityId: postEntityId, // Entity ID (AccountId, BarPageId, BusinessAccountId)
             entityType: postEntityType, // Entity Type (Account, BarPage, BusinessAccount)
             url: mediaValue.url,
+            type: mediaValue.type || "image", // Lưu đúng type: image / video
             caption: mediaValue.caption || "",
             comments: new Map(),
             likes: new Map()
@@ -523,6 +529,7 @@ class PostController {
 
       // Enrich post với author info (authorName, authorAvatar) ngay sau khi tạo
       // Enrich cho tất cả các loại post (text, music, media)
+      // Đồng thời, nếu là repost, attach thêm thông tin tác giả gốc (originalPost)
       if (result.success && result.data) {
         try {
           let postDataToEnrich = null;
@@ -531,7 +538,6 @@ class PostController {
           // 1. Text post: result.data là post object trực tiếp
           // 2. Music post: result.data = {post: ..., music: ...}
           // 3. Media post: result.data = {post: ..., medias: ...}
-          
           if (result.data.post) {
             // Music post hoặc media post - enrich post trong nested object
             postDataToEnrich = result.data.post;
@@ -541,23 +547,47 @@ class PostController {
           }
           
           if (postDataToEnrich) {
-          // Convert to plain object nếu là Mongoose document
-          if (postDataToEnrich.toObject) {
-            postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
-          }
-          
-          // Enrich với author info
-          await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
-          
-          // Update result.data với enriched data
+            // Convert to plain object nếu là Mongoose document
+            if (postDataToEnrich.toObject) {
+              postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
+            }
+
+            // Enrich với author info cho post mới
+            await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
+
+            // Nếu là repost, attach thêm originalPost + author của bài gốc (KHÔNG kèm comments)
+            if (postDataToEnrich.repostedFromId) {
+              try {
+                const originalPostDoc = await Post.findById(postDataToEnrich.repostedFromId);
+                if (originalPostDoc) {
+                  let originalPost = originalPostDoc.toObject
+                    ? originalPostDoc.toObject({ flattenMaps: true })
+                    : originalPostDoc;
+
+                  await postService.enrichPostsWithAuthorInfo([originalPost]);
+                  // Không cần mang comments/topComments của post gốc sang response khi tạo repost
+                  if (originalPost.comments) {
+                    delete originalPost.comments;
+                  }
+                  if (originalPost.topComments) {
+                    delete originalPost.topComments;
+                  }
+                  postDataToEnrich.originalPost = originalPost;
+                }
+              } catch (origErr) {
+                console.warn("[POST] Could not enrich original post info for repost:", origErr.message);
+              }
+            }
+            
+            // Update result.data với enriched data
             if (result.data.post) {
               result.data.post = postDataToEnrich;
             } else {
-          result.data = postDataToEnrich;
+              result.data = postDataToEnrich;
             }
           }
         } catch (enrichError) {
-          console.warn("[POST] Error enriching post with author info:", enrichError.message);
+          console.warn("[POST] Error enriching post with author/original info:", enrichError.message);
           // Không fail request nếu enrich lỗi, chỉ log warning
         }
       }
@@ -720,7 +750,7 @@ class PostController {
   async addComment(req, res) {
     try {
       const { postId } = req.params;
-      const { content, images, typeRole, entityAccountId, entityId, entityType } = req.body;
+      const { content, images, typeRole, entityAccountId, entityId, entityType, isAnonymous } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -772,6 +802,8 @@ class PostController {
         content,
         images,
         typeRole: typeRole || commentEntityType || "Account",
+        // Flag ẩn danh (logic gán anonymousIndex xử lý trong postService)
+        isAnonymous: Boolean(isAnonymous),
       };
       
       console.log("[POST] Adding comment with entityAccountId:", normalizedEntityAccountId, "entityType:", commentEntityType);
@@ -796,7 +828,7 @@ class PostController {
   async addReply(req, res) {
     try {
       const { postId, commentId } = req.params;
-      const { content, images, typeRole, entityAccountId, entityId, entityType } = req.body;
+      const { content, images, typeRole, entityAccountId, entityId, entityType, isAnonymous } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -847,7 +879,8 @@ class PostController {
         entityType: replyEntityType,
         content,
         images,
-        typeRole: typeRole || replyEntityType || "Account"
+        typeRole: typeRole || replyEntityType || "Account",
+        isAnonymous: Boolean(isAnonymous)
       };
       
       console.log("[POST] Adding reply with entityAccountId:", normalizedReplyEntityAccountId, "entityType:", replyEntityType);
@@ -872,7 +905,7 @@ class PostController {
   async addReplyToReply(req, res) {
     try {
       const { postId, commentId, replyId } = req.params;
-      const { content, images, typeRole, entityAccountId, entityId, entityType } = req.body;
+      const { content, images, typeRole, entityAccountId, entityId, entityType, isAnonymous } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -933,7 +966,8 @@ class PostController {
         entityType: replyEntityType,
         content,
         images,
-        typeRole: typeRole || replyEntityType || "Account"
+        typeRole: typeRole || replyEntityType || "Account",
+        isAnonymous: Boolean(isAnonymous)
       };
 
       const result = await postService.addReplyToReply(postId, commentId, replyId, replyData);
@@ -1527,13 +1561,16 @@ class PostController {
       // Nếu có query parameter entityAccountId thì dùng nó, không thì coi authorId là entityAccountId
       const entityAccountId = req.query.entityAccountId || authorId;
       
-      // Build query - chỉ tìm theo entityAccountId hoặc entityId và status = "public"
+      // Build query - chỉ tìm theo entityAccountId, entityId hoặc accountId và status = "public"
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
+      // Note: Schema chỉ có status: "public", "private", "trashed", "deleted" - không có "active"
+      // Sử dụng regex case-insensitive để tìm entityAccountId (vì có thể lưu dạng uppercase hoặc lowercase)
       const query = {
-        status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active" (posts cũ có thể có "active", nhưng posts mới chỉ dùng "public")
+        status: "public", // Chỉ lấy posts công khai
         $or: [
-          { entityAccountId: entityAccountId },
-          { entityId: authorId } // Có thể authorId là entityId
+          { entityAccountId: { $regex: new RegExp(`^${entityAccountId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }, // Case-insensitive match
+          { entityId: authorId }, // Có thể authorId là entityId
+          { accountId: authorId } // Backward compatibility: tìm theo accountId nếu entityAccountId không khớp
         ],
         $and: [
           {
@@ -1590,37 +1627,9 @@ class PostController {
 
       // Transform populated mediaIds to medias array
       for (const p of postsPlain) {
-        if (Array.isArray(p.mediaIds) && p.mediaIds.length > 0) {
-          p.medias = p.mediaIds.map(media => {
-            const mediaObj = media.toObject ? media.toObject() : media;
-            const url = (mediaObj.url || '').toLowerCase();
-            
-            // Detect type from URL extension
-            let detectedType = mediaObj.type;
-            if (url.includes('.mp4') || url.includes('.webm') || url.includes('.mov') || 
-                url.includes('.avi') || url.includes('.mkv') || url.includes('video')) {
-              detectedType = 'video';
-            } else if (url.includes('.mp3') || url.includes('.wav') || url.includes('.m4a') || 
-                       url.includes('.ogg') || url.includes('.aac') || url.includes('audio')) {
-              detectedType = 'audio';
-            } else if (!detectedType || detectedType === 'image') {
-              detectedType = detectedType || 'image';
-            }
-            
-            return {
-              _id: mediaObj._id,
-              id: mediaObj._id,
-              url: mediaObj.url,
-              caption: mediaObj.caption || "",
-              type: detectedType,
-              createdAt: mediaObj.createdAt,
-              uploadDate: mediaObj.createdAt
-            };
-          });
-        } else {
-          p.medias = [];
-        }
-        
+        // Giữ nguyên mediaIds để FE dùng, KHÔNG build thêm p.medias ở API này
+        // (tránh trả về trùng dữ liệu medias + mediaIds)
+
         // Transform music
         if (p.musicId) {
           p.music = p.musicId.toObject ? p.musicId.toObject() : p.musicId;
