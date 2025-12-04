@@ -177,7 +177,7 @@ class NotificationService {
             `);
           if (result.recordset.length > 0) {
             if (result.recordset[0].name) {
-              senderName = result.recordset[0].name;
+            senderName = result.recordset[0].name;
             }
             if (result.recordset[0].avatar) {
               senderAvatar = result.recordset[0].avatar;
@@ -273,17 +273,17 @@ class NotificationService {
       let senderName = 'Một người dùng';
       let senderAvatar = null;
       if (!isAnonymousComment) {
-        try {
-          const pool = await getPool();
-          const result = await pool.request()
-            .input("EntityAccountId", sql.UniqueIdentifier, normalizedSenderEntityAccountId)
-            .query(`
-              SELECT TOP 1
-                CASE 
-                  WHEN EA.EntityType = 'Account' THEN A.UserName
-                  WHEN EA.EntityType = 'BarPage' THEN BP.BarName
-                  WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
-                  ELSE NULL
+      try {
+        const pool = await getPool();
+        const result = await pool.request()
+          .input("EntityAccountId", sql.UniqueIdentifier, normalizedSenderEntityAccountId)
+          .query(`
+            SELECT TOP 1
+              CASE 
+                WHEN EA.EntityType = 'Account' THEN A.UserName
+                WHEN EA.EntityType = 'BarPage' THEN BP.BarName
+                WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
+                ELSE NULL
                 END AS name,
                 CASE 
                   WHEN EA.EntityType = 'Account' THEN A.Avatar
@@ -291,22 +291,22 @@ class NotificationService {
                   WHEN EA.EntityType = 'BusinessAccount' THEN BA.Avatar
                   ELSE NULL
                 END AS avatar
-              FROM EntityAccounts EA
-              LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
-              LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
-              LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
-              WHERE EA.EntityAccountId = @EntityAccountId
-            `);
+            FROM EntityAccounts EA
+            LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
+            LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
+            LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
+            WHERE EA.EntityAccountId = @EntityAccountId
+          `);
           if (result.recordset.length > 0) {
             if (result.recordset[0].name) {
-              senderName = result.recordset[0].name;
+          senderName = result.recordset[0].name;
             }
             if (result.recordset[0].avatar) {
               senderAvatar = result.recordset[0].avatar;
             }
-          }
-        } catch (err) {
-          console.warn('[NotificationService] Could not get sender name for reply notification:', err);
+        }
+      } catch (err) {
+        console.warn('[NotificationService] Could not get sender name for reply notification:', err);
         }
       } else {
         senderName = 'Ai đó';
