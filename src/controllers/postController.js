@@ -529,6 +529,7 @@ class PostController {
 
       // Enrich post với author info (authorName, authorAvatar) ngay sau khi tạo
       // Enrich cho tất cả các loại post (text, music, media)
+      // Đồng thời, nếu là repost, attach thêm thông tin tác giả gốc (originalPost)
       if (result.success && result.data) {
         try {
           let postDataToEnrich = null;
@@ -537,7 +538,6 @@ class PostController {
           // 1. Text post: result.data là post object trực tiếp
           // 2. Music post: result.data = {post: ..., music: ...}
           // 3. Media post: result.data = {post: ..., medias: ...}
-          
           if (result.data.post) {
             // Music post hoặc media post - enrich post trong nested object
             postDataToEnrich = result.data.post;
@@ -547,23 +547,47 @@ class PostController {
           }
           
           if (postDataToEnrich) {
-          // Convert to plain object nếu là Mongoose document
-          if (postDataToEnrich.toObject) {
-            postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
-          }
-          
-          // Enrich với author info
-          await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
-          
-          // Update result.data với enriched data
+            // Convert to plain object nếu là Mongoose document
+            if (postDataToEnrich.toObject) {
+              postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
+            }
+
+            // Enrich với author info cho post mới
+            await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
+
+            // Nếu là repost, attach thêm originalPost + author của bài gốc (KHÔNG kèm comments)
+            if (postDataToEnrich.repostedFromId) {
+              try {
+                const originalPostDoc = await Post.findById(postDataToEnrich.repostedFromId);
+                if (originalPostDoc) {
+                  let originalPost = originalPostDoc.toObject
+                    ? originalPostDoc.toObject({ flattenMaps: true })
+                    : originalPostDoc;
+
+                  await postService.enrichPostsWithAuthorInfo([originalPost]);
+                  // Không cần mang comments/topComments của post gốc sang response khi tạo repost
+                  if (originalPost.comments) {
+                    delete originalPost.comments;
+                  }
+                  if (originalPost.topComments) {
+                    delete originalPost.topComments;
+                  }
+                  postDataToEnrich.originalPost = originalPost;
+                }
+              } catch (origErr) {
+                console.warn("[POST] Could not enrich original post info for repost:", origErr.message);
+              }
+            }
+            
+            // Update result.data với enriched data
             if (result.data.post) {
               result.data.post = postDataToEnrich;
             } else {
-          result.data = postDataToEnrich;
+              result.data = postDataToEnrich;
             }
           }
         } catch (enrichError) {
-          console.warn("[POST] Error enriching post with author info:", enrichError.message);
+          console.warn("[POST] Error enriching post with author/original info:", enrichError.message);
           // Không fail request nếu enrich lỗi, chỉ log warning
         }
       }
