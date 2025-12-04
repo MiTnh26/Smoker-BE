@@ -1,87 +1,97 @@
-# File: render.yaml
-# Đặt ở root repo GitHub → Render Blueprint sẽ tự đọc và chạy cả 3 service
-
 services:
   # =============================================
-  # 1. MySQL 8.0 – Render sẽ tự tạo Persistent Disk
+  # 1. MySQL 8.0 – Private service (internal only, persistent disk)
   # =============================================
-  - type: pgsql        # Render không có MySQL native → dùng trick: tự chạy MySQL bằng Docker + disk
+  - type: pserv
     name: smoker-mysql
+    runtime: image  # Pull prebuilt image
     image: mysql:8.0
-    plan: starter      # free tier đủ dùng
-    restart: always
+    plan: starter  # Free tier OK cho test; upgrade cho disk lớn
     envVars:
-      MYSQL_ROOT_PASSWORD: root123456        # bắt buộc phải có
-      MYSQL_DATABASE: revive_adserver
-      MYSQL_USER: smoker
-      MYSQL_PASSWORD: smoker123
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123456"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      startPeriod: 30s
-    # cho lần đầu khởi tạo chậm
-    disks:
-      - name: mysql-data
-        mountPath: /var/lib/mysql
-        sizeGB: 5
+      - key: MYSQL_ROOT_PASSWORD
+        value: root123456  # Bắt buộc; đổi thành secret mạnh
+      - key: MYSQL_DATABASE
+        value: revive_adserver
+      - key: MYSQL_USER
+        value: smoker
+      - key: MYSQL_PASSWORD
+        value: smoker123
+    disk:  # Persistent volume (như volumes trong compose)
+      name: mysql-data
+      mountPath: /var/lib/mysql
+      sizeGB: 1  # 1GB; free limit 0.1GB → cần paid nếu >0.1
+    region: singapore  # Gần VN; đổi oregon nếu US
+    numInstances: 1  # Single instance cho DB
 
   # =============================================
-  # 2. Revive Adserver (PHP + Apache)
+  # 2. Revive Adserver (Apache + PHP) – Public web service
   # =============================================
   - type: web
     name: smoker-revive
-    runtime: docker
+    runtime: image  # Pull prebuilt
+    image: jitesoft/revive-adserver:latest
     plan: starter
-    image:
-      url: jitesoft/revive-adserver:latest   # image chính thức, luôn update
-    regions:
-      - oregon
-    startCommand: apache2-foreground
-    healthcheckPath: /revive
+    startCommand: apache2-foreground  # Lệnh start từ image (như CMD trong Dockerfile)
+    healthCheckPath: /revive  # Path để Render check healthy (tương tự healthcheck trong compose)
     envVars:
-      REVIVE_DB_HOST: ${smoker-mysql.HOSTNAME}
-      REVIVE_DB_USER: smoker
-      REVIVE_DB_PASSWORD: smoker123
-      REVIVE_DB_NAME: revive_adserver
-      REVIVE_URL: https://${{RENDER_EXTERNAL_HOSTNAME}}/revive   # Render tự inject domain
-    autoDeploy: true
-    disks:
+      - key: REVIVE_DB_HOST
+        fromService:  # Internal connect đến MySQL
+          type: pserv
+          name: smoker-mysql
+          property: hostname  # Render inject (e.g., mysql-abc123.internal)
+      - key: REVIVE_DB_PORT
+        value: "3306"
+      - key: REVIVE_DB_USER
+        value: smoker
+      - key: REVIVE_DB_PASSWORD
+        value: smoker123
+      - key: REVIVE_DB_NAME
+        value: revive_adserver
+      - key: REVIVE_URL
+        value: https://${RENDER_EXTERNAL_HOSTNAME}/revive  # Render tự inject domain
+    disks:  # Persistent cho config/cache/images (như volumes)
       - name: revive-var
-        mountPath: /var/www/html/var
+        mountPath: /var/www/html/var  # Config + cache
+        sizeGB: 1
+      - name: revive-www
+        mountPath: /var/www/html  # Thư mục chính (sẽ tự cài lần đầu)
+        sizeGB: 1
+      - name: revive-plugins
+        mountPath: /var/www/html/plugins
         sizeGB: 1
       - name: revive-images
         mountPath: /var/www/html/www/images
         sizeGB: 1
-    dependsOn:
-      - smoker-mysql
+    region: singapore
+    autoDeploy: true  # Auto deploy khi push Git
 
   # =============================================
-  # 3. Node.js Backend (dùng Dockerfile của bạn)
+  # 3. Node.js Backend – Public web service (build từ Dockerfile)
   # =============================================
   - type: web
     name: smoker-node
-    runtime: docker
+    runtime: docker  # Build từ Dockerfile
+    dockerfilePath: ./Dockerfile  # Giả sử ở root; đổi ./node/Dockerfile nếu folder con
     plan: starter
-    dockerfilePath: ./Dockerfile            # Render tự build từ Dockerfile ở root
-    regions:
-      - oregon
     envVars:
-      NODE_ENV: production
-      DB_HOST: ${smoker-mysql.HOSTNAME}
-      DB_USER: smoker
-      DB_PASSWORD: smoker123
-      DB_NAME: revive_adserver
-      DB_PORT: "3306"
-      REVIVE_URL: https://smoker-revive.onrender.com/revive   # hoặc dùng RENDER variable nếu muốn
+      - key: NODE_ENV
+        value: production
+      - key: DB_HOST
+        fromService:  # Internal connect đến MySQL
+          type: pserv
+          name: smoker-mysql
+          property: hostname
+      - key: DB_PORT
+        value: "3306"
+      - key: DB_USER
+        value: smoker
+      - key: DB_PASSWORD
+        value: smoker123
+      - key: DB_NAME
+        value: revive_adserver
+      - key: REVIVE_URL
+        value: https://smoker-revive.onrender.com/revive  # Hoặc dùng ${RENDER_EXTERNAL_HOSTNAME} nếu dynamic
+    port: 9999  # Expose port từ Dockerfile (thêm EXPOSE 9999 nếu chưa có)
+    healthCheckPath: /health  # Endpoint check trong server.js (tùy chỉnh nếu có)
+    region: singapore
     autoDeploy: true
-    ports:
-      - "9999"
-    dependsOn:
-      - smoker-mysql
-      - smoker-revive   # nếu Node cần gọi Revive API ngay khi start
-
-# Optional: Tạo preview environments khi có PR
-preview:
-  enabled: true
