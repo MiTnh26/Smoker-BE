@@ -2,24 +2,24 @@ services:
   # =============================================
   # 1. MySQL 8.0 – Private service (internal only, persistent disk)
   # =============================================
-  - type: pserv
+  - type: private  # FIXED: Đổi từ pserv thành private (hợp lệ cho Docker internal như DB)
     name: smoker-mysql
     runtime: image  # Pull prebuilt image
     image: mysql:8.0
-    plan: starter  # Free tier OK cho test; upgrade cho disk lớn
+    plan: starter  # Free tier OK cho test; upgrade cho disk lớn (private services cần paid cho full features)
     envVars:
       - key: MYSQL_ROOT_PASSWORD
-        value: root123456  # Bắt buộc; đổi thành secret mạnh
+        value: root123456  # Bắt buộc; dùng generateValue: true nếu secret
       - key: MYSQL_DATABASE
         value: revive_adserver
       - key: MYSQL_USER
         value: smoker
       - key: MYSQL_PASSWORD
         value: smoker123
-    disk:  # Persistent volume (như volumes trong compose)
-      name: mysql-data
-      mountPath: /var/lib/mysql
-      sizeGB: 1  # 1GB; free limit 0.1GB → cần paid nếu >0.1
+    disks:  # FIXED: Đổi từ disk thành disks (array)
+      - name: mysql-data
+        mountPath: /var/lib/mysql
+        sizeGB: 1  # 1GB; free limit 0.1GB → cần Starter plan nếu >0.1GB cho DB persistent
     region: singapore  # Gần VN; đổi oregon nếu US
     numInstances: 1  # Single instance cho DB
 
@@ -31,12 +31,12 @@ services:
     runtime: image  # Pull prebuilt
     image: jitesoft/revive-adserver:latest
     plan: starter
-    startCommand: apache2-foreground  # Lệnh start từ image (như CMD trong Dockerfile)
-    healthCheckPath: /revive  # Path để Render check healthy (tương tự healthcheck trong compose)
+    startCommand: apache2-foreground  # Lệnh start từ image
+    healthCheckPath: /revive  # Path để Render check healthy
     envVars:
       - key: REVIVE_DB_HOST
         fromService:  # Internal connect đến MySQL
-          type: pserv
+          type: private  # FIXED: Đổi từ pserv thành private
           name: smoker-mysql
           property: hostname  # Render inject (e.g., mysql-abc123.internal)
       - key: REVIVE_DB_PORT
@@ -49,7 +49,7 @@ services:
         value: revive_adserver
       - key: REVIVE_URL
         value: https://${RENDER_EXTERNAL_HOSTNAME}/revive  # Render tự inject domain
-    disks:  # Persistent cho config/cache/images (như volumes)
+    disks:  # Persistent cho config/cache/images
       - name: revive-var
         mountPath: /var/www/html/var  # Config + cache
         sizeGB: 1
@@ -78,7 +78,7 @@ services:
         value: production
       - key: DB_HOST
         fromService:  # Internal connect đến MySQL
-          type: pserv
+          type: private  # FIXED: Đổi từ pserv thành private
           name: smoker-mysql
           property: hostname
       - key: DB_PORT
@@ -95,3 +95,7 @@ services:
     healthCheckPath: /health  # Endpoint check trong server.js (tùy chỉnh nếu có)
     region: singapore
     autoDeploy: true
+
+# Optional: Preview environments cho PR testing (tự động tạo env khi có PR)
+previews:
+  generation: automatic
