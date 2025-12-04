@@ -22,6 +22,16 @@ const participantSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Soft delete conversation for a specific participant
+    is_deleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    deleted_at: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

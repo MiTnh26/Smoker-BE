@@ -19,6 +19,69 @@ const countCollectionItems = (value) => {
   return 0;
 };
 
+/**
+ * Lấy top N comments có nhiều like nhất
+ * @param {Object|Map} comments - Comments object hoặc Map
+ * @param {Number} limit - Số lượng comments cần lấy (default: 2)
+ * @returns {Array} Mảng các comments đã sắp xếp theo số like giảm dần
+ */
+const getTopComments = (comments, limit = 2) => {
+  if (!comments) return [];
+
+  let commentsArray = [];
+
+  // Convert comments to array
+  if (comments instanceof Map) {
+    for (const [key, value] of comments.entries()) {
+      const comment = value.toObject ? value.toObject() : value;
+      commentsArray.push({
+        id: String(key),
+        ...comment
+      });
+    }
+  } else if (typeof comments === 'object' && !Array.isArray(comments)) {
+    for (const [key, value] of Object.entries(comments)) {
+      const comment = value.toObject ? value.toObject() : value;
+      commentsArray.push({
+        id: String(key),
+        ...comment
+      });
+    }
+  } else if (Array.isArray(comments)) {
+    commentsArray = comments.map((comment, index) => ({
+      id: comment._id || comment.id || String(index),
+      ...comment
+    }));
+  }
+
+  // Count likes for each comment
+  const commentsWithLikeCount = commentsArray.map(comment => {
+    let likeCount = 0;
+    if (comment.likes) {
+      if (comment.likes instanceof Map) {
+        likeCount = comment.likes.size;
+      } else if (Array.isArray(comment.likes)) {
+        likeCount = comment.likes.length;
+      } else if (typeof comment.likes === 'object') {
+        likeCount = Object.keys(comment.likes).length;
+      } else if (typeof comment.likes === 'number') {
+        likeCount = comment.likes;
+      }
+    }
+    return {
+      ...comment,
+      likeCount
+    };
+  });
+
+  // Sort by like count (descending) and take top N
+  const topComments = commentsWithLikeCount
+    .sort((a, b) => b.likeCount - a.likeCount)
+    .slice(0, limit);
+
+  return topComments;
+};
+
 const extractLikeEntityAccountId = (like, key) => {
   if (like && typeof like === "object") {
     return normalizeGuid(
@@ -395,6 +458,51 @@ class PostService {
         }
       }
 
+      // Attach original post info (author, avatar) for reposts when not already populated
+      const repostIdsToFetch = postsPlain
+        .filter(p => p.repostedFromId && !p.originalPost)
+        .map(p => {
+          if (typeof p.repostedFromId === "string") {
+            return p.repostedFromId;
+          }
+          if (p.repostedFromId && p.repostedFromId._id) {
+            return String(p.repostedFromId._id);
+          }
+          return String(p.repostedFromId);
+        })
+        .filter(Boolean);
+
+      if (repostIdsToFetch.length > 0) {
+        try {
+          const originalPosts = await Post.find({ _id: { $in: repostIdsToFetch } }).lean();
+          if (originalPosts.length > 0) {
+            await this.enrichPostsWithAuthorInfo(originalPosts);
+            const originalMap = new Map();
+            originalPosts.forEach(original => {
+              if (original.comments) delete original.comments;
+              if (original.topComments) delete original.topComments;
+              originalMap.set(String(original._id), original);
+            });
+
+            for (const post of postsPlain) {
+              const repostId = post.repostedFromId
+                ? (typeof post.repostedFromId === "string"
+                    ? post.repostedFromId
+                    : String(post.repostedFromId?._id || post.repostedFromId))
+                : null;
+              if (repostId && !post.originalPost) {
+                const original = originalMap.get(repostId);
+                if (original) {
+                  post.originalPost = original;
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.warn("[PostService] Could not attach original post info for reposts:", error.message);
+        }
+      }
+
       // Enrich posts with author information (now working with plain objects)
       await this.enrichPostsWithAuthorInfo(postsPlain);
       
@@ -410,6 +518,11 @@ class PostService {
       
       // Enrich comments and replies with author information
       await this.enrichCommentsWithAuthorInfo(postsPlain);
+
+      // Add top 2 comments for each post
+      postsPlain.forEach(post => {
+        post.topComments = getTopComments(post.comments, 2);
+      });
 
       // Create next cursor from last post
       let nextCursor = null;
@@ -566,6 +679,9 @@ class PostService {
       await this.enrichCommentsWithAuthorInfo([postData]);
       this.applyViewerContextToComments([postData], viewerAccountId, viewerEntityAccountId);
 
+      // Add top 2 comments
+      postData.topComments = getTopComments(postData.comments, 2);
+
       return {
         success: true,
         data: postData
@@ -590,11 +706,56 @@ class PostService {
         };
       }
 
+      // Đảm bảo anonymousIdentityMap tồn tại (cho bình luận ẩn danh)
+      if (!post.anonymousIdentityMap) {
+        post.anonymousIdentityMap = new Map();
+      }
+
+      // Nếu là comment ẩn danh, gán anonymousIndex ổn định theo entityAccountId trong từng post
+      let resolvedAnonymousIndex = null;
+      if (commentData.isAnonymous) {
+        const rawEntityAccountId = commentData.entityAccountId || commentData.EntityAccountId;
+        const entityKey = rawEntityAccountId ? String(rawEntityAccountId).trim().toLowerCase() : null;
+
+        if (entityKey) {
+          let currentIndex = null;
+
+          // anonymousIdentityMap có thể là Map (mới) hoặc plain object (dữ liệu cũ)
+          if (post.anonymousIdentityMap instanceof Map) {
+            currentIndex = post.anonymousIdentityMap.get(entityKey) || null;
+          } else if (typeof post.anonymousIdentityMap === "object") {
+            currentIndex = post.anonymousIdentityMap[entityKey] || null;
+          }
+
+          if (!currentIndex) {
+            const size =
+              post.anonymousIdentityMap instanceof Map
+                ? post.anonymousIdentityMap.size
+                : Object.keys(post.anonymousIdentityMap || {}).length;
+            currentIndex = size + 1;
+
+            if (post.anonymousIdentityMap instanceof Map) {
+              post.anonymousIdentityMap.set(entityKey, currentIndex);
+            } else {
+              post.anonymousIdentityMap = {
+                ...(post.anonymousIdentityMap || {}),
+                [entityKey]: currentIndex,
+              };
+            }
+          }
+
+          resolvedAnonymousIndex = currentIndex;
+        }
+      }
+
       // Tạo ID mới cho comment
       const commentId = new mongoose.Types.ObjectId();
       const comment = {
         ...commentData,
-        _id: commentId
+        _id: commentId,
+        ...(resolvedAnonymousIndex !== null
+          ? { isAnonymous: true, anonymousIndex: resolvedAnonymousIndex }
+          : {}),
       };
 
       post.comments.set(commentId.toString(), comment);
@@ -664,7 +825,8 @@ class PostService {
             receiverEntityAccountId: String(receiverEntityAccountId),
             receiverEntityId: receiverEntityId,
             receiverEntityType: receiverEntityType,
-            postId: postId.toString()
+            postId: postId.toString(),
+            isAnonymousComment: Boolean(commentData.isAnonymous),
           });
         }
       } catch (notifError) {
@@ -794,7 +956,8 @@ class PostService {
             receiverEntityId: receiverEntityId,
             receiverEntityType: receiverEntityType,
             postId: postId.toString(),
-            commentId: commentId.toString() // Add commentId to scroll to the replied comment
+            commentId: commentId.toString(), // Add commentId to scroll to the replied comment
+            isAnonymousComment: Boolean(replyData.isAnonymous)
           });
         }
       } catch (notifError) {
@@ -920,7 +1083,8 @@ class PostService {
             receiverEntityId: receiverEntityId,
             receiverEntityType: receiverEntityType,
             postId: postId.toString(),
-            commentId: commentId.toString() // Add commentId to scroll to the replied comment
+            commentId: commentId.toString(), // Add commentId to scroll to the replied comment
+            isAnonymousComment: Boolean(replyData.isAnonymous)
           });
         }
       } catch (notifError) {
@@ -2867,12 +3031,26 @@ class PostService {
         return { success: false, message: "Entity Account ID is required" };
       }
 
+      // Normalize và build filter tương tự getPostsByAuthor (case-insensitive, fallback theo entityId/accountId)
+      const normalizedEntityAccountId = String(entityAccountId).trim();
+      const escapedEntityAccountId = normalizedEntityAccountId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
       const baseFilter = {
-        entityAccountId: String(entityAccountId).trim(),
-        status: { $in: ["public", "active"] },
+        status: "public", // Chỉ lấy post public cho profile
         $or: [
-          { type: "post" },
-          { type: { $exists: false } }
+          // Match entityAccountId không phân biệt hoa thường (vì trong DB có thể lưu khác case)
+          { entityAccountId: { $regex: new RegExp(`^${escapedEntityAccountId}$`, 'i') } },
+          // Backward compatibility: một số post cũ lưu theo entityId hoặc accountId
+          { entityId: normalizedEntityAccountId },
+          { accountId: normalizedEntityAccountId }
+        ],
+        $and: [
+          {
+            $or: [
+              { type: "post" },
+              { type: { $exists: false } } // posts cũ không có field type
+            ]
+          }
         ]
       };
 
@@ -2903,7 +3081,11 @@ class PostService {
         .limit(limit + 1);
 
       if (includeMedias) query.populate('mediaIds');
-      if (includeMusic) query.populate('songId');
+      if (includeMusic) {
+        // Populate cả musicId và songId để đảm bảo nhạc luôn đầy đủ giống các API khác
+        query.populate('musicId');
+        query.populate('songId');
+      }
       if (populateReposts) query.populate('repostedFromId');
 
       const posts = await query.lean();
