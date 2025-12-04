@@ -7,7 +7,7 @@ const notificationService = require("./notificationService");
 
 const normalizeGuid = (value) => {
   if (!value) return null;
-  return String(value).trim().toLowerCase();
+  return String(value).trim();
 };
 
 const countCollectionItems = (value) => {
@@ -114,19 +114,27 @@ const isCollectionLikedByViewer = (likes, viewerAccountId, viewerEntityAccountId
   if (!likes) return false;
   if (!viewerAccountId && !viewerEntityAccountId) return false;
 
+  // Normalize viewer IDs for comparison: trim + toLowerCase() để so sánh case-insensitive
+  const normalizedViewerEntityAccountId = viewerEntityAccountId ? String(viewerEntityAccountId).trim().toLowerCase() : null;
+  const normalizedViewerAccountId = viewerAccountId ? String(viewerAccountId).trim().toLowerCase() : null;
+
   const checkMatch = (likeValue, key) => {
     const likeEntity = extractLikeEntityAccountId(likeValue, key);
     const likeAccount = extractLikeAccountId(likeValue, key);
+    
+    // Normalize like IDs để so sánh (case-insensitive)
+    const normalizedLikeEntity = likeEntity ? String(likeEntity).trim().toLowerCase() : null;
+    const normalizedLikeAccount = likeAccount ? String(likeAccount).trim().toLowerCase() : null;
 
-    if (viewerEntityAccountId && likeEntity && viewerEntityAccountId === likeEntity) {
+    if (normalizedViewerEntityAccountId && normalizedLikeEntity && normalizedViewerEntityAccountId === normalizedLikeEntity) {
       return true;
     }
 
-    if (!viewerEntityAccountId && viewerAccountId && likeAccount && viewerAccountId === likeAccount) {
+    if (!normalizedViewerEntityAccountId && normalizedViewerAccountId && normalizedLikeAccount && normalizedViewerAccountId === normalizedLikeAccount) {
       return true;
     }
 
-    if (viewerEntityAccountId && !likeEntity && viewerAccountId && likeAccount && viewerAccountId === likeAccount) {
+    if (normalizedViewerEntityAccountId && !normalizedLikeEntity && normalizedViewerAccountId && normalizedLikeAccount && normalizedViewerAccountId === normalizedLikeAccount) {
       return true;
     }
 
@@ -163,7 +171,7 @@ class PostService {
     
     // Chỉ so sánh entityAccountId
     if (resource.entityAccountId) {
-      return String(resource.entityAccountId).toLowerCase() === String(userEntityAccountId).toLowerCase();
+      return String(resource.entityAccountId).trim() === String(userEntityAccountId).trim();
     }
     
     return false;
@@ -292,8 +300,254 @@ class PostService {
     };
   }
 
+  /**
+   * Build Post DTO theo schema tối giản (author/medias/stats/originalPost/topComments/anonymous)
+   * @param {Object} rawPost - Raw post document hoặc plain object
+   * @param {Object} options - Options cho DTO builder
+   * @param {Object} options.viewer - Viewer info { accountId, entityAccountId }
+   * @param {Boolean} options.includeTopComments - Có include topComments không (default: true)
+   * @param {Boolean} options.isChild - Đây có phải là originalPost không (default: false)
+   * @returns {Object} Post DTO theo schema mới
+   */
+  buildPostDTO(rawPost, options = {}) {
+    if (!rawPost) return null;
+
+    const {
+      viewer = { accountId: null, entityAccountId: null },
+      includeTopComments = true,
+      isChild = false
+    } = options;
+
+    // Convert to plain object if needed
+    const post = rawPost.toObject ? rawPost.toObject({ flattenMaps: true }) : rawPost;
+
+    // 1. Build author object (keep original ID format, only trim whitespace)
+    const author = {
+      entityAccountId: post.entityAccountId ? String(post.entityAccountId).trim() : (post.authorEntityAccountId ? String(post.authorEntityAccountId).trim() : null),
+      entityId: post.entityId || post.authorEntityId || null,
+      entityType: post.entityType || post.authorEntityType || null,
+      name: post.authorName || 'Người dùng',
+      avatar: post.authorAvatar || null
+    };
+
+    // 2. Build medias array (clean, no buffer/__v/empty fields)
+    const medias = [];
+    if (post.medias && Array.isArray(post.medias) && post.medias.length > 0) {
+      post.medias.forEach(media => {
+        if (!media || !media.url) return; // Skip empty medias
+        
+        const mediaObj = media.toObject ? media.toObject({ flattenMaps: true }) : media;
+        const urlLower = (mediaObj.url || '').toLowerCase();
+        
+        // Detect type from URL extension
+        let detectedType = mediaObj.type;
+        if (urlLower.includes('.mp4') || urlLower.includes('.webm') || urlLower.includes('.mov') || 
+            urlLower.includes('.avi') || urlLower.includes('.mkv') || urlLower.includes('video')) {
+          detectedType = 'video';
+        } else if (urlLower.includes('.mp3') || urlLower.includes('.wav') || urlLower.includes('.m4a') || 
+                   urlLower.includes('.ogg') || urlLower.includes('.aac') || urlLower.includes('audio')) {
+          detectedType = 'audio';
+        } else {
+          detectedType = detectedType || 'image';
+        }
+
+        // Build clean media object (no buffer, __v, empty fields)
+        const cleanMedia = {
+          id: String(mediaObj._id || mediaObj.id || ''),
+          url: mediaObj.url || '',
+          type: detectedType,
+          caption: mediaObj.caption || '',
+          createdAt: mediaObj.createdAt || mediaObj.uploadDate || null
+        };
+
+        // Only add if has valid id and url
+        if (cleanMedia.id && cleanMedia.url) {
+          medias.push(cleanMedia);
+        }
+      });
+    }
+
+    // 3. Build stats object
+    const likes = post.likes || {};
+    const likesCount = likes instanceof Map ? likes.size : 
+                      Array.isArray(likes) ? likes.length :
+                      typeof likes === 'object' ? Object.keys(likes).length :
+                      typeof likes === 'number' ? likes : 0;
+
+    const comments = post.comments || {};
+    const commentsCount = comments instanceof Map ? comments.size :
+                         Array.isArray(comments) ? comments.length :
+                         typeof comments === 'object' ? Object.keys(comments).length :
+                         typeof comments === 'number' ? comments : 0;
+
+    const stats = {
+      likeCount: likesCount,
+      commentCount: commentsCount,
+      shareCount: post.shares || post.shareCount || 0,
+      viewCount: post.views || post.viewCount || 0,
+      isLikedByMe: isCollectionLikedByViewer(
+        post.likes,
+        viewer.accountId,
+        viewer.entityAccountId
+      )
+    };
+
+    // 4. Build music object (if exists)
+    let music = null;
+    if (post.music || post.musicId) {
+      const musicObj = (post.music || post.musicId).toObject ? 
+                      (post.music || post.musicId).toObject({ flattenMaps: true }) : 
+                      (post.music || post.musicId);
+      
+      if (musicObj && musicObj.audioUrl) {
+        music = {
+          id: String(musicObj._id || musicObj.id || ''),
+          title: musicObj.title || '',
+          artistName: musicObj.artistName || musicObj.artist || '',
+          audioUrl: musicObj.audioUrl || '',
+          thumbnailUrl: musicObj.thumbnailUrl || musicObj.thumbnail || null,
+          duration: musicObj.duration || null
+        };
+      }
+    } else if (post.song || post.songId) {
+      const songObj = (post.song || post.songId).toObject ? 
+                     (post.song || post.songId).toObject({ flattenMaps: true }) : 
+                     (post.song || post.songId);
+      
+      if (songObj && songObj.audioUrl) {
+        music = {
+          id: String(songObj._id || songObj.id || ''),
+          title: songObj.title || '',
+          artistName: songObj.artistName || songObj.artist || '',
+          audioUrl: songObj.audioUrl || '',
+          thumbnailUrl: songObj.thumbnailUrl || songObj.thumbnail || null,
+          duration: songObj.duration || null
+        };
+      }
+    }
+
+    // 5. Build originalPost recursively (if exists)
+    // For repost preview, we only need minimal data - full details available via detail endpoint
+    let originalPost = null;
+    if (post.originalPost || post.repostedFromId) {
+      const original = post.originalPost || post.repostedFromId;
+      if (original && typeof original === 'object') {
+        // Recursively build DTO for original post (as child, minimal data for preview)
+        originalPost = this.buildPostDTO(original, {
+          viewer,
+          includeTopComments: false, // Don't include topComments for originalPost to save space
+          isChild: true
+        });
+        
+        // Remove unnecessary fields from originalPost preview to reduce payload
+        // User can get full details from detail endpoint (/posts/:id/detail) if needed
+        if (originalPost.stats) {
+          // Keep only essential stats for preview (likeCount, commentCount)
+          // Remove shareCount, viewCount, isLikedByMe - not needed for preview
+          originalPost.stats = {
+            likeCount: originalPost.stats.likeCount || 0,
+            commentCount: originalPost.stats.commentCount || 0
+          };
+        }
+        // Remove anonymousIdentityMap completely from preview - not needed
+        delete originalPost.anonymousIdentityMap;
+        // Keep createdAt for time display (e.g., "2 phút trước") - already included in DTO
+        // createdAt is preserved from the recursive buildPostDTO call above
+      }
+    }
+
+    // 6. Build topComments array (only if not child and includeTopComments is true)
+    const topComments = [];
+    if (!isChild && includeTopComments && post.topComments && Array.isArray(post.topComments)) {
+      post.topComments.forEach(comment => {
+        if (!comment) return;
+        
+        const commentObj = comment.toObject ? comment.toObject({ flattenMaps: true }) : comment;
+        
+        // Count likes for comment
+        const commentLikes = commentObj.likes || {};
+        const commentLikeCount = commentLikes instanceof Map ? commentLikes.size :
+                                Array.isArray(commentLikes) ? commentLikes.length :
+                                typeof commentLikes === 'object' ? Object.keys(commentLikes).length :
+                                typeof commentLikes === 'number' ? commentLikes : 0;
+
+        // Build comment author (keep original ID format, only trim whitespace)
+        const commentAuthor = {
+          entityAccountId: commentObj.entityAccountId ? String(commentObj.entityAccountId).trim() : (commentObj.authorEntityAccountId ? String(commentObj.authorEntityAccountId).trim() : null),
+          entityId: commentObj.entityId || commentObj.authorEntityId || null,
+          entityType: commentObj.entityType || commentObj.authorEntityType || null,
+          name: commentObj.authorName || commentObj.userName || 'Người dùng',
+          avatar: commentObj.authorAvatar || commentObj.avatar || null
+        };
+
+        const replyCount = commentObj.replies ? 
+          (commentObj.replies instanceof Map ? commentObj.replies.size :
+            Array.isArray(commentObj.replies) ? commentObj.replies.length :
+              typeof commentObj.replies === 'object' ? Object.keys(commentObj.replies).length : 0) : 0;
+
+        topComments.push({
+          id: String(commentObj._id || commentObj.id || ''),
+          content: commentObj.content || commentObj.text || '',
+          // New DTO fields for FE convenience
+          authorName: commentAuthor.name,
+          authorAvatar: commentAuthor.avatar,
+          isAnonymous: Boolean(commentObj.isAnonymous),
+          anonymousIndex: commentObj.anonymousIndex || null,
+          likeCount: commentLikeCount,
+          replyCount,
+          // Structured fields
+          author: commentAuthor,
+          stats: {
+            likeCount: commentLikeCount,
+            replyCount,
+            isLikedByMe: isCollectionLikedByViewer(
+              commentObj.likes,
+              viewer.accountId,
+              viewer.entityAccountId
+            )
+          },
+          createdAt: commentObj.createdAt || null
+        });
+      });
+    }
+
+    // 7. Build anonymousIdentityMap summary
+    const anonymousIdentityMap = post.anonymousIdentityMap || {};
+    const anonymousSummary = {
+      hasAnonymous: anonymousIdentityMap && typeof anonymousIdentityMap === 'object' && Object.keys(anonymousIdentityMap).length > 0,
+      identityMapSize: anonymousIdentityMap && typeof anonymousIdentityMap === 'object' ? Object.keys(anonymousIdentityMap).length : 0
+    };
+
+    // 8. Build final DTO
+    const dto = {
+      id: String(post._id || post.id || ''),
+      content: post.content || '',
+      title: post.title || null,
+      createdAt: post.createdAt || null,
+      updatedAt: post.updatedAt || null,
+      author,
+      medias,
+      stats,
+      music,
+      originalPost,
+      topComments,
+      anonymousIdentityMap: anonymousSummary
+    };
+
+    // Remove null/empty fields to keep it minimal
+    if (!dto.title) delete dto.title;
+    if (!dto.music) delete dto.music;
+    if (!dto.originalPost) delete dto.originalPost;
+    if (dto.topComments.length === 0) delete dto.topComments;
+    if (!dto.anonymousIdentityMap.hasAnonymous) {
+      dto.anonymousIdentityMap = { hasAnonymous: false };
+    }
+
+    return dto;
+  }
+
   // Lấy tất cả posts
-    async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null, populateReposts = false) {
+    async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null, populateReposts = false, options = {}) {
     try {
       // Filter posts: chỉ lấy posts có status = "public" (công khai, chưa trash, chưa xóa)
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
@@ -401,11 +655,14 @@ class PostService {
           });
           plain.comments = commentsObj;
         }
-        // If it's a repost, rename 'repostedFromId' to 'originalPost'
+        // If it's a repost, attach populated document as originalPost and keep repostedFromId as string
         if (populateReposts && plain.repostedFromId) {
-          // Ensure originalPost is a plain object as well
-          plain.originalPost = plain.repostedFromId.toObject ? plain.repostedFromId.toObject({ flattenMaps: true }) : plain.repostedFromId;
-          delete plain.repostedFromId;
+          const original =
+            plain.repostedFromId.toObject
+              ? plain.repostedFromId.toObject({ flattenMaps: true })
+              : plain.repostedFromId;
+          plain.originalPost = original;
+          plain.repostedFromId = String(original?._id || original?.id || "");
         }
 
         return plain;
@@ -415,33 +672,30 @@ class PostService {
       if (Array.isArray(postsPlain)) {
         for (const p of postsPlain) {
           if (includeMedias) {
-            // Convert populated mediaIds to medias array with proper structure
+            // Convert populated mediaIds to medias array với đầy đủ thông tin (giống media document)
             if (Array.isArray(p.mediaIds) && p.mediaIds.length > 0) {
               p.medias = p.mediaIds.map(media => {
-                const mediaObj = media.toObject ? media.toObject() : media;
-                const url = (mediaObj.url || '').toLowerCase();
+                const mediaObj = media.toObject ? media.toObject({ flattenMaps: true }) : media;
+                const urlLower = (mediaObj.url || '').toLowerCase();
                 
                 // Detect type từ URL extension (ưu tiên hơn type trong DB để fix trường hợp type bị sai)
                 let detectedType = mediaObj.type;
-                if (url.includes('.mp4') || url.includes('.webm') || url.includes('.mov') || 
-                    url.includes('.avi') || url.includes('.mkv') || url.includes('video')) {
+                if (urlLower.includes('.mp4') || urlLower.includes('.webm') || urlLower.includes('.mov') || 
+                    urlLower.includes('.avi') || urlLower.includes('.mkv') || urlLower.includes('video')) {
                   detectedType = 'video';
-                } else if (url.includes('.mp3') || url.includes('.wav') || url.includes('.m4a') || 
-                           url.includes('.ogg') || url.includes('.aac') || url.includes('audio')) {
+                } else if (urlLower.includes('.mp3') || urlLower.includes('.wav') || urlLower.includes('.m4a') || 
+                           urlLower.includes('.ogg') || urlLower.includes('.aac') || urlLower.includes('audio')) {
                   detectedType = 'audio';
                 } else if (!detectedType || detectedType === 'image') {
                   // Nếu không detect được hoặc type là image, giữ nguyên
                   detectedType = detectedType || 'image';
                 }
                 
+                // Trả về full document + chuẩn hóa id/type
                 return {
-                  _id: mediaObj._id,
+                  ...mediaObj,
                   id: mediaObj._id,
-                  url: mediaObj.url,
-                  caption: mediaObj.caption || "",
-                  type: detectedType,
-                  createdAt: mediaObj.createdAt,
-                  uploadDate: mediaObj.createdAt
+                  type: detectedType
                 };
               });
             } else {
@@ -458,53 +712,15 @@ class PostService {
         }
       }
 
-      // Attach original post info (author, avatar) for reposts when not already populated
-      const repostIdsToFetch = postsPlain
-        .filter(p => p.repostedFromId && !p.originalPost)
-        .map(p => {
-          if (typeof p.repostedFromId === "string") {
-            return p.repostedFromId;
-          }
-          if (p.repostedFromId && p.repostedFromId._id) {
-            return String(p.repostedFromId._id);
-          }
-          return String(p.repostedFromId);
-        })
-        .filter(Boolean);
-
-      if (repostIdsToFetch.length > 0) {
-        try {
-          const originalPosts = await Post.find({ _id: { $in: repostIdsToFetch } }).lean();
-          if (originalPosts.length > 0) {
-            await this.enrichPostsWithAuthorInfo(originalPosts);
-            const originalMap = new Map();
-            originalPosts.forEach(original => {
-              if (original.comments) delete original.comments;
-              if (original.topComments) delete original.topComments;
-              originalMap.set(String(original._id), original);
-            });
-
-            for (const post of postsPlain) {
-              const repostId = post.repostedFromId
-                ? (typeof post.repostedFromId === "string"
-                    ? post.repostedFromId
-                    : String(post.repostedFromId?._id || post.repostedFromId))
-                : null;
-              if (repostId && !post.originalPost) {
-                const original = originalMap.get(repostId);
-                if (original) {
-                  post.originalPost = original;
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.warn("[PostService] Could not attach original post info for reposts:", error.message);
-        }
-      }
-
       // Enrich posts with author information (now working with plain objects)
       await this.enrichPostsWithAuthorInfo(postsPlain);
+      // Enrich original posts for reposts so FE có authorName/authorAvatar + medias/music
+      const originalPosts = postsPlain
+        .map(p => p.originalPost)
+        .filter(Boolean);
+      if (originalPosts.length > 0) {
+        await this.enrichPostsWithAuthorInfo(originalPosts);
+      }
       
       // Đảm bảo mọi post đều có author info (double-check fallback)
       postsPlain.forEach(post => {
@@ -522,9 +738,35 @@ class PostService {
       // Add top 2 comments for each post
       postsPlain.forEach(post => {
         post.topComments = getTopComments(post.comments, 2);
+
+        // Nếu là repost và bài gốc có medias, di chuyển medias/musics sang originalPost để tránh trùng ở post wrapper
+        if (post.originalPost && Array.isArray(post.medias) && post.medias.length > 0) {
+          const original = post.originalPost;
+          if (!original.medias || !Array.isArray(original.medias) || original.medias.length === 0) {
+            original.medias = post.medias;
+          }
+          // wrapper repost không cần giữ medias nữa
+          post.medias = [];
+        }
       });
 
-      // Create next cursor from last post
+      // Get viewer info from options
+      const viewerAccountId = options?.viewerAccountId || null;
+      const viewerEntityAccountId = options?.viewerEntityAccountId || null;
+
+      // Transform posts to DTO format
+      const postsDTO = postsPlain.map(post => {
+        return this.buildPostDTO(post, {
+          viewer: {
+            accountId: viewerAccountId,
+            entityAccountId: viewerEntityAccountId
+          },
+          includeTopComments: true,
+          isChild: false
+        });
+      }).filter(Boolean); // Filter out null posts
+
+      // Create next cursor from last post (use original post for cursor, not DTO)
       let nextCursor = null;
       if (postsPlain.length > 0) {
         const lastPost = postsPlain[postsPlain.length - 1];
@@ -541,7 +783,7 @@ class PostService {
 
       return {
         success: true,
-        data: postsPlain, // Return plain objects instead of Mongoose documents
+        data: postsDTO, // Return DTO objects
         nextCursor: nextCursor ? Buffer.from(JSON.stringify(nextCursor)).toString('base64') : null,
         hasMore: hasMore,
         pagination: {
@@ -560,19 +802,19 @@ class PostService {
     }
   }
 
-  // Lấy post theo ID
-  async getPostById(postId, includeMedias = false, includeMusic = false, options = {}) {
+  // Lấy post theo ID (full detail với comments và topComments)
+  async getPostById(postId, includeMedias = true, includeMusic = true, options = {}) {
     try {
       console.log('[PostService] getPostById - postId:', postId, 'includeMedias:', includeMedias, 'includeMusic:', includeMusic);
       const viewerAccountId = options?.viewerAccountId || null;
       const viewerEntityAccountId = options?.viewerEntityAccountId || null;
       
-      // Chỉ lấy post có status = "public" (công khai, chưa trash, chưa xóa)
-      // Hoặc status = "private" nếu user là owner
+      // Lấy post với populate medias và music
       const query = Post.findOne({ 
         _id: postId, 
-        status: { $in: ["public", "private"] } // Cho phép lấy cả public và private
+        status: { $in: ["public", "private"] }
       });
+      
       if (includeMedias) query.populate('mediaIds');
       if (includeMusic) {
         query.populate('songId');
@@ -580,8 +822,6 @@ class PostService {
       }
 
       const post = await query.lean();
-      
-      console.log('[PostService] getPostById - Post found:', !!post);
 
       if (!post) {
         return {
@@ -590,24 +830,75 @@ class PostService {
         };
       }
 
-      // Convert Mongoose document to plain object
+      // Convert to plain object and prepare for DTO transformation
       const postData = post;
-      // Normalize populated fields into desired response shape
-      if (includeMedias && Array.isArray(postData.mediaIds)) {
+
+      // Populate repostedFromId if exists (for originalPost in DTO)
+      if (postData.repostedFromId) {
+        const repostQuery = Post.findById(postData.repostedFromId).lean();
+        if (includeMedias) repostQuery.populate('mediaIds');
+        if (includeMusic) {
+          repostQuery.populate('songId');
+          repostQuery.populate('musicId');
+        }
+        const originalPost = await repostQuery;
+        if (originalPost) {
+          postData.repostedFromId = originalPost;
+        }
+      }
+
+      // Convert Maps to objects for processing
+      if (postData.likes && postData.likes instanceof Map) {
+        const likesObj = {};
+        postData.likes.forEach((value, key) => {
+          likesObj[String(key)] = value;
+        });
+        postData.likes = likesObj;
+      }
+
+      if (postData.comments && postData.comments instanceof Map) {
+        const commentsObj = {};
+        for (const [key, value] of postData.comments.entries()) {
+          commentsObj[String(key)] = value.toObject ? value.toObject({ flattenMaps: true }) : value;
+          if (commentsObj[String(key)].replies && commentsObj[String(key)].replies instanceof Map) {
+            const repliesObj = {};
+            for (const [replyKey, replyValue] of commentsObj[String(key)].replies.entries()) {
+              repliesObj[String(replyKey)] = replyValue.toObject ? replyValue.toObject({ flattenMaps: true }) : replyValue;
+            }
+            commentsObj[String(key)].replies = repliesObj;
+          }
+        }
+        postData.comments = commentsObj;
+      } else if (postData.comments && typeof postData.comments === 'object' && !Array.isArray(postData.comments)) {
+        const commentsObj = {};
+        for (const [key, value] of Object.entries(postData.comments)) {
+          const commentValue = value.toObject ? value.toObject({ flattenMaps: true }) : value;
+          commentsObj[String(key)] = commentValue;
+          if (commentValue.replies && commentValue.replies instanceof Map) {
+            const repliesObj = {};
+            for (const [replyKey, replyValue] of commentValue.replies.entries()) {
+              repliesObj[String(replyKey)] = replyValue.toObject ? replyValue.toObject({ flattenMaps: true }) : replyValue;
+            }
+            commentsObj[String(key)].replies = repliesObj;
+          }
+        }
+        postData.comments = commentsObj;
+      }
+
+      // Build medias array from mediaIds (clean, no buffer/__v)
+      if (includeMedias && Array.isArray(postData.mediaIds) && postData.mediaIds.length > 0) {
         postData.medias = postData.mediaIds.map(media => {
-          const mediaObj = media.toObject ? media.toObject() : media;
-          const url = (mediaObj.url || '').toLowerCase();
+          const mediaObj = media.toObject ? media.toObject({ flattenMaps: true }) : media;
+          const urlLower = (mediaObj.url || '').toLowerCase();
           
-          // Detect type từ URL extension (ưu tiên hơn type trong DB để fix trường hợp type bị sai)
           let detectedType = mediaObj.type;
-          if (url.includes('.mp4') || url.includes('.webm') || url.includes('.mov') || 
-              url.includes('.avi') || url.includes('.mkv') || url.includes('video')) {
+          if (urlLower.includes('.mp4') || urlLower.includes('.webm') || urlLower.includes('.mov') || 
+              urlLower.includes('.avi') || urlLower.includes('.mkv') || urlLower.includes('video')) {
             detectedType = 'video';
-          } else if (url.includes('.mp3') || url.includes('.wav') || url.includes('.m4a') || 
-                     url.includes('.ogg') || url.includes('.aac') || url.includes('audio')) {
+          } else if (urlLower.includes('.mp3') || urlLower.includes('.wav') || urlLower.includes('.m4a') || 
+                     urlLower.includes('.ogg') || urlLower.includes('.aac') || urlLower.includes('audio')) {
             detectedType = 'audio';
-          } else if (!detectedType || detectedType === 'image') {
-            // Nếu không detect được hoặc type là image, giữ nguyên
+          } else {
             detectedType = detectedType || 'image';
           }
           
@@ -617,76 +908,181 @@ class PostService {
             url: mediaObj.url,
             caption: mediaObj.caption || "",
             type: detectedType,
-            createdAt: mediaObj.createdAt,
-            uploadDate: mediaObj.createdAt
+            createdAt: mediaObj.createdAt
           };
         });
+      } else {
+        postData.medias = [];
       }
+
+      // Map music/song
       if (includeMusic && postData.songId) {
-        postData.song = postData.songId;
+        postData.song = postData.songId.toObject ? postData.songId.toObject({ flattenMaps: true }) : postData.songId;
       }
       if (includeMusic && postData.musicId) {
-        postData.music = postData.musicId;
+        postData.music = postData.musicId.toObject ? postData.musicId.toObject({ flattenMaps: true }) : postData.musicId;
       }
 
-
-      // Ensure likes Map is properly converted to plain object
-      if (postData.likes && postData.likes instanceof Map) {
-        const likesObj = {};
-        postData.likes.forEach((value, key) => {
-          likesObj[String(key)] = value;
-        });
-        postData.likes = likesObj;
-      }
-
-      // Ensure comments Map is properly converted to plain object
-      if (postData.comments && postData.comments instanceof Map) {
-        const commentsObj = {};
-        for (const [key, value] of postData.comments.entries()) {
-          commentsObj[String(key)] = value.toObject ? value.toObject() : value;
-          // Also convert replies Map if exists
-          if (commentsObj[String(key)].replies && commentsObj[String(key)].replies instanceof Map) {
-            const repliesObj = {};
-            for (const [replyKey, replyValue] of commentsObj[String(key)].replies.entries()) {
-              repliesObj[String(replyKey)] = replyValue.toObject ? replyValue.toObject() : replyValue;
-            }
-            commentsObj[String(key)].replies = repliesObj;
-          }
-        }
-        postData.comments = commentsObj;
-      } else if (postData.comments && typeof postData.comments === 'object' && !Array.isArray(postData.comments)) {
-        // If already an object but might have Map values, check and convert
-        const commentsObj = {};
-        for (const [key, value] of Object.entries(postData.comments)) {
-          const commentValue = value.toObject ? value.toObject() : value;
-          commentsObj[String(key)] = commentValue;
-          // Convert replies if it's a Map
-          if (commentValue.replies && commentValue.replies instanceof Map) {
-            const repliesObj = {};
-            for (const [replyKey, replyValue] of commentValue.replies.entries()) {
-              repliesObj[String(replyKey)] = replyValue.toObject ? replyValue.toObject() : replyValue;
-            }
-            commentsObj[String(key)].replies = repliesObj;
-          }
-        }
-        postData.comments = commentsObj;
+      // Attach originalPost if repost
+      if (postData.repostedFromId && typeof postData.repostedFromId === 'object') {
+        postData.originalPost = postData.repostedFromId;
       }
 
       // Enrich post with author information
       await this.enrichPostsWithAuthorInfo([postData]);
       
+      // Enrich originalPost author if exists
+      if (postData.originalPost) {
+        await this.enrichPostsWithAuthorInfo([postData.originalPost]);
+      }
+      
       // Enrich comments and replies with author information
       await this.enrichCommentsWithAuthorInfo([postData]);
+      
+      // Apply viewer context (likedByViewer, canManage)
       this.applyViewerContextToComments([postData], viewerAccountId, viewerEntityAccountId);
 
-      // Add top 2 comments
+      // Import getTopComments helper
+      const getTopComments = (comments, limit = 2) => {
+        if (!comments) return [];
+        let commentsArray = [];
+        if (comments instanceof Map) {
+          for (const [key, value] of comments.entries()) {
+            const comment = value.toObject ? value.toObject({ flattenMaps: true }) : value;
+            commentsArray.push({ id: String(key), ...comment });
+          }
+        } else if (typeof comments === 'object' && !Array.isArray(comments)) {
+          for (const [key, value] of Object.entries(comments)) {
+            const comment = value.toObject ? value.toObject({ flattenMaps: true }) : value;
+            commentsArray.push({ id: String(key), ...comment });
+          }
+        } else if (Array.isArray(comments)) {
+          commentsArray = comments.map((comment, index) => ({
+            id: comment._id || comment.id || String(index),
+            ...comment
+          }));
+        }
+        const commentsWithLikeCount = commentsArray.map(comment => {
+          let likeCount = 0;
+          if (comment.likes) {
+            if (comment.likes instanceof Map) likeCount = comment.likes.size;
+            else if (Array.isArray(comment.likes)) likeCount = comment.likes.length;
+            else if (typeof comment.likes === 'object') likeCount = Object.keys(comment.likes).length;
+            else if (typeof comment.likes === 'number') likeCount = comment.likes;
+          }
+          return { ...comment, likeCount };
+        });
+        const sorted = commentsWithLikeCount.sort((a, b) => b.likeCount - a.likeCount);
+        return sorted.slice(0, limit);
+      };
       postData.topComments = getTopComments(postData.comments, 2);
+
+      // Transform main post to DTO format
+      // Note: topComments chỉ có ở getAllPosts (feed), không có ở getPostById
+      const postDTO = this.buildPostDTO(postData, {
+        viewer: {
+          accountId: viewerAccountId,
+          entityAccountId: viewerEntityAccountId
+        },
+        includeTopComments: false, // Không include topComments cho getPostById
+        isChild: false
+      });
+
+      // For detail view, build minimal comments array (only essential fields)
+      if (postData.comments && typeof postData.comments === 'object' && !Array.isArray(postData.comments)) {
+        const commentsArray = [];
+        for (const [key, comment] of Object.entries(postData.comments)) {
+          const commentObj = comment.toObject ? comment.toObject({ flattenMaps: true }) : comment;
+          
+          // Count likes (minimal calculation)
+          const commentLikes = commentObj.likes || {};
+          const commentLikeCount = commentLikes instanceof Map ? commentLikes.size :
+                                  Array.isArray(commentLikes) ? commentLikes.length :
+                                  typeof commentLikes === 'object' ? Object.keys(commentLikes).length :
+                                  typeof commentLikes === 'number' ? commentLikes : 0;
+
+          // Build minimal comment author (only what CommentSection needs, keep original ID format)
+          const commentAuthor = {
+            entityAccountId: commentObj.entityAccountId ? String(commentObj.entityAccountId).trim() : (commentObj.authorEntityAccountId ? String(commentObj.authorEntityAccountId).trim() : null),
+            entityId: commentObj.entityId || commentObj.authorEntityId || null,
+            entityType: commentObj.entityType || commentObj.authorEntityType || null,
+            name: commentObj.authorName || commentObj.userName || 'Người dùng',
+            avatar: commentObj.authorAvatar || commentObj.avatar || null
+          };
+
+          // Build minimal replies array
+          const repliesArray = [];
+          if (commentObj.replies && typeof commentObj.replies === 'object') {
+            const repliesEntries = commentObj.replies instanceof Map ?
+                                 Array.from(commentObj.replies.entries()) :
+                                 Object.entries(commentObj.replies);
+            
+            for (const [replyKey, reply] of repliesEntries) {
+              const replyObj = reply.toObject ? reply.toObject({ flattenMaps: true }) : reply;
+              
+              const replyLikes = replyObj.likes || {};
+              const replyLikeCount = replyLikes instanceof Map ? replyLikes.size :
+                                   Array.isArray(replyLikes) ? replyLikes.length :
+                                   typeof replyLikes === 'object' ? Object.keys(replyLikes).length :
+                                   typeof replyLikes === 'number' ? replyLikes : 0;
+
+              const replyAuthor = {
+                entityAccountId: replyObj.entityAccountId ? String(replyObj.entityAccountId).trim() : (replyObj.authorEntityAccountId ? String(replyObj.authorEntityAccountId).trim() : null),
+                entityId: replyObj.entityId || replyObj.authorEntityId || null,
+                entityType: replyObj.entityType || replyObj.authorEntityType || null,
+                name: replyObj.authorName || replyObj.userName || 'Người dùng',
+                avatar: replyObj.authorAvatar || replyObj.avatar || null
+              };
+
+              // Minimal reply object (only essential fields)
+              repliesArray.push({
+                id: String(replyObj._id || replyObj.id || replyKey),
+                content: replyObj.content || replyObj.text || '',
+                author: replyAuthor,
+                authorName: replyAuthor.name,
+                authorAvatar: replyAuthor.avatar,
+                authorEntityAccountId: replyAuthor.entityAccountId,
+                authorEntityId: replyAuthor.entityId,
+                authorEntityType: replyAuthor.entityType,
+                stats: {
+                  likeCount: replyLikeCount,
+                  isLikedByMe: replyObj.likedByViewer || false
+                },
+                createdAt: replyObj.createdAt || null
+              });
+            }
+          }
+
+          // Minimal comment object (only essential fields for CommentSection)
+          commentsArray.push({
+            id: String(commentObj._id || commentObj.id || key),
+            content: commentObj.content || commentObj.text || '',
+            author: commentAuthor,
+            authorName: commentAuthor.name,
+            authorAvatar: commentAuthor.avatar,
+            authorEntityAccountId: commentAuthor.entityAccountId,
+            authorEntityId: commentAuthor.entityId,
+            authorEntityType: commentAuthor.entityType,
+            stats: {
+              likeCount: commentLikeCount,
+              replyCount: repliesArray.length,
+              isLikedByMe: commentObj.likedByViewer || false
+            },
+            replies: repliesArray,
+            createdAt: commentObj.createdAt || null
+          });
+        }
+        
+        // Add minimal comments array to DTO
+        postDTO.comments = commentsArray;
+      }
 
       return {
         success: true,
-        data: postData
+        data: postDTO
       };
     } catch (error) {
+      console.error('[PostService] Error getting post:', error);
       return {
         success: false,
         message: "Error fetching post",
@@ -715,7 +1111,7 @@ class PostService {
       let resolvedAnonymousIndex = null;
       if (commentData.isAnonymous) {
         const rawEntityAccountId = commentData.entityAccountId || commentData.EntityAccountId;
-        const entityKey = rawEntityAccountId ? String(rawEntityAccountId).trim().toLowerCase() : null;
+        const entityKey = rawEntityAccountId ? String(rawEntityAccountId).trim() : null;
 
         if (entityKey) {
           let currentIndex = null;
@@ -772,7 +1168,7 @@ class PostService {
         
         // Chỉ tạo notification nếu có đầy đủ entityAccountId và sender !== receiver
         if (senderEntityAccountId && receiverEntityAccountId && 
-            String(senderEntityAccountId).trim().toLowerCase() !== String(receiverEntityAccountId).trim().toLowerCase()) {
+            String(senderEntityAccountId).trim() !== String(receiverEntityAccountId).trim()) {
           
           // Lấy sender và receiver accountIds cho backward compatibility
           const senderAccountId = commentData.accountId;
@@ -1258,15 +1654,22 @@ class PostService {
       }
 
       // Tìm like hiện tại (nếu có) - ưu tiên entityAccountId, fallback accountId
+      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
       let existingLikeKey = null;
+      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim().toLowerCase() : null;
+      
       for (const [likeId, like] of reply.likes.entries()) {
+        // Convert like to plain object if needed
+        const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
+        
         // So sánh bằng entityAccountId nếu có, fallback về accountId
-        if (userEntityAccountId && like.entityAccountId) {
-          if (String(like.entityAccountId).toLowerCase() === String(userEntityAccountId).toLowerCase()) {
+        if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
+          const normalizedLikeEntityAccountId = String(likeObj.entityAccountId).trim().toLowerCase();
+          if (normalizedLikeEntityAccountId === normalizedUserEntityAccountId) {
             existingLikeKey = likeId;
             break;
           }
-        } else if (like.accountId && String(like.accountId).toString() === userId.toString()) {
+        } else if (likeObj.accountId && String(likeObj.accountId).toString() === userId.toString()) {
           existingLikeKey = likeId;
           break;
         }
@@ -1310,7 +1713,8 @@ class PostService {
         const likeId = new mongoose.Types.ObjectId();
         const like = {
           accountId: userId, // Backward compatibility
-          entityAccountId: userEntityAccountId,
+          // Giữ nguyên format gốc khi lưu vào DB (không lowercase)
+          entityAccountId: userEntityAccountId ? String(userEntityAccountId).trim() : null,
           entityId: userEntityId,
           entityType: userEntityType,
           TypeRole: typeRole || userEntityType || "Account"
@@ -1366,14 +1770,21 @@ class PostService {
       }
 
       // Tìm và xóa like - ưu tiên entityAccountId, fallback accountId
+      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
+      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim().toLowerCase() : null;
+      
       for (const [likeId, like] of reply.likes.entries()) {
+        // Convert like to plain object if needed
+        const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
+        
         // So sánh bằng entityAccountId nếu có, fallback về accountId
-        if (userEntityAccountId && like.entityAccountId) {
-          if (String(like.entityAccountId).toLowerCase() === String(userEntityAccountId).toLowerCase()) {
+        if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
+          const normalizedLikeEntityAccountId = String(likeObj.entityAccountId).trim().toLowerCase();
+          if (normalizedLikeEntityAccountId === normalizedUserEntityAccountId) {
             reply.likes.delete(likeId);
             break;
           }
-        } else if (like.accountId && String(like.accountId).toString() === userId.toString()) {
+        } else if (likeObj.accountId && String(likeObj.accountId).toString() === userId.toString()) {
           reply.likes.delete(likeId);
           break;
         }
@@ -1550,7 +1961,7 @@ class PostService {
           
           // Chỉ tạo notification nếu có đầy đủ entityAccountId và sender !== receiver
           if (senderEntityAccountId && receiverEntityAccountId && 
-              String(senderEntityAccountId).trim().toLowerCase() !== String(receiverEntityAccountId).trim().toLowerCase()) {
+              String(senderEntityAccountId).trim() !== String(receiverEntityAccountId).trim()) {
             const isStory = post.type === "story";
             
             // Lấy sender và receiver accountIds cho backward compatibility
@@ -1702,15 +2113,22 @@ class PostService {
       }
 
       // Tìm like hiện tại (nếu có) - ưu tiên entityAccountId, fallback accountId
+      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
       let existingLikeKey = null;
+      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim().toLowerCase() : null;
+      
       for (const [likeId, like] of comment.likes.entries()) {
+        // Convert like to plain object if needed
+        const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
+        
         // So sánh bằng entityAccountId nếu có, fallback về accountId
-        if (userEntityAccountId && like.entityAccountId) {
-          if (String(like.entityAccountId).toLowerCase() === String(userEntityAccountId).toLowerCase()) {
+        if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
+          const normalizedLikeEntityAccountId = String(likeObj.entityAccountId).trim().toLowerCase();
+          if (normalizedLikeEntityAccountId === normalizedUserEntityAccountId) {
             existingLikeKey = likeId;
             break;
           }
-        } else if (like.accountId && String(like.accountId).toString() === userId.toString()) {
+        } else if (likeObj.accountId && String(likeObj.accountId).toString() === userId.toString()) {
           existingLikeKey = likeId;
           break;
         }
@@ -1754,7 +2172,8 @@ class PostService {
         const likeId = new mongoose.Types.ObjectId();
         const like = {
           accountId: userId, // Backward compatibility
-          entityAccountId: userEntityAccountId,
+          // Giữ nguyên format gốc khi lưu vào DB (không lowercase)
+          entityAccountId: userEntityAccountId ? String(userEntityAccountId).trim() : null,
           entityId: userEntityId,
           entityType: userEntityType,
           TypeRole: typeRole || userEntityType || "Account"
@@ -1802,14 +2221,21 @@ class PostService {
       }
 
       // Tìm và xóa like - ưu tiên entityAccountId, fallback accountId
+      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
+      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim().toLowerCase() : null;
+      
       for (const [likeId, like] of comment.likes.entries()) {
+        // Convert like to plain object if needed
+        const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
+        
         // So sánh bằng entityAccountId nếu có, fallback về accountId
-        if (userEntityAccountId && like.entityAccountId) {
-          if (String(like.entityAccountId).toLowerCase() === String(userEntityAccountId).toLowerCase()) {
+        if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
+          const normalizedLikeEntityAccountId = String(likeObj.entityAccountId).trim().toLowerCase();
+          if (normalizedLikeEntityAccountId === normalizedUserEntityAccountId) {
             comment.likes.delete(likeId);
             break;
           }
-        } else if (like.accountId && String(like.accountId).toString() === userId.toString()) {
+        } else if (likeObj.accountId && String(likeObj.accountId).toString() === userId.toString()) {
           comment.likes.delete(likeId);
           break;
         }
@@ -2543,8 +2969,8 @@ class PostService {
       const entityMap = new Map();
       if (entityQuery && entityQuery.recordset) {
         entityQuery.recordset.forEach(row => {
-          // Normalize EntityAccountId: trim và lowercase để so sánh
-          const entityAccountIdStr = String(row.EntityAccountId).trim().toLowerCase();
+          // Normalize EntityAccountId: trim để so sánh
+          const entityAccountIdStr = String(row.EntityAccountId).trim();
           
           // Log chi tiết cho từng EntityType để debug
           if (row.EntityType === 'Account') {
@@ -2597,8 +3023,8 @@ class PostService {
         }
         
         if (entityAccountId) {
-          // Normalize để so sánh: trim và lowercase
-          const entityAccountIdStr = String(entityAccountId).trim().toLowerCase();
+          // Normalize để so sánh: trim
+          const entityAccountIdStr = String(entityAccountId).trim();
           const originalEntityAccountId = String(entityAccountId).trim(); // Giữ original để set vào post
           const entityInfo = entityMap.get(entityAccountIdStr);
           
@@ -2799,9 +3225,8 @@ class PostService {
       const entityMap = new Map();
       if (entityQuery && entityQuery.recordset) {
         entityQuery.recordset.forEach(row => {
-          // Normalize entityAccountId to lowercase for consistent matching (so sánh case-insensitive)
-          const originalEntityAccountId = String(row.EntityAccountId).trim();
-          const entityAccountIdStr = originalEntityAccountId.toLowerCase();
+          // Normalize entityAccountId for consistent matching
+          const entityAccountIdStr = String(row.EntityAccountId).trim();
           entityMap.set(entityAccountIdStr, {
             userName: row.UserName || 'Người dùng',
             avatar: row.Avatar || null,
@@ -2835,8 +3260,8 @@ class PostService {
           }
           
           if (commentEntityAccountId) {
-            // Normalize entityAccountId to lowercase for consistent matching
-            const entityAccountIdStr = String(commentEntityAccountId).trim().toLowerCase();
+            // Normalize entityAccountId for consistent matching
+            const entityAccountIdStr = String(commentEntityAccountId).trim();
             const entityInfo = entityMap.get(entityAccountIdStr);
             
             if (entityInfo) {
@@ -2884,8 +3309,8 @@ class PostService {
               }
               
               if (replyEntityAccountId) {
-                // Normalize entityAccountId to lowercase for consistent matching
-                const entityAccountIdStr = String(replyEntityAccountId).trim().toLowerCase();
+                // Normalize entityAccountId for consistent matching
+                const entityAccountIdStr = String(replyEntityAccountId).trim();
                 const entityInfo = entityMap.get(entityAccountIdStr);
                 
                 if (entityInfo) {
@@ -3025,7 +3450,7 @@ class PostService {
    * @param {object} options - Các tùy chọn { limit, cursor, includeMedias, includeMusic, populateReposts }.
    * @returns {Promise<object>} - Kết quả tương tự getAllPosts.
    */
-  async getPostsByEntityAccountId(entityAccountId, { limit = 10, cursor = null, includeMedias = true, includeMusic = true, populateReposts = true }) {
+  async getPostsByEntityAccountId(entityAccountId, { limit = 10, cursor = null, includeMedias = true, includeMusic = true, populateReposts = true, viewerAccountId = null, viewerEntityAccountId = null }) {
     try {
       if (!entityAccountId) {
         return { success: false, message: "Entity Account ID is required" };
@@ -3088,33 +3513,158 @@ class PostService {
       }
       if (populateReposts) query.populate('repostedFromId');
 
-      const posts = await query.lean();
+      const posts = await query;
 
       const hasMore = posts.length > limit;
       const postsToReturn = hasMore ? posts.slice(0, limit) : posts;
 
+      // Chuẩn hóa giống getAllPosts: chuyển về plain object, convert Maps, attach originalPost, build medias/music
       const postsPlain = postsToReturn.map(p => {
         const plain = p.toObject ? p.toObject({ flattenMaps: true }) : p;
-        if (populateReposts && plain.repostedFromId) {
-          plain.originalPost = plain.repostedFromId.toObject ? plain.repostedFromId.toObject({ flattenMaps: true }) : plain.repostedFromId;
-          delete plain.repostedFromId;
+
+        // Ensure likes and comments Maps are properly converted to objects
+        if (plain.likes instanceof Map) {
+          const likesObj = {};
+          plain.likes.forEach((value, key) => {
+            likesObj[key] = value;
+          });
+          plain.likes = likesObj;
         }
+        if (plain.comments instanceof Map) {
+          const commentsObj = {};
+          plain.comments.forEach((value, key) => {
+            const commentObj = value instanceof Map ? Object.fromEntries(value) : value;
+            // Convert replies Map too
+            if (commentObj && commentObj.replies instanceof Map) {
+              const repliesObj = {};
+              commentObj.replies.forEach((replyValue, replyKey) => {
+                repliesObj[replyKey] = replyValue instanceof Map ? Object.fromEntries(replyValue) : replyValue;
+              });
+              commentObj.replies = repliesObj;
+            }
+            commentsObj[key] = commentObj;
+          });
+          plain.comments = commentsObj;
+        }
+
+        // Nếu là repost và đã populate repostedFromId thì attach originalPost giống getAllPosts
+        if (populateReposts && plain.repostedFromId) {
+          const original =
+            plain.repostedFromId.toObject
+              ? plain.repostedFromId.toObject({ flattenMaps: true })
+              : plain.repostedFromId;
+          plain.originalPost = original;
+          // Giữ lại id string cho FE dùng làm repostedFromId
+          plain.repostedFromId = String(original?._id || original?.id || "");
+        }
+
+        // Map populated mediaIds to medias array nếu includeMedias
+        if (includeMedias) {
+          if (Array.isArray(plain.mediaIds) && plain.mediaIds.length > 0) {
+            plain.medias = plain.mediaIds.map(media => {
+              const mediaObj = media.toObject ? media.toObject({ flattenMaps: true }) : media;
+              const urlLower = (mediaObj.url || '').toLowerCase();
+
+              // Detect type giống getAllPosts
+              let detectedType = mediaObj.type;
+              if (urlLower.includes('.mp4') || urlLower.includes('.webm') || urlLower.includes('.mov') ||
+                  urlLower.includes('.avi') || urlLower.includes('.mkv') || urlLower.includes('video')) {
+                detectedType = 'video';
+              } else if (urlLower.includes('.mp3') || urlLower.includes('.wav') || urlLower.includes('.m4a') ||
+                         urlLower.includes('.ogg') || urlLower.includes('.aac') || urlLower.includes('audio')) {
+                detectedType = 'audio';
+              } else if (!detectedType || detectedType === 'image') {
+                detectedType = detectedType || 'image';
+              }
+
+              return {
+                ...mediaObj,
+                id: mediaObj._id,
+                type: detectedType
+              };
+            });
+          } else {
+            plain.medias = [];
+          }
+        }
+
+        // Map music/song giống getAllPosts
+        if (includeMusic && plain.songId) {
+          plain.song = plain.songId.toObject ? plain.songId.toObject() : plain.songId;
+        }
+        if (includeMusic && plain.musicId) {
+          plain.music = plain.musicId.toObject ? plain.musicId.toObject() : plain.musicId;
+        }
+
         return plain;
       });
 
+      // Enrich posts với author info giống feed
       await this.enrichPostsWithAuthorInfo(postsPlain);
+
+      // Enrich originalPost (nếu có) với author info để repost card ở profile giống feed
+      const originalPosts = postsPlain
+        .map(p => p.originalPost)
+        .filter(Boolean);
+      if (originalPosts.length > 0) {
+        await this.enrichPostsWithAuthorInfo(originalPosts);
+      }
+
+      // Đảm bảo mọi post đều có authorName/authorAvatar fallback
+      postsPlain.forEach(post => {
+        if (!post.authorName) {
+          post.authorName = 'Người dùng';
+        }
+        if (post.authorAvatar === undefined) {
+          post.authorAvatar = null;
+        }
+      });
+
+      // Enrich comments + topComments giống feed
+      await this.enrichCommentsWithAuthorInfo(postsPlain);
+      postsPlain.forEach(post => {
+        post.topComments = getTopComments(post.comments, 2);
+
+        // Nếu là repost và bài gốc có medias, di chuyển medias/musics sang originalPost để tránh trùng ở post wrapper
+        if (post.originalPost && Array.isArray(post.medias) && post.medias.length > 0) {
+          const original = post.originalPost;
+          if (!original.medias || !Array.isArray(original.medias) || original.medias.length === 0) {
+            original.medias = post.medias;
+          }
+          // wrapper repost không cần giữ medias nữa
+          post.medias = [];
+        }
+      });
+
+      // Transform posts to DTO format
+      const postsDTO = postsPlain.map(post => {
+        return this.buildPostDTO(post, {
+          viewer: {
+            accountId: viewerAccountId,
+            entityAccountId: viewerEntityAccountId
+          },
+          includeTopComments: true,
+          isChild: false
+        });
+      }).filter(Boolean); // Filter out null posts
 
       let nextCursor = null;
       if (hasMore) {
         const lastPost = postsToReturn[limit - 1];
         if (lastPost) {
-            nextCursor = Buffer.from(JSON.stringify({ createdAt: lastPost.createdAt.toISOString(), _id: lastPost._id.toString() })).toString('base64');
+          const lastCreatedAt = lastPost.createdAt instanceof Date
+            ? lastPost.createdAt.toISOString()
+            : new Date(lastPost.createdAt).toISOString();
+          const lastId = lastPost._id ? lastPost._id.toString() : String(lastPost.id || '');
+          nextCursor = Buffer.from(
+            JSON.stringify({ createdAt: lastCreatedAt, _id: lastId })
+          ).toString('base64');
         }
       }
 
       return {
         success: true,
-        data: postsPlain,
+        data: postsDTO, // Return DTO objects
         nextCursor,
         hasMore,
       };
