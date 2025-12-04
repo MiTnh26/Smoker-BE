@@ -1,44 +1,43 @@
+previews:
+  generation: automatic
+
 services:
-  # =============================================
-  # 1. MySQL 8.0 – Private service (internal only, persistent disk)
-  # =============================================
-  - type: private  # FIXED: Đổi từ pserv thành private (hợp lệ cho Docker internal như DB)
+  # 1) MySQL 8.0 – Private service
+  - type: pserv                     # private service must use "pserv"
     name: smoker-mysql
-    runtime: image  # Pull prebuilt image
+    runtime: image                  # pull prebuilt image
     image: mysql:8.0
-    plan: starter  # Free tier OK cho test; upgrade cho disk lớn (private services cần paid cho full features)
+    plan: starter
+    numInstances: 1
     envVars:
       - key: MYSQL_ROOT_PASSWORD
-        value: root123456  # Bắt buộc; dùng generateValue: true nếu secret
+        value: root123456
       - key: MYSQL_DATABASE
         value: revive_adserver
       - key: MYSQL_USER
         value: smoker
       - key: MYSQL_PASSWORD
         value: smoker123
-    disks:  # FIXED: Đổi từ disk thành disks (array)
-      - name: mysql-data
-        mountPath: /var/lib/mysql
-        sizeGB: 1  # 1GB; free limit 0.1GB → cần Starter plan nếu >0.1GB cho DB persistent
-    region: singapore  # Gần VN; đổi oregon nếu US
-    numInstances: 1  # Single instance cho DB
+    disk:                           # note: singular "disk"
+      name: mysql-data
+      mountPath: /var/lib/mysql
+      sizeGB: 1
+    region: singapore
 
-  # =============================================
-  # 2. Revive Adserver (Apache + PHP) – Public web service
-  # =============================================
+  # 2) Revive Adserver (Apache + PHP) – Public web service
   - type: web
     name: smoker-revive
-    runtime: image  # Pull prebuilt
+    runtime: image
     image: jitesoft/revive-adserver:latest
     plan: starter
-    startCommand: apache2-foreground  # Lệnh start từ image
-    healthCheckPath: /revive  # Path để Render check healthy
+    dockerCommand: apache2-foreground   # use dockerCommand for image/runtime docker
+    healthCheckPath: /revive
     envVars:
       - key: REVIVE_DB_HOST
-        fromService:  # Internal connect đến MySQL
-          type: private  # FIXED: Đổi từ pserv thành private
+        fromService:
           name: smoker-mysql
-          property: hostname  # Render inject (e.g., mysql-abc123.internal)
+          type: pserv
+          property: host                # use "host" (private network hostname)
       - key: REVIVE_DB_PORT
         value: "3306"
       - key: REVIVE_DB_USER
@@ -47,40 +46,29 @@ services:
         value: smoker123
       - key: REVIVE_DB_NAME
         value: revive_adserver
-      - key: REVIVE_URL
-        value: https://${RENDER_EXTERNAL_HOSTNAME}/revive  # Render tự inject domain
-    disks:  # Persistent cho config/cache/images
-      - name: revive-var
-        mountPath: /var/www/html/var  # Config + cache
-        sizeGB: 1
-      - name: revive-www
-        mountPath: /var/www/html  # Thư mục chính (sẽ tự cài lần đầu)
-        sizeGB: 1
-      - name: revive-plugins
-        mountPath: /var/www/html/plugins
-        sizeGB: 1
-      - name: revive-images
-        mountPath: /var/www/html/www/images
-        sizeGB: 1
+      # If you want the public URL for this revive service in OTHER services,
+      # reference RENDER_EXTERNAL_URL from that other service (see Node service below).
+    disk:
+      name: revive-data
+      mountPath: /var/www/html        # attach a single persistent disk; put files under subpaths
+      sizeGB: 5
     region: singapore
-    autoDeploy: true  # Auto deploy khi push Git
+    autoDeploy: true
 
-  # =============================================
-  # 3. Node.js Backend – Public web service (build từ Dockerfile)
-  # =============================================
+  # 3) Node.js Backend – build from Dockerfile
   - type: web
     name: smoker-node
-    runtime: docker  # Build từ Dockerfile
-    dockerfilePath: ./Dockerfile  # Giả sử ở root; đổi ./node/Dockerfile nếu folder con
+    runtime: docker
+    dockerfilePath: ./Dockerfile     # build from repo Dockerfile
     plan: starter
     envVars:
       - key: NODE_ENV
         value: production
       - key: DB_HOST
-        fromService:  # Internal connect đến MySQL
-          type: private  # FIXED: Đổi từ pserv thành private
+        fromService:
           name: smoker-mysql
-          property: hostname
+          type: pserv
+          property: host
       - key: DB_PORT
         value: "3306"
       - key: DB_USER
@@ -90,12 +78,10 @@ services:
       - key: DB_NAME
         value: revive_adserver
       - key: REVIVE_URL
-        value: https://smoker-revive.onrender.com/revive  # Hoặc dùng ${RENDER_EXTERNAL_HOSTNAME} nếu dynamic
-    port: 9999  # Expose port từ Dockerfile (thêm EXPOSE 9999 nếu chưa có)
-    healthCheckPath: /health  # Endpoint check trong server.js (tùy chỉnh nếu có)
+        fromService:
+          name: smoker-revive
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL   # get the revive public URL for backend use
+    healthCheckPath: /health
     region: singapore
     autoDeploy: true
-
-# Optional: Preview environments cho PR testing (tự động tạo env khi có PR)
-previews:
-  generation: automatic
