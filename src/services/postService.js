@@ -401,11 +401,14 @@ class PostService {
           });
           plain.comments = commentsObj;
         }
-        // If it's a repost, rename 'repostedFromId' to 'originalPost'
+        // If it's a repost, attach populated document as originalPost and keep repostedFromId as string
         if (populateReposts && plain.repostedFromId) {
-          // Ensure originalPost is a plain object as well
-          plain.originalPost = plain.repostedFromId.toObject ? plain.repostedFromId.toObject({ flattenMaps: true }) : plain.repostedFromId;
-          delete plain.repostedFromId;
+          const original =
+            plain.repostedFromId.toObject
+              ? plain.repostedFromId.toObject({ flattenMaps: true })
+              : plain.repostedFromId;
+          plain.originalPost = original;
+          plain.repostedFromId = String(original?._id || original?.id || "");
         }
 
         return plain;
@@ -458,53 +461,15 @@ class PostService {
         }
       }
 
-      // Attach original post info (author, avatar) for reposts when not already populated
-      const repostIdsToFetch = postsPlain
-        .filter(p => p.repostedFromId && !p.originalPost)
-        .map(p => {
-          if (typeof p.repostedFromId === "string") {
-            return p.repostedFromId;
-          }
-          if (p.repostedFromId && p.repostedFromId._id) {
-            return String(p.repostedFromId._id);
-          }
-          return String(p.repostedFromId);
-        })
-        .filter(Boolean);
-
-      if (repostIdsToFetch.length > 0) {
-        try {
-          const originalPosts = await Post.find({ _id: { $in: repostIdsToFetch } }).lean();
-          if (originalPosts.length > 0) {
-            await this.enrichPostsWithAuthorInfo(originalPosts);
-            const originalMap = new Map();
-            originalPosts.forEach(original => {
-              if (original.comments) delete original.comments;
-              if (original.topComments) delete original.topComments;
-              originalMap.set(String(original._id), original);
-            });
-
-            for (const post of postsPlain) {
-              const repostId = post.repostedFromId
-                ? (typeof post.repostedFromId === "string"
-                    ? post.repostedFromId
-                    : String(post.repostedFromId?._id || post.repostedFromId))
-                : null;
-              if (repostId && !post.originalPost) {
-                const original = originalMap.get(repostId);
-                if (original) {
-                  post.originalPost = original;
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.warn("[PostService] Could not attach original post info for reposts:", error.message);
-        }
-      }
-
       // Enrich posts with author information (now working with plain objects)
       await this.enrichPostsWithAuthorInfo(postsPlain);
+      // Enrich original posts for reposts so FE có authorName/authorAvatar
+      const originalPosts = postsPlain
+        .map(p => p.originalPost)
+        .filter(Boolean);
+      if (originalPosts.length > 0) {
+        await this.enrichPostsWithAuthorInfo(originalPosts);
+      }
       
       // Đảm bảo mọi post đều có author info (double-check fallback)
       postsPlain.forEach(post => {

@@ -547,13 +547,13 @@ class PostController {
           }
           
           if (postDataToEnrich) {
-            // Convert to plain object nếu là Mongoose document
-            if (postDataToEnrich.toObject) {
-              postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
-            }
-
+          // Convert to plain object nếu là Mongoose document
+          if (postDataToEnrich.toObject) {
+            postDataToEnrich = postDataToEnrich.toObject({ flattenMaps: true });
+          }
+          
             // Enrich với author info cho post mới
-            await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
+          await postService.enrichPostsWithAuthorInfo([postDataToEnrich]);
 
             // Nếu là repost, attach thêm originalPost + author của bài gốc (KHÔNG kèm comments)
             if (postDataToEnrich.repostedFromId) {
@@ -578,12 +578,12 @@ class PostController {
                 console.warn("[POST] Could not enrich original post info for repost:", origErr.message);
               }
             }
-            
-            // Update result.data với enriched data
+          
+          // Update result.data với enriched data
             if (result.data.post) {
               result.data.post = postDataToEnrich;
             } else {
-              result.data = postDataToEnrich;
+          result.data = postDataToEnrich;
             }
           }
         } catch (enrichError) {
