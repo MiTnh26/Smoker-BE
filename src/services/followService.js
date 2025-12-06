@@ -181,9 +181,9 @@ exports.unfollowEntity = async ({ followerId, followingId, userId }) => {
  *                      Will be normalized to EntityAccountId internally
  * @returns {Promise<Object>} Success response with followers array
  */
-exports.getFollowers = async (id) => {
+exports.getFollowers = async (id, viewerAccountId = null) => {
 	try {
-		if (!id) {
+        if (!id) {
 			return error("id is required.", 400);
 		}
 		
@@ -193,7 +193,7 @@ exports.getFollowers = async (id) => {
 			console.error("❌ Failed to normalize id:", id);
 			return error("Invalid id. Could not resolve to EntityAccountId.", 400);
 		}
-        const followers = await FollowModel.getFollowers(entityAccountId);
+        const followers = await FollowModel.getFollowers(entityAccountId, viewerAccountId);
 		return success("Fetched followers.", followers);
 	} catch (err) {
 		return error("Error fetching followers: " + err.message, 500);
@@ -206,9 +206,9 @@ exports.getFollowers = async (id) => {
  *                      Will be normalized to EntityAccountId internally
  * @returns {Promise<Object>} Success response with following array
  */
-exports.getFollowing = async (id) => {
+exports.getFollowing = async (id, viewerAccountId = null) => {
 	try {
-		if (!id) {
+        if (!id) {
 			return error("id is required.", 400);
 		}
 		
@@ -218,7 +218,7 @@ exports.getFollowing = async (id) => {
 			console.error("❌ Failed to normalize id:", id);
 			return error("Invalid id. Could not resolve to EntityAccountId.", 400);
 		}
-        const following = await FollowModel.getFollowing(entityAccountId);
+        const following = await FollowModel.getFollowing(entityAccountId, viewerAccountId);
 		return success("Fetched following list.", following);
 	} catch (err) {
 		return error("Error fetching following list: " + err.message, 500);
