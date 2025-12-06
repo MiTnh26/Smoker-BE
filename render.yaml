@@ -65,6 +65,10 @@ services:
       - key: REVIVE_AD_SERVER_URL
         value: https://smoker-revive.onrender.com/revive
       
+      # Frontend URL for redirect URLs
+      - key: FRONTEND_URL
+        value: https://smoker-fe-henna.vercel.app
+      
       # Các biến môi trường khác cần thiết
       - key: JWT_SECRET
         value: your_very_strong_secret_key_here_2025
