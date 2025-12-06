@@ -12,7 +12,7 @@ router.get("/", postController.getAllPosts);
 router.get("/search", postController.searchPosts);
 router.get("/search/title", postController.searchPostsByTitle);
 router.get("/search/author", postController.searchPostsByAuthor);
-router.get("/author/:authorId", postController.getPostsByAuthor);
+router.get("/author/:authorId", optionalVerifyToken, postController.getPostsByAuthor);
 
 // Routes cho Comments (cần auth) - phải đặt trước routes có :id
 router.post("/:postId/comments", verifyToken, checkBannedStatus, requireActiveEntity, postController.addComment);

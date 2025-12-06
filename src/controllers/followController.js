@@ -45,10 +45,11 @@ exports.unfollowEntity = async (req, res) => {
 };
 
 
-// Get followers of an entity
+// Get followers of an entity (by EntityAccountId or any ID that can be normalized)
 exports.getFollowers = async (req, res) => {
-    const { entityId } = req.params;
-    const result = await followService.getFollowers(entityId);
+    const { entityAccountId } = req.params;
+    const viewerAccountId = req.user?.id || null; // optional - chỉ có khi gửi kèm token
+    const result = await followService.getFollowers(entityAccountId, viewerAccountId);
     if (result.status === "error") {
         return res.status(result.code || 500).json(result);
     }
@@ -56,10 +57,11 @@ exports.getFollowers = async (req, res) => {
 };
 
 
-// Get following list of an entity
+// Get following list of an entity (by EntityAccountId or any ID that can be normalized)
 exports.getFollowing = async (req, res) => {
-    const { entityId } = req.params;
-    const result = await followService.getFollowing(entityId);
+    const { entityAccountId } = req.params;
+    const viewerAccountId = req.user?.id || null; // optional - chỉ có khi gửi kèm token
+    const result = await followService.getFollowing(entityAccountId, viewerAccountId);
     if (result.status === "error") {
         return res.status(result.code || 500).json(result);
     }
