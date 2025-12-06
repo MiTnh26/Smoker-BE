@@ -7,8 +7,5 @@ COPY revive/ /var/www/html/revive/
 RUN chown -R www-data:www-data /var/www/html/revive
 RUN chmod -R 755 /var/www/html/revive
 
-# Expose port
-EXPOSE 80
-
-# Start Apache
-CMD ["apache2-foreground"]
+# Image đã có entrypoint mặc định để start php-fpm và nginx
+# Không cần override CMD
