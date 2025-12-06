@@ -187,4 +187,17 @@ app.get("/", (req, res) => {
   });
 });
 
+// Health check endpoint for Render
+app.get("/health", (req, res) => {
+  res.status(200).json({ 
+    status: "OK",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    databases: {
+      sqlserver: "Checking...",
+      mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
+    }
+  });
+});
+
 module.exports = app;
