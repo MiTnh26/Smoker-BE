@@ -168,19 +168,9 @@ class AdController {
           if (banner && banner.html) {
             bannerHtml = banner.html;
             // Replace localhost URLs với production URL (đảm bảo double-check)
-            const productionUrl = process.env.FRONTEND_URL || process.env.APP_URL || 'https://smoker-fe-henna.vercel.app';
-            bannerHtml = bannerHtml.replace(
-              /(dest=)(http|https)%3A%2F%2F(localhost|127\.0\.0\.1)(%3A\d+)?(%2F[^&"']*?)(&|["']|$)/gi,
-              (match, prefix, protocol, host, port, encodedPath, suffix) => {
-                try {
-                  const decodedPath = decodeURIComponent(encodedPath || '');
-                  const newUrl = productionUrl + decodedPath;
-                  return prefix + encodeURIComponent(newUrl) + suffix;
-                } catch (e) {
-                  return match;
-                }
-              }
-            );
+            bannerHtml = reviveAdServerService.replaceLocalhostUrls(bannerHtml);
+            // Convert /bar/{BarPageId} URLs to /profile/{EntityAccountId}
+            bannerHtml = await reviveAdServerService.convertBarUrlsInHtml(bannerHtml);
             console.log(`[AdController] Successfully retrieved banner HTML (${bannerHtml.length} chars)`);
           } else {
             console.warn(`[AdController] No banner HTML returned from Revive for zone ${zoneIdToUse}`);
