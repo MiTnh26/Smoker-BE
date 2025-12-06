@@ -2,86 +2,79 @@ previews:
   generation: automatic
 
 services:
-  # 1) MySQL 8.0 – Private service
-  - type: pserv                     # private service must use "pserv"
-    name: smoker-mysql
-    runtime: image                  # pull prebuilt image
-    image: mysql:8.0
-    plan: starter
-    numInstances: 1
-    envVars:
-      - key: MYSQL_ROOT_PASSWORD
-        value: root123456
-      - key: MYSQL_DATABASE
-        value: revive_adserver
-      - key: MYSQL_USER
-        value: smoker
-      - key: MYSQL_PASSWORD
-        value: smoker123
-    disk:                           # note: singular "disk"
-      name: mysql-data
-      mountPath: /var/lib/mysql
-      sizeGB: 1
-    region: singapore
-
-  # 2) Revive Adserver (Apache + PHP) – Public web service
+  # 1) Revive Adserver (Apache + PHP) – Public web service
   - type: web
     name: smoker-revive
     runtime: image
     image: jitesoft/revive-adserver:latest
     plan: starter
-    dockerCommand: apache2-foreground   # use dockerCommand for image/runtime docker
+    dockerCommand: apache2-foreground
     healthCheckPath: /revive
     envVars:
+      # Sử dụng Azure MySQL thay vì Render MySQL service
       - key: REVIVE_DB_HOST
-        fromService:
-          name: smoker-mysql
-          type: pserv
-          property: host                # use "host" (private network hostname)
+        value: mysql-smoker.mysql.database.azure.com
+      - key: REVIVE_DB_PORT
+        value: "3306"
+      - key: REVIVE_DB_USER
+        value: smoker  # Username Azure MySQL của bạn
+      - key: REVIVE_DB_PASSWORD
+        value: Minhtran26  # ⚠️ Thay bằng password thực tế
+      - key: REVIVE_DB_NAME
+        value: revive_adserver
+    disk:
+      name: revive-data
+      mountPath: /var/www/html
+      sizeGB: 5
+    region: singapore
+    autoDeploy: true
+
+  # 2) Node.js Backend – build from Dockerfile
+  - type: web
+    name: smoker-node
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      
+      # SQL Server cho database chính (cần cấu hình riêng)
+      - key: MSSQL_SERVER
+        value: your_sql_server.database.windows.net  # Azure SQL Server endpoint
+      - key: MSSQL_PORT
+        value: "1433"
+      - key: MSSQL_USER
+        value: smoker
+      - key: MSSQL_PASSWORD
+        value: Minhtran26
+      - key: MSSQL_DATABASE
+        value: Smoker
+      
+      # Revive Database (Azure MySQL)
+      - key: REVIVE_DB_HOST
+        value: mysql-smoker.mysql.database.azure.com
       - key: REVIVE_DB_PORT
         value: "3306"
       - key: REVIVE_DB_USER
         value: smoker
       - key: REVIVE_DB_PASSWORD
-        value: smoker123
+        value: Minhtran26  # ⚠️ Thay bằng password thực tế
       - key: REVIVE_DB_NAME
         value: revive_adserver
-      # If you want the public URL for this revive service in OTHER services,
-      # reference RENDER_EXTERNAL_URL from that other service (see Node service below).
-    disk:
-      name: revive-data
-      mountPath: /var/www/html        # attach a single persistent disk; put files under subpaths
-      sizeGB: 5
-    region: singapore
-    autoDeploy: true
-
-  # 3) Node.js Backend – build from Dockerfile
-  - type: web
-    name: smoker-node
-    runtime: docker
-    dockerfilePath: ./Dockerfile     # build from repo Dockerfile
-    plan: starter
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: DB_HOST
-        fromService:
-          name: smoker-mysql
-          type: pserv
-          property: host
-      - key: DB_PORT
-        value: "3306"
-      - key: DB_USER
-        value: smoker
-      - key: DB_PASSWORD
-        value: smoker123
-      - key: DB_NAME
-        value: revive_adserver
-      - key: REVIVE_URL
+      
+      # Revive Ad Server URL (sẽ được set sau khi deploy)
+      - key: REVIVE_AD_SERVER_URL
         fromService:
           name: smoker-revive
           type: web
-          envVarKey: RENDER_EXTERNAL_URL   # get the revive public URL for backend use
+          envVarKey: RENDER_EXTERNAL_URL
+      
+      # Các biến môi trường khác cần thiết
+      - key: JWT_SECRET
+        value: your_very_strong_secret_key_here_2025
+      - key: PORT
+        value: "9999"
     healthCheckPath: /health
     region: singapore
     autoDeploy: true
