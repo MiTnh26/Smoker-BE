@@ -167,9 +167,25 @@ class AdController {
           
           if (banner && banner.html) {
             bannerHtml = banner.html;
+            // Replace localhost URLs với production URL (đảm bảo double-check)
+            bannerHtml = reviveAdServerService.replaceLocalhostUrls(bannerHtml);
+            // Convert /bar/{BarPageId} URLs to /profile/{EntityAccountId}
+            bannerHtml = await reviveAdServerService.convertBarUrlsInHtml(bannerHtml);
+            console.log(`[AdController] Successfully retrieved banner HTML (${bannerHtml.length} chars)`);
+          } else {
+            console.warn(`[AdController] No banner HTML returned from Revive for zone ${zoneIdToUse}`);
+            console.warn(`[AdController] This could mean:`);
+            console.warn(`  1. Zone ${zoneIdToUse} has no active banners`);
+            console.warn(`  2. Campaign is not active or expired`);
+            console.warn(`  3. Revive server is not responding correctly`);
+            console.warn(`  4. Check Revive Admin Panel: Inventory → Zones → Zone ${zoneIdToUse}`);
           }
         } catch (reviveError) {
-          console.warn(`[AdController] Failed to get banner from Revive:`, reviveError.message);
+          console.error(`[AdController] Failed to get banner from Revive:`, {
+            message: reviveError.message,
+            stack: reviveError.stack,
+            zoneId: zoneIdToUse
+          });
         }
 
         // Nếu không có banner HTML, trả về lỗi
