@@ -123,6 +123,36 @@ if (file_exists($certPath)) {
 
 echo "<hr>";
 
+// Test 3.5: mysqli with SSL but NO certificate (like Revive will use)
+echo "<h2>Test 3.5: mysqli with SSL but NO certificate file (Revive config with ca=)</h2>";
+try {
+    $init35 = mysqli_init();
+    // Enable SSL but don't verify certificate (all null)
+    mysqli_ssl_set($init35, null, null, null, null, null);
+    
+    if ($link35 = @mysqli_real_connect($init35, $host, $username, $password, $database, $port)) {
+        echo "✅ Connection successful with SSL (no cert verification)!<br>";
+        
+        // Test query
+        $result = mysqli_query($link35, "SELECT COUNT(*) as count FROM rv_accounts");
+        if ($result) {
+            $row = mysqli_fetch_assoc($result);
+            echo "✅ Query successful! Found {$row['count']} accounts in database.<br>";
+        }
+        
+        mysqli_close($link35);
+    } else {
+        echo "❌ Connection failed: " . mysqli_connect_error() . "<br>";
+        echo "Error code: " . mysqli_connect_errno() . "<br>";
+    }
+} catch (Exception $e) {
+    echo "❌ Connection failed: " . $e->getMessage() . "<br>";
+} 
+
+echo "<hr>";
+
+
+
 // Test 4: PDO with SSL
 echo "<h2>Test 4: PDO with SSL</h2>";
 try {

@@ -39,7 +39,7 @@ protocol=tcp
 compress=
 ssl=1
 capath=
-ca="/var/www/html/revive/certs/azure-mysql-ca-cert.pem"
+ca=
 
 [databaseCharset]
 checkComplete=1
