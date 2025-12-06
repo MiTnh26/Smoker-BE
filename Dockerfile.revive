@@ -21,6 +21,17 @@ COPY revive/ /var/www/html/revive/
 RUN chown -R www-data:www-data /var/www/html/revive
 RUN chmod -R 755 /var/www/html/revive
 
+# Configure Apache to allow access to revive directory
+RUN echo '<Directory /var/www/html/revive>' > /etc/apache2/conf-available/revive.conf && \
+    echo '    Options Indexes FollowSymLinks' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    AllowOverride All' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    Require all granted' >> /etc/apache2/conf-available/revive.conf && \
+    echo '</Directory>' >> /etc/apache2/conf-available/revive.conf && \
+    a2enconf revive
+
+# Create a simple index.php in root to redirect to revive
+RUN echo '<?php header("Location: /revive/www/admin/"); ?>' > /var/www/html/index.php
+
 # Expose port 80
 EXPOSE 80
 
