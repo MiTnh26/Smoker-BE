@@ -2,8 +2,17 @@ const axios = require("axios");
 
 class ReviveAdServerService {
   constructor() {
-    // Local URL
-    this.baseUrl = process.env.REVIVE_AD_SERVER_URL || "http://localhost/revive";
+    // Get Revive URL from environment, ensure it ends with /revive
+    let baseUrl = process.env.REVIVE_AD_SERVER_URL || "http://localhost/revive";
+    
+    // Ensure URL ends with /revive (remove trailing slash first, then add /revive)
+    baseUrl = baseUrl.replace(/\/+$/, ''); // Remove trailing slashes
+    if (!baseUrl.endsWith('/revive')) {
+      baseUrl = baseUrl + '/revive';
+    }
+    
+    this.baseUrl = baseUrl;
+    console.log(`[ReviveAdServerService] Initialized with base URL: ${this.baseUrl}`);
   }
 
   /**
@@ -172,8 +181,17 @@ class ReviveAdServerService {
         code: error.code,
         status: error.response?.status,
         statusText: error.response?.statusText,
+        url: fullUrl,
+        baseUrl: this.baseUrl,
         data: error.response?.data ? (typeof error.response.data === 'string' ? error.response.data.substring(0, 200) : JSON.stringify(error.response.data)) : null
       });
+      
+      // Log more details for debugging
+      if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        console.error(`[ReviveAdServerService] Connection error - Revive server may not be accessible at ${this.baseUrl}`);
+        console.error(`[ReviveAdServerService] Please check REVIVE_AD_SERVER_URL environment variable`);
+      }
+      
       return null;
     }
   }
