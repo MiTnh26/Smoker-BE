@@ -7,7 +7,7 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile.revive
     plan: free
-    healthCheckPath: /revive
+    healthCheckPath: /revive/www/admin/
     envVars:
       # Sử dụng Azure MySQL thay vì Render MySQL service
       - key: PORT
@@ -37,7 +37,7 @@ services:
       
       # SQL Server cho database chính (cần cấu hình riêng)
       - key: MSSQL_SERVER
-        value: your_sql_server.database.windows.net
+        value: smoker.database.windows.net
       - key: MSSQL_PORT
         value: "1433"
       - key: MSSQL_USER

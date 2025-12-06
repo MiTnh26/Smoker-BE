@@ -37,9 +37,9 @@ name=revive_adserver
 persistent=
 protocol=tcp
 compress=
-ssl=
+ssl=1
 capath=
-ca=
+ca="/var/www/html/revive/certs/azure-mysql-ca-cert.pem"
 
 [databaseCharset]
 checkComplete=1
@@ -52,11 +52,11 @@ statisticsSortBufferSize=
 schema=
 
 [webpath]
-admin="localhost/revive/www/admin" 
-delivery="localhost/revive/www/delivery"
-deliverySSL="localhost/revive/www/delivery"
-images="localhost/revive/www/images"
-imagesSSL="localhost/revive/www/images"
+admin="smoker-revive.onrender.com/revive/www/admin"
+delivery="smoker-revive.onrender.com/revive/www/delivery"
+deliverySSL="smoker-revive.onrender.com/revive/www/delivery"
+images="smoker-revive.onrender.com/revive/www/images"
+imagesSSL="smoker-revive.onrender.com/revive/www/images"
 
 [file]
 asyncjs="asyncjs.php"
@@ -82,7 +82,7 @@ xmlrest="ax.php"
 
 [store]
 mode=0
-webDir="C:\xampp\htdocs\revive\www\images"
+webDir="/var/www/html/revive/www/images"
 ftpHost=
 ftpPath=
 ftpUsername=
