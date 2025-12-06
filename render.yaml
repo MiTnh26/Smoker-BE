@@ -10,6 +10,8 @@ services:
     healthCheckPath: /revive
     envVars:
       # Sử dụng Azure MySQL thay vì Render MySQL service
+      - key: PORT
+        value: "80"
       - key: REVIVE_DB_HOST
         value: mysql-smoker.mysql.database.azure.com
       - key: REVIVE_DB_PORT
