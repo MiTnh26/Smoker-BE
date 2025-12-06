@@ -1,5 +1,4 @@
-previews:
-  generation: automatic
+# Preview Environments không khả dụng trên Hobby plan, đã xóa phần này
 
 services:
   # 1) Revive Adserver (Apache + PHP) – Public web service
@@ -7,7 +6,7 @@ services:
     name: smoker-revive
     runtime: docker
     dockerfilePath: ./Dockerfile.revive
-    plan: starter
+    plan: free
     healthCheckPath: /revive
     envVars:
       # Sử dụng Azure MySQL thay vì Render MySQL service
