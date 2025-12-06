@@ -1,29 +1,26 @@
 FROM php:8.1-apache
 
 # Install dependencies
+
 RUN apt-get update && apt-get install -y \
     libpng-dev \
     libjpeg-dev \
     libfreetype6-dev \
+    libicu-dev \
+    libzip-dev \
     zip \
     unzip \
     curl \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j$(nproc) gd mysqli pdo pdo_mysql \
+    && docker-php-ext-configure intl \
+    && docker-php-ext-install -j$(nproc) gd mysqli pdo pdo_mysql zip intl \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Enable Apache mod_rewrite
 RUN a2enmod rewrite
-
-# Download Azure MySQL SSL certificates
-RUN mkdir -p /var/www/html/revive/certs && \
-    curl -o /var/www/html/revive/certs/DigiCertGlobalRootCA.crt.pem \
-        https://cacerts.digicert.com/DigiCertGlobalRootCA.crt.pem && \
-    curl -o /var/www/html/revive/certs/BaltimoreCyberTrustRoot.crt.pem \
-        https://cacerts.digicert.com/BaltimoreCyberTrustRoot.crt.pem && \
-    cat /var/www/html/revive/certs/DigiCertGlobalRootCA.crt.pem \
-        /var/www/html/revive/certs/BaltimoreCyberTrustRoot.crt.pem > \
-        /var/www/html/revive/certs/azure-mysql-ca-cert.pem
+RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
+# Create certs directory (certificate file will be copied with revive files)
+RUN mkdir -p /var/www/html/revive/certs
 
 # Copy Revive files
 COPY revive/ /var/www/html/revive/
