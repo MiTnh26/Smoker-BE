@@ -151,6 +151,43 @@ try {
 
 echo "<hr>";
 
+// Test 3.6: mysqli with Azure Portal Certificate
+echo "<h2>Test 3.6: mysqli with Azure Portal Certificate File</h2>";
+$azureCertPath = '/var/www/html/revive/certs/azure-mysql-ssl-cert.pem';
+
+if (file_exists($azureCertPath)) {
+    echo "✅ Azure certificate file exists: $azureCertPath<br>";
+    echo "📦 File size: " . number_format(filesize($azureCertPath)) . " bytes<br>";
+    
+    try {
+        $init36 = mysqli_init();
+        mysqli_ssl_set($init36, null, null, $azureCertPath, null, null);
+        
+        if ($link36 = @mysqli_real_connect($init36, $host, $username, $password, $database, $port)) {
+            echo "✅ Connection successful with Azure certificate!<br>";
+            
+            $result = mysqli_query($link36, "SELECT COUNT(*) as count FROM rv_accounts");
+            if ($result) {
+                $row = mysqli_fetch_assoc($result);
+                echo "✅ Query successful! Found {$row['count']} accounts in database.<br>";
+            }
+            
+            mysqli_close($link36);
+        } else {
+            echo "❌ Connection failed: " . mysqli_connect_error() . "<br>";
+            echo "Error code: " . mysqli_connect_errno() . "<br>";
+        }
+    } catch (Exception $e) {
+        echo "❌ Connection failed: " . $e->getMessage() . "<br>";
+    }
+} else {
+    echo "❌ Azure certificate file NOT FOUND: $azureCertPath<br>";
+    echo "⚠️ Please copy the certificate file from Azure Portal to this location.<br>";
+}
+
+echo "<hr>";
+
+
 
 
 // Test 4: PDO with SSL
