@@ -18,7 +18,11 @@ class ReviveSyncService {
         password: process.env.REVIVE_DB_PASSWORD,
         database: process.env.REVIVE_DB_NAME || "revive",
         connectionLimit: 5,
-        connectTimeout: 10000
+        connectTimeout: 10000,
+        // Thêm SSL configuration cho Azure MySQL
+        ssl: {
+          rejectUnauthorized: false  // Azure MySQL yêu cầu SSL nhưng không cần verify certificate
+        }
       };
     }
     
