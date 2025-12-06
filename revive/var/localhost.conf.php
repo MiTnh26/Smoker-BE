@@ -37,7 +37,7 @@ name=revive_adserver
 persistent=
 protocol=tcp
 compress=
-ssl=
+ssl=1
 capath=
 ca=
 
