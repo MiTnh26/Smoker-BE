@@ -16,6 +16,85 @@ class ReviveAdServerService {
   }
 
   /**
+   * Thay thế localhost URLs bằng production URL trong HTML
+   */
+  replaceLocalhostUrls(html) {
+    if (!html || typeof html !== 'string') return html;
+    
+    // Production frontend URL
+    const productionUrl = process.env.FRONTEND_URL || process.env.APP_URL || 'https://smoker-fe-henna.vercel.app';
+    
+    let updatedHtml = html;
+    
+    // Replace URL encoded localhost trong dest parameter
+    // Pattern: dest=http%3A%2F%2Flocalhost%3A3000%2Fbar%2F...
+    updatedHtml = updatedHtml.replace(
+      /dest=(http|https)%3A%2F%2F(localhost|127\.0\.0\.1)(%3A\d+)?(%2F[^&"']*?)(&|["']|$)/gi,
+      (match, protocol, host, port, encodedPath, suffix) => {
+        try {
+          // Decode path để lấy path thực tế
+          const decodedPath = decodeURIComponent(encodedPath || '');
+          // Tạo URL mới với production domain
+          const newUrl = productionUrl + decodedPath;
+          // Encode lại để giữ trong URL parameter
+          return 'dest=' + encodeURIComponent(newUrl) + suffix;
+        } catch (e) {
+          console.warn(`[ReviveAdServerService] Error replacing URL in dest parameter:`, e);
+          return match; // Return original nếu có lỗi
+        }
+      }
+    );
+    
+    // Replace trong href attributes (không encoded)
+    updatedHtml = updatedHtml.replace(
+      /(href=["']?)(https?:\/\/)(localhost|127\.0\.0\.1)(:\d+)?(\/[^"'<>]*?)(["']?)/gi,
+      (match, prefix, protocol, host, port, path, suffix) => {
+        const newUrl = productionUrl + path;
+        return prefix + newUrl + suffix;
+      }
+    );
+    
+    // Replace trong href attributes (URL encoded)
+    updatedHtml = updatedHtml.replace(
+      /(href=["']?)(http|https)%3A%2F%2F(localhost|127\.0\.0\.1)(%3A\d+)?(%2F[^"'<>]*?)(["']?)/gi,
+      (match, prefix, protocol, host, port, encodedPath, suffix) => {
+        try {
+          const decodedPath = decodeURIComponent(encodedPath || '');
+          const newUrl = productionUrl + decodedPath;
+          return prefix + encodeURIComponent(newUrl) + suffix;
+        } catch (e) {
+          return match;
+        }
+      }
+    );
+    
+    // Replace trong JavaScript strings
+    updatedHtml = updatedHtml.replace(
+      /(["'])(https?:\/\/)(localhost|127\.0\.0\.1)(:\d+)?(\/[^"']*?)\1/gi,
+      (match, quote, protocol, host, port, path) => {
+        const newUrl = productionUrl + path;
+        return quote + newUrl + quote;
+      }
+    );
+    
+    // Replace URL encoded localhost trong bất kỳ đâu (fallback)
+    updatedHtml = updatedHtml.replace(
+      /(http|https)%3A%2F%2F(localhost|127\.0\.0\.1)(%3A\d+)?(%2F[^&"']*?)/gi,
+      (match, protocol, host, port, encodedPath) => {
+        try {
+          const decodedPath = decodeURIComponent(encodedPath || '');
+          const newUrl = productionUrl + decodedPath;
+          return encodeURIComponent(newUrl);
+        } catch (e) {
+          return match;
+        }
+      }
+    );
+    
+    return updatedHtml;
+  }
+
+  /**
    * Lấy banner từ zone (Server-side)
    * Vì Revive zone dùng async JavaScript invocation code (asyncjs.php),
    * nên chúng ta cần dùng ajs.php để lấy banner HTML
@@ -98,6 +177,8 @@ class ReviveAdServerService {
                 .replace(/&nbsp;/g, ' ');
               
               if (html && html.trim().length > 0) {
+                // Replace localhost URLs với production URL
+                html = this.replaceLocalhostUrls(html);
                 console.log(`[ReviveAdServerService] Successfully extracted HTML from JavaScript (${html.length} chars)`);
                 return {
                   html: html.trim(),
@@ -112,6 +193,8 @@ class ReviveAdServerService {
               let html = htmlTagMatch[0]
                 .replace(/\\\'/g, "'")
                 .replace(/\\"/g, '"');
+              // Replace localhost URLs với production URL
+              html = this.replaceLocalhostUrls(html);
               console.log(`[ReviveAdServerService] Extracted HTML using fallback method (${html.length} chars)`);
               return {
                 html: html,
@@ -157,12 +240,14 @@ class ReviveAdServerService {
 
           // If response is already HTML (from ck.php or other methods)
           if (trimmedData.startsWith('<')) {
-            console.log(`[ReviveAdServerService] Successfully retrieved banner HTML (${trimmedData.length} chars)`);
-        return {
-          html: response.data,
-          zoneId: zoneId
-        };
-      }
+            // Replace localhost URLs với production URL
+            let html = this.replaceLocalhostUrls(response.data);
+            console.log(`[ReviveAdServerService] Successfully retrieved banner HTML (${html.length} chars)`);
+            return {
+              html: html,
+              zoneId: zoneId
+            };
+          }
         }
         
         // If response is an object (JSON) - shouldn't happen but handle it
