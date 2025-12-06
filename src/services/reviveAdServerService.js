@@ -1,4 +1,6 @@
 const axios = require("axios");
+const barPageModel = require("../models/barPageModel");
+const { getPool, sql } = require("../db/sqlserver");
 
 class ReviveAdServerService {
   constructor() {
@@ -95,6 +97,162 @@ class ReviveAdServerService {
   }
 
   /**
+   * Convert /bar/{BarPageId} URL thành /profile/{EntityAccountId}
+   * Query database để lấy EntityAccountId từ BarPageId
+   */
+  async convertBarUrlToProfileUrl(url) {
+    if (!url || typeof url !== 'string') return url;
+    
+    const productionUrl = process.env.FRONTEND_URL || process.env.APP_URL || 'https://smoker-fe-henna.vercel.app';
+    
+    // Extract BarPageId từ URL pattern /bar/{BarPageId}
+    const barUrlMatch = url.match(/\/bar\/([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})/i);
+    if (!barUrlMatch) {
+      return url; // Không phải bar URL, return nguyên
+    }
+    
+    const barPageId = barUrlMatch[1];
+    console.log(`[ReviveAdServerService] Converting bar URL to profile URL for BarPageId: ${barPageId}`);
+    
+    try {
+      // Query database để lấy EntityAccountId
+      const barPage = await barPageModel.getBarPageById(barPageId);
+      
+      if (barPage && barPage.EntityAccountId) {
+        // Thay thế /bar/{BarPageId} bằng /profile/{EntityAccountId}
+        const newUrl = url.replace(
+          /\/bar\/[0-9A-F-]+/i,
+          `/profile/${barPage.EntityAccountId}`
+        );
+        
+        console.log(`[ReviveAdServerService] ✅ Converted URL: ${url} -> ${newUrl}`);
+        return newUrl;
+      } else {
+        console.warn(`[ReviveAdServerService] ⚠️ EntityAccountId not found for BarPageId: ${barPageId}`);
+        return url; // Return nguyên nếu không tìm thấy
+      }
+    } catch (error) {
+      console.error(`[ReviveAdServerService] ❌ Error converting bar URL:`, error);
+      return url; // Return nguyên nếu có lỗi
+    }
+  }
+
+  /**
+   * Convert tất cả /bar/{BarPageId} URLs trong HTML thành /profile/{EntityAccountId}
+   * Xử lý cả URL encoded (trong dest parameter) và không encoded (trong href)
+   */
+  async convertBarUrlsInHtml(html) {
+    if (!html || typeof html !== 'string') return html;
+    
+    const productionUrl = process.env.FRONTEND_URL || process.env.APP_URL || 'https://smoker-fe-henna.vercel.app';
+    
+    // Tìm tất cả BarPageId trong HTML (cả trong /bar/{BarPageId} và URL encoded)
+    const barPageIdPattern = /([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})/gi;
+    const barUrlPattern = /\/bar\/([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})/gi;
+    
+    // Tìm tất cả /bar/{UUID} patterns
+    const matches = [...html.matchAll(barUrlPattern)];
+    
+    if (matches.length === 0) {
+      // Vẫn cần check dest parameters vì có thể có bar URL trong đó
+      const hasDestParam = html.includes('dest=');
+      if (!hasDestParam) {
+        return html; // Không có bar URLs
+      }
+    }
+    
+    console.log(`[ReviveAdServerService] Found ${matches.length} bar URLs to convert, checking dest parameters...`);
+    
+    let updatedHtml = html;
+    const urlCache = {}; // Cache để tránh query nhiều lần cùng BarPageId
+    
+    // Convert từng URL không encoded
+    for (const match of matches) {
+      const barPageId = match[1];
+      
+      if (urlCache[barPageId]) {
+        continue; // Đã convert rồi
+      }
+      
+      try {
+        // Query database để lấy EntityAccountId
+        const barPage = await barPageModel.getBarPageById(barPageId);
+        
+        if (barPage && barPage.EntityAccountId) {
+          const profilePath = `/profile/${barPage.EntityAccountId}`;
+          urlCache[barPageId] = profilePath;
+          
+          // Replace trong HTML (không encoded)
+          const barPath = `/bar/${barPageId}`;
+          updatedHtml = updatedHtml.replace(new RegExp(barPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), profilePath);
+          
+          console.log(`[ReviveAdServerService] ✅ Converted: ${barPath} -> ${profilePath}`);
+        }
+      } catch (error) {
+        console.error(`[ReviveAdServerService] ❌ Error converting bar URL for ${barPageId}:`, error);
+      }
+    }
+    
+    // Convert trong dest parameter (URL encoded)
+    // Tìm tất cả dest parameters và convert nếu có /bar/{BarPageId}
+    const destParamPattern = /dest=([^&"']+?)(&|["']|$)/gi;
+    const allDestMatches = [...html.matchAll(destParamPattern)];
+    
+    for (const destMatch of allDestMatches) {
+      const encodedDestValue = destMatch[1];
+      const suffix = destMatch[2];
+      
+      try {
+        // Decode dest parameter để xem có chứa /bar/{BarPageId} không
+        const decodedDest = decodeURIComponent(encodedDestValue);
+        const barUrlMatch = decodedDest.match(/\/bar\/([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})/i);
+        
+        if (!barUrlMatch) {
+          continue; // Không phải bar URL
+        }
+        
+        const barPageId = barUrlMatch[1];
+        
+        if (urlCache[barPageId]) {
+          // Đã convert rồi, chỉ cần replace
+          const profilePath = urlCache[barPageId];
+          const newDecodedDest = decodedDest.replace(/\/bar\/[0-9A-F-]+/i, profilePath);
+          const newEncodedDest = encodeURIComponent(newDecodedDest);
+          updatedHtml = updatedHtml.replace(
+            new RegExp(`dest=${encodedDestValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi'),
+            `dest=${newEncodedDest}`
+          );
+          continue;
+        }
+        
+        // Query database để lấy EntityAccountId
+        const barPage = await barPageModel.getBarPageById(barPageId);
+        
+        if (barPage && barPage.EntityAccountId) {
+          const profilePath = `/profile/${barPage.EntityAccountId}`;
+          urlCache[barPageId] = profilePath;
+          
+          // Replace /bar/{BarPageId} bằng /profile/{EntityAccountId} trong decoded URL
+          const newDecodedDest = decodedDest.replace(/\/bar\/[0-9A-F-]+/i, profilePath);
+          const newEncodedDest = encodeURIComponent(newDecodedDest);
+          
+          // Replace trong HTML
+          updatedHtml = updatedHtml.replace(
+            new RegExp(`dest=${encodedDestValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi'),
+            `dest=${newEncodedDest}`
+          );
+          
+          console.log(`[ReviveAdServerService] ✅ Converted dest parameter: /bar/${barPageId} -> ${profilePath}`);
+        }
+      } catch (error) {
+        console.error(`[ReviveAdServerService] ❌ Error converting dest parameter:`, error);
+      }
+    }
+    
+    return updatedHtml;
+  }
+
+  /**
    * Lấy banner từ zone (Server-side)
    * Vì Revive zone dùng async JavaScript invocation code (asyncjs.php),
    * nên chúng ta cần dùng ajs.php để lấy banner HTML
@@ -179,6 +337,8 @@ class ReviveAdServerService {
               if (html && html.trim().length > 0) {
                 // Replace localhost URLs với production URL
                 html = this.replaceLocalhostUrls(html);
+                // Convert /bar/{BarPageId} URLs to /profile/{EntityAccountId}
+                html = await this.convertBarUrlsInHtml(html);
                 console.log(`[ReviveAdServerService] Successfully extracted HTML from JavaScript (${html.length} chars)`);
                 return {
                   html: html.trim(),
@@ -195,6 +355,8 @@ class ReviveAdServerService {
                 .replace(/\\"/g, '"');
               // Replace localhost URLs với production URL
               html = this.replaceLocalhostUrls(html);
+              // Convert /bar/{BarPageId} URLs to /profile/{EntityAccountId}
+              html = await this.convertBarUrlsInHtml(html);
               console.log(`[ReviveAdServerService] Extracted HTML using fallback method (${html.length} chars)`);
               return {
                 html: html,
@@ -242,6 +404,8 @@ class ReviveAdServerService {
           if (trimmedData.startsWith('<')) {
             // Replace localhost URLs với production URL
             let html = this.replaceLocalhostUrls(response.data);
+            // Convert /bar/{BarPageId} URLs to /profile/{EntityAccountId}
+            html = await this.convertBarUrlsInHtml(html);
             console.log(`[ReviveAdServerService] Successfully retrieved banner HTML (${html.length} chars)`);
             return {
               html: html,
