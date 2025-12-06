@@ -5,10 +5,9 @@ services:
   # 1) Revive Adserver (Apache + PHP) – Public web service
   - type: web
     name: smoker-revive
-    runtime: image
-    image: jitesoft/revive-adserver:latest
+    runtime: docker
+    dockerfilePath: ./Dockerfile.revive
     plan: starter
-    dockerCommand: apache2-foreground
     healthCheckPath: /revive
     envVars:
       # Sử dụng Azure MySQL thay vì Render MySQL service
@@ -17,9 +16,9 @@ services:
       - key: REVIVE_DB_PORT
         value: "3306"
       - key: REVIVE_DB_USER
-        value: smoker  # Username Azure MySQL của bạn
+        value: smoker
       - key: REVIVE_DB_PASSWORD
-        value: Minhtran26  # ⚠️ Thay bằng password thực tế
+        value: Minhtran26
       - key: REVIVE_DB_NAME
         value: revive_adserver
     disk:
@@ -41,7 +40,7 @@ services:
       
       # SQL Server cho database chính (cần cấu hình riêng)
       - key: MSSQL_SERVER
-        value: your_sql_server.database.windows.net  # Azure SQL Server endpoint
+        value: your_sql_server.database.windows.net
       - key: MSSQL_PORT
         value: "1433"
       - key: MSSQL_USER
@@ -59,7 +58,7 @@ services:
       - key: REVIVE_DB_USER
         value: smoker
       - key: REVIVE_DB_PASSWORD
-        value: Minhtran26  # ⚠️ Thay bằng password thực tế
+        value: Minhtran26
       - key: REVIVE_DB_NAME
         value: revive_adserver
       
