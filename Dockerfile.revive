@@ -21,8 +21,18 @@ COPY revive/ /var/www/html/revive/
 RUN chown -R www-data:www-data /var/www/html/revive
 RUN chmod -R 755 /var/www/html/revive
 
-# Configure Apache to allow access to revive directory
-RUN echo '<Directory /var/www/html/revive>' > /etc/apache2/conf-available/revive.conf && \
+# Configure Apache virtual host to allow access to revive
+RUN sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf && \
+    sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/Require all denied/Require all granted/' /etc/apache2/apache2.conf
+
+# Create Apache config to override .htaccess blocking in revive directory
+RUN echo '# Revive Ad Server Configuration' > /etc/apache2/conf-available/revive.conf && \
+    echo '<Directory /var/www/html/revive>' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    Options Indexes FollowSymLinks' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    AllowOverride None' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    Require all granted' >> /etc/apache2/conf-available/revive.conf && \
+    echo '</Directory>' >> /etc/apache2/conf-available/revive.conf && \
+    echo '<Directory /var/www/html/revive/www>' >> /etc/apache2/conf-available/revive.conf && \
     echo '    Options Indexes FollowSymLinks' >> /etc/apache2/conf-available/revive.conf && \
     echo '    AllowOverride All' >> /etc/apache2/conf-available/revive.conf && \
     echo '    Require all granted' >> /etc/apache2/conf-available/revive.conf && \
