@@ -59,12 +59,11 @@ services:
       - key: REVIVE_DB_NAME
         value: revive_adserver
       
-      # Revive Ad Server URL (sẽ được set sau khi deploy)
+      # Revive Ad Server URL
+      # Note: fromService returns base URL, we need to append /revive
+      # Using direct URL for now (can be updated after deployment)
       - key: REVIVE_AD_SERVER_URL
-        fromService:
-          name: smoker-revive
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
+        value: https://smoker-revive.onrender.com/revive
       
       # Các biến môi trường khác cần thiết
       - key: JWT_SECRET
