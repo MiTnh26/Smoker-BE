@@ -248,11 +248,6 @@ class PostDetailService {
                 id: String(replyObj._id || replyObj.id || replyKey),
                 content: replyObj.content || replyObj.text || '',
                 author: replyAuthor,
-                authorName: replyAuthor.name,
-                authorAvatar: replyAuthor.avatar,
-                authorEntityAccountId: replyAuthor.entityAccountId,
-                authorEntityId: replyAuthor.entityId,
-                authorEntityType: replyAuthor.entityType,
                 stats: {
                   likeCount: replyLikeCount,
                   isLikedByMe: replyObj.likedByViewer || false
@@ -267,11 +262,6 @@ class PostDetailService {
             id: String(commentObj._id || commentObj.id || key),
             content: commentObj.content || commentObj.text || '',
             author: commentAuthor,
-            authorName: commentAuthor.name,
-            authorAvatar: commentAuthor.avatar,
-            authorEntityAccountId: commentAuthor.entityAccountId,
-            authorEntityId: commentAuthor.entityId,
-            authorEntityType: commentAuthor.entityType,
             stats: {
               likeCount: commentLikeCount,
               replyCount: repliesArray.length,
