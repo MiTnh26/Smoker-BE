@@ -1,0 +1,14 @@
+FROM jitesoft/revive-adserver:latest
+
+# Copy Revive files từ local
+COPY revive/ /var/www/html/revive/
+
+# Set permissions
+RUN chown -R www-data:www-data /var/www/html/revive
+RUN chmod -R 755 /var/www/html/revive
+
+# Expose port
+EXPOSE 80
+
+# Start Apache
+CMD ["apache2-foreground"]
