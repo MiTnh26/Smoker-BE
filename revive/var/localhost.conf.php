@@ -38,7 +38,7 @@ persistent=
 protocol=tcp
 compress=
 ssl=1
-capath=
+capath="/var/www/html/revive/certs"
 ca="/var/www/html/revive/certs/azure-mysql-ssl-cert.pem"
 
 [databaseCharset]
