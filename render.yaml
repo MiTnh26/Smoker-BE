@@ -20,10 +20,6 @@ services:
         value: Minhtran26
       - key: REVIVE_DB_NAME
         value: revive_adserver
-    disk:
-      name: revive-data
-      mountPath: /var/www/html
-      sizeGB: 5
     region: singapore
     autoDeploy: true
 
