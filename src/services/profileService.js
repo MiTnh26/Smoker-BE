@@ -282,7 +282,7 @@ class ProfileService {
         // Only set addressRaw if address was originally a JSON string (for backward compatibility)
         // If addressObject exists, we can reconstruct it, so addressRaw is optional
         if (normalizedAddress.raw && typeof normalizedAddress.raw === 'string' && normalizedAddress.raw.trim().startsWith('{')) {
-          entityInfo.addressRaw = normalizedAddress.raw;
+        entityInfo.addressRaw = normalizedAddress.raw;
         } else {
           entityInfo.addressRaw = normalizedAddress.object ? JSON.stringify(normalizedAddress.object) : null;
         }
