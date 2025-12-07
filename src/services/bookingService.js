@@ -272,9 +272,22 @@ class BookingService {
           if (booking.MongoDetailId) {
             try {
               const detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
+              if (detailSchedule) {
+                // Convert Mongoose document to plain object để đảm bảo Location được trả về
+                const detailScheduleObj = detailSchedule.toObject ? detailSchedule.toObject() : detailSchedule;
+                console.log(`[BookingService] Found detailSchedule for ${booking.MongoDetailId}:`, {
+                  Location: detailScheduleObj.Location,
+                  Note: detailScheduleObj.Note,
+                  hasLocation: !!detailScheduleObj.Location
+                });
+                return {
+                  ...booking,
+                  detailSchedule: detailScheduleObj,
+                };
+              }
               return {
                 ...booking,
-                detailSchedule: detailSchedule || null,
+                detailSchedule: null,
               };
             } catch (error) {
               console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
@@ -284,6 +297,7 @@ class BookingService {
               };
             }
           }
+          console.log(`[BookingService] No MongoDetailId for booking ${booking.BookedScheduleId}`);
           return {
             ...booking,
             detailSchedule: null,
