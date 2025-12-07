@@ -39,4 +39,7 @@ router.post(
   businessController.uploadBusinessFiles
 );
 
+// Update business account by EntityAccountId (PUT /business/:entityAccountId)
+router.put("/:entityAccountId", verifyToken, requireActiveEntity, businessController.updateBusinessByEntityAccountId);
+
 module.exports = router;
