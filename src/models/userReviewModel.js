@@ -23,6 +23,26 @@ const UserReview = sequelize.define('UserReview', {
     type: DataTypes.INTEGER,
     allowNull: false,
   },
+  BookedScheduleId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+  },
+  BookingId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+  },
+  BookingDate: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  Picture: {
+    type: DataTypes.STRING(2000),
+    allowNull: true,
+  },
+  FeedBackContent: {
+    type: DataTypes.STRING(1000),
+    allowNull: true,
+  },
   created_at: {
     type: DataTypes.DATE,
     allowNull: true,

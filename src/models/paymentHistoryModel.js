@@ -55,10 +55,85 @@ async function findById(paymentHistoryId) {
   return result.recordset[0] || null;
 }
 
+/**
+ * Lấy số tiền cọc từ PaymentHistory cho booking
+ * @param {string} senderId - BookerId (EntityAccountId)
+ * @param {string} bookedScheduleId - BookedScheduleId để tìm payment history liên quan
+ * @param {Date} bookingDate - Ngày booking để tìm payment history gần nhất
+ * @returns {number|null} Số tiền cọc hoặc null nếu không tìm thấy
+ */
+async function getDepositAmountByBooking(senderId, bookedScheduleId, bookingDate = null) {
+  const pool = await getPool();
+  try {
+    // Tìm payment history với type = 'booking', senderId = BookerId, receiverId = NULL (platform giữ tiền cọc)
+    // Ưu tiên payment history gần với thời gian booking
+    let query = `
+      SELECT TOP 1 TransferAmount, created_at
+      FROM PaymentHistories
+      WHERE Type = 'booking'
+        AND SenderId = @SenderId
+        AND ReceiverId IS NULL
+        AND TransferContent LIKE '%booking%'
+    `;
+    
+    const request = pool.request()
+      .input("SenderId", sql.UniqueIdentifier, senderId);
+    
+    // Nếu có bookingDate, tìm payment history trong khoảng thời gian hợp lý (trước và sau booking date)
+    if (bookingDate) {
+      const bookingDateObj = new Date(bookingDate);
+      const beforeDate = new Date(bookingDateObj);
+      beforeDate.setDate(beforeDate.getDate() - 7); // 7 ngày trước booking
+      const afterDate = new Date(bookingDateObj);
+      afterDate.setDate(afterDate.getDate() + 1); // 1 ngày sau booking
+      
+      request.input("BeforeDate", sql.DateTime, beforeDate);
+      request.input("AfterDate", sql.DateTime, afterDate);
+      
+      query += ` AND created_at >= @BeforeDate AND created_at <= @AfterDate`;
+    }
+    
+    query += ` ORDER BY created_at DESC`;
+    
+    const result = await request.query(query);
+    
+    if (result.recordset.length > 0) {
+      const amount = parseFloat(result.recordset[0].TransferAmount);
+      return isNaN(amount) ? null : amount;
+    }
+    
+    // Nếu không tìm thấy với bookingDate, thử tìm payment history gần nhất
+    if (bookingDate) {
+      const fallbackResult = await pool.request()
+        .input("SenderId", sql.UniqueIdentifier, senderId)
+        .query(`
+          SELECT TOP 1 TransferAmount
+          FROM PaymentHistories
+          WHERE Type = 'booking'
+            AND SenderId = @SenderId
+            AND ReceiverId IS NULL
+            AND TransferContent LIKE '%booking%'
+          ORDER BY created_at DESC
+        `);
+      
+      if (fallbackResult.recordset.length > 0) {
+        const amount = parseFloat(fallbackResult.recordset[0].TransferAmount);
+        return isNaN(amount) ? null : amount;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('[paymentHistoryModel] Error getting deposit amount:', error);
+    return null;
+  }
+}
+
 module.exports = {
   createPaymentHistory,
   getPaymentHistoryBySender,
-  findById
+  findById,
+  getDepositAmountByBooking
 };
 
 
