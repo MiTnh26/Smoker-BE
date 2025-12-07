@@ -93,6 +93,8 @@ async function getBookedScheduleById(bookedScheduleId) {
         StartTime,
         EndTime,
         MongoDetailId,
+        ReviewStatus,
+        RefundStatus,
         created_at
       FROM BookedSchedules
       WHERE BookedScheduleId = @BookedScheduleId;
@@ -120,6 +122,8 @@ async function getBookedSchedulesByBooker(bookerId, { limit = 50, offset = 0 } =
         StartTime,
         EndTime,
         MongoDetailId,
+        ReviewStatus,
+        RefundStatus,
         created_at
       FROM BookedSchedules
       WHERE BookerId = @BookerId
@@ -165,6 +169,8 @@ async function getBookedSchedulesByReceiver(receiverId, { limit = 50, offset = 0
         StartTime,
         EndTime,
         MongoDetailId,
+        ReviewStatus,
+        RefundStatus,
         created_at
       FROM BookedSchedules
       ${whereClause}
@@ -280,6 +286,52 @@ async function updateBookedScheduleStatuses(bookedScheduleId, { paymentStatus, s
   return updatedRecord;
 }
 
+async function updateRefundStatus(bookedScheduleId, refundStatus) {
+  const pool = await getPool();
+  
+  // Kiểm tra xem cột RefundStatus có tồn tại không
+  const checkColumnResult = await pool.request()
+    .query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'BookedSchedules' AND COLUMN_NAME = 'RefundStatus'
+    `);
+  
+  if (checkColumnResult.recordset.length === 0) {
+    console.warn('⚠️ RefundStatus column does not exist in BookedSchedules, skipping update');
+    return null;
+  }
+  
+  const result = await pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
+    .input("RefundStatus", sql.NVarChar(20), refundStatus)
+    .query(`
+      UPDATE BookedSchedules
+      SET RefundStatus = @RefundStatus
+      WHERE BookedScheduleId = @BookedScheduleId;
+
+      SELECT
+        BookedScheduleId,
+        BookerId,
+        ReceiverId,
+        Type,
+        TotalAmount,
+        PaymentStatus,
+        ScheduleStatus,
+        BookingDate,
+        StartTime,
+        EndTime,
+        MongoDetailId,
+        ReviewStatus,
+        RefundStatus,
+        created_at
+      FROM BookedSchedules
+      WHERE BookedScheduleId = @BookedScheduleId;
+    `);
+
+  return result.recordset[0] || null;
+}
+
 async function updateBookedScheduleTiming(bookedScheduleId, { bookingDate, startTime, endTime }) {
   if (bookingDate === undefined && startTime === undefined && endTime === undefined) {
     throw new Error("At least one of bookingDate, startTime or endTime must be provided");
@@ -333,11 +385,44 @@ async function updateBookedScheduleTiming(bookedScheduleId, { bookingDate, start
   return result.recordset[0] || null;
 }
 
+async function getBookedSchedulesByRefundStatus(refundStatus, { limit = 50, offset = 0 } = {}) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("RefundStatus", sql.NVarChar(20), refundStatus)
+    .input("Limit", sql.Int, limit)
+    .input("Offset", sql.Int, offset)
+    .query(`
+      SELECT
+        BookedScheduleId,
+        BookerId,
+        ReceiverId,
+        Type,
+        TotalAmount,
+        PaymentStatus,
+        ScheduleStatus,
+        BookingDate,
+        StartTime,
+        EndTime,
+        MongoDetailId,
+        ReviewStatus,
+        RefundStatus,
+        created_at
+      FROM BookedSchedules
+      WHERE RefundStatus = @RefundStatus
+      ORDER BY created_at DESC
+      OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY;
+    `);
+
+  return result.recordset;
+}
+
 module.exports = {
   createBookedSchedule,
   getBookedScheduleById,
   getBookedSchedulesByBooker,
   getBookedSchedulesByReceiver,
+  getBookedSchedulesByRefundStatus,
   updateBookedScheduleStatuses,
-  updateBookedScheduleTiming
+  updateBookedScheduleTiming,
+  updateRefundStatus
 };
