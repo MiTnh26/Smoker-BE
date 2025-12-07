@@ -11,5 +11,7 @@ router.patch("/users/:id/role", verifyToken, requireAdmin, AdminController.updat
 router.patch("/business/:id/status", verifyToken, requireAdmin, AdminController.updateBusinessStatus);
 router.get("/users/:id/businesses", verifyToken, requireAdmin, AdminController.getUserBusinesses);
 router.patch("/bar/:id/status", verifyToken, requireAdmin, AdminController.updateBarStatus);
+router.get("/refund-requests", verifyToken, requireAdmin, AdminController.getRefundRequests);
+router.patch("/refund-requests/:bookedScheduleId/status", verifyToken, requireAdmin, AdminController.updateRefundStatus);
 
 module.exports = router;
