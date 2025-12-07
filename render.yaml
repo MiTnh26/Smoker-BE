@@ -7,9 +7,11 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile.revive
     plan: free
-    healthCheckPath: /revive
+    healthCheckPath: /revive/www/admin/
     envVars:
       # Sử dụng Azure MySQL thay vì Render MySQL service
+      - key: PORT
+        value: "80"
       - key: REVIVE_DB_HOST
         value: mysql-smoker.mysql.database.azure.com
       - key: REVIVE_DB_PORT
@@ -35,7 +37,7 @@ services:
       
       # SQL Server cho database chính (cần cấu hình riêng)
       - key: MSSQL_SERVER
-        value: your_sql_server.database.windows.net
+        value: smoker.database.windows.net
       - key: MSSQL_PORT
         value: "1433"
       - key: MSSQL_USER
@@ -57,12 +59,15 @@ services:
       - key: REVIVE_DB_NAME
         value: revive_adserver
       
-      # Revive Ad Server URL (sẽ được set sau khi deploy)
+      # Revive Ad Server URL
+      # Note: fromService returns base URL, we need to append /revive
+      # Using direct URL for now (can be updated after deployment)
       - key: REVIVE_AD_SERVER_URL
-        fromService:
-          name: smoker-revive
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
+        value: https://smoker-revive.onrender.com/revive
+      
+      # Frontend URL for redirect URLs
+      - key: FRONTEND_URL
+        value: https://smoker-fe-henna.vercel.app
       
       # Các biến môi trường khác cần thiết
       - key: JWT_SECRET

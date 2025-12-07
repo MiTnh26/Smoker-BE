@@ -409,7 +409,11 @@ class PostService {
           title: musicObj.title || '',
           artistName: musicObj.artistName || musicObj.artist || '',
           audioUrl: musicObj.audioUrl || '',
-          thumbnailUrl: musicObj.thumbnailUrl || musicObj.thumbnail || null,
+          thumbnailUrl: musicObj.thumbnailUrl || musicObj.thumbnail || musicObj.coverUrl || null,
+          coverUrl: musicObj.coverUrl || null,
+          purchaseLink: musicObj.purchaseLink || null,
+          hashTag: musicObj.hashTag || null,
+          details: musicObj.details || null,
           duration: musicObj.duration || null
         };
       }
@@ -424,7 +428,11 @@ class PostService {
           title: songObj.title || '',
           artistName: songObj.artistName || songObj.artist || '',
           audioUrl: songObj.audioUrl || '',
-          thumbnailUrl: songObj.thumbnailUrl || songObj.thumbnail || null,
+          thumbnailUrl: songObj.thumbnailUrl || songObj.thumbnail || songObj.coverUrl || null,
+          coverUrl: songObj.coverUrl || null,
+          purchaseLink: songObj.purchaseLink || null,
+          hashTag: songObj.hashTag || null,
+          details: songObj.details || null,
           duration: songObj.duration || null
         };
       }
@@ -1043,11 +1051,6 @@ class PostService {
                 id: String(replyObj._id || replyObj.id || replyKey),
                 content: replyObj.content || replyObj.text || '',
                 author: replyAuthor,
-                authorName: replyAuthor.name,
-                authorAvatar: replyAuthor.avatar,
-                authorEntityAccountId: replyAuthor.entityAccountId,
-                authorEntityId: replyAuthor.entityId,
-                authorEntityType: replyAuthor.entityType,
                 stats: {
                   likeCount: replyLikeCount,
                   isLikedByMe: replyObj.likedByViewer || false
@@ -1062,11 +1065,6 @@ class PostService {
             id: String(commentObj._id || commentObj.id || key),
             content: commentObj.content || commentObj.text || '',
             author: commentAuthor,
-            authorName: commentAuthor.name,
-            authorAvatar: commentAuthor.avatar,
-            authorEntityAccountId: commentAuthor.entityAccountId,
-            authorEntityId: commentAuthor.entityId,
-            authorEntityType: commentAuthor.entityType,
             stats: {
               likeCount: commentLikeCount,
               replyCount: repliesArray.length,
