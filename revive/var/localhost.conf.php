@@ -52,11 +52,11 @@ statisticsSortBufferSize=
 schema=
 
 [webpath]
-admin="smoker-revive.onrender.com/revive/www/admin"
-delivery="smoker-revive.onrender.com/revive/www/delivery"
-deliverySSL="smoker-revive.onrender.com/revive/www/delivery"
-images="smoker-revive.onrender.com/revive/www/images"
-imagesSSL="smoker-revive.onrender.com/revive/www/images"
+admin="https://smoker-revive.onrender.com/revive/www/admin"
+delivery="https://smoker-revive.onrender.com/revive/www/delivery"
+deliverySSL="https://smoker-revive.onrender.com/revive/www/delivery"
+images="https://smoker-revive.onrender.com/revive/www/images"
+imagesSSL="https://smoker-revive.onrender.com/revive/www/images"
 
 [file]
 asyncjs="asyncjs.php"
