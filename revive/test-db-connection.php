@@ -238,4 +238,6 @@ echo "<li>Nếu <strong>Test 3</strong> thành công → Revive config đúng, v
 echo "<li>Nếu <strong>Test 3</strong> failed → Certificate path hoặc file có vấn đề</li>";
 echo "<li>Nếu <strong>Certificate file NOT FOUND</strong> → Certificate chưa được download trong Dockerfile</li>";
 echo "</ul>";
-?>
+
+
+

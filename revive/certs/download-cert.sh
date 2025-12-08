@@ -22,3 +22,6 @@ cat "$(dirname "$0")/DigiCertGlobalRootCA.crt.pem" \
 echo "✅ Certificates downloaded successfully!"
 echo "Location: $(dirname "$0")/azure-mysql-ca-cert.pem"
 
+
+
+
