@@ -250,3 +250,92 @@ exports.registerDancer = async (req, res) => {
     return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
   }
 };
+
+// PUT handler - update business account by EntityAccountId (PUT /business/:entityAccountId)
+exports.updateBusinessByEntityAccountId = async (req, res) => {
+  try {
+    const { entityAccountId } = req.params;
+    if (!entityAccountId)
+      return res.status(400).json({ status: "error", message: "Thiếu entityAccountId" });
+
+    // Get businessAccountId from EntityAccountId
+    const { verifyEntityAccountId } = require("../models/entityAccountModel");
+    const entityInfo = await verifyEntityAccountId(entityAccountId);
+    
+    if (!entityInfo || entityInfo.EntityType !== 'BusinessAccount') {
+      return res.status(404).json({ status: "error", message: "Không tìm thấy BusinessAccount với EntityAccountId này" });
+    }
+
+    const businessAccountId = entityInfo.EntityId;
+    const business = await getBusinessAccountById(businessAccountId);
+    if (!business)
+      return res.status(404).json({ status: "error", message: "Không tìm thấy BusinessAccount" });
+
+    // Get data from body (no file upload in PUT request)
+    const { userName, address, phone, bio, gender, pricePerHours, pricePerSession } = req.body || {};
+    
+    // Handle address - can be JSON string or plain string
+    let addressToSave = (address || "").trim();
+    if (address && typeof address === 'string' && address.trim().startsWith('{')) {
+      try {
+        const addressObj = JSON.parse(address);
+        addressToSave = JSON.stringify({
+          detail: addressObj.detail || "",
+          provinceId: addressObj.provinceId || null,
+          districtId: addressObj.districtId || null,
+          wardId: addressObj.wardId || null
+        });
+      } catch (e) {
+        // If parsing fails, save as plain string
+        addressToSave = address.trim();
+      }
+    }
+
+    const updated = await updateBusinessAccountFiles(businessAccountId, {
+      userName: userName || business.UserName,
+      avatar: business.Avatar, // Keep existing avatar
+      background: business.Background, // Keep existing background
+      address: addressToSave || business.Address,
+      phone: phone || business.Phone,
+      bio: bio || business.Bio,
+      gender: gender || business.Gender,
+      pricePerHours: pricePerHours ? parseInt(pricePerHours) : business.PricePerHours,
+      pricePerSession: pricePerSession ? parseInt(pricePerSession) : business.PricePerSession,
+    });
+
+    // Parse address để trả về structured data
+    let parsedAddress = updated.Address || "";
+    let parsedAddressData = null;
+    
+    if (parsedAddress) {
+      try {
+        const parsed = JSON.parse(parsedAddress);
+        if (parsed && typeof parsed === 'object') {
+          parsedAddressData = {
+            detail: parsed.detail || "",
+            provinceId: parsed.provinceId || null,
+            districtId: parsed.districtId || null,
+            wardId: parsed.wardId || null
+          };
+          // Build full address text if we have components
+          const parts = [parsed.detail, parsed.wardName, parsed.districtName, parsed.provinceName].filter(Boolean);
+          parsedAddress = parts.length > 0 ? parts.join(', ') : parsedAddress;
+        }
+      } catch (e) {
+        parsedAddress = updated.Address || "";
+      }
+    }
+
+    return res.status(200).json({ 
+      status: "success", 
+      data: {
+        ...updated,
+        Address: parsedAddress,
+        addressObject: parsedAddressData
+      }
+    });
+  } catch (err) {
+    console.error("updateBusinessByEntityAccountId error:", err);
+    return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
+  }
+};

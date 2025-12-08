@@ -48,7 +48,7 @@ const { createEntityAccount } = require("../models/entityAccountModel");
     }
   };
   
-  // Step 2: HTTP handler - update bar page info or files
+  // Step 2: HTTP handler - update bar page info or files (POST /bar/upload)
   exports.updateBarPageInfo = async (req, res) => {
     try {
       const { barPageId } = req.body || {};
@@ -311,6 +311,93 @@ const { createEntityAccount } = require("../models/entityAccountModel");
       return res.status(200).json({ status: "success", message: "Xóa trang bar thành công" });
     } catch (err) {
       console.error("deleteBarPage error:", err);
+      return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
+    }
+  };
+
+  // PUT handler - update bar page by EntityAccountId (PUT /bar/:entityAccountId)
+  exports.updateBarPageByEntityAccountId = async (req, res) => {
+    try {
+      const { entityAccountId } = req.params;
+      if (!entityAccountId)
+        return res.status(400).json({ status: "error", message: "Thiếu entityAccountId" });
+
+      // Get barPageId from EntityAccountId
+      const { verifyEntityAccountId } = require("../models/entityAccountModel");
+      const entityInfo = await verifyEntityAccountId(entityAccountId);
+      
+      if (!entityInfo || entityInfo.EntityType !== 'BarPage') {
+        return res.status(404).json({ status: "error", message: "Không tìm thấy BarPage với EntityAccountId này" });
+      }
+
+      const barPageId = entityInfo.EntityId;
+      const barPage = await getBarPageById(barPageId);
+      if (!barPage)
+        return res.status(404).json({ status: "error", message: "Không tìm thấy BarPage" });
+
+      // Get data from body (no file upload in PUT request)
+      const { BarName, barName, address, phoneNumber, email, bio } = req.body || {};
+      const nameToUpdate = BarName || barName;
+      
+      // Handle address - can be JSON string or plain string
+      let addressToSave = (address || "").trim();
+      if (address && typeof address === 'string' && address.trim().startsWith('{')) {
+        try {
+          const addressObj = JSON.parse(address);
+          addressToSave = JSON.stringify({
+            detail: addressObj.detail || "",
+            provinceId: addressObj.provinceId || null,
+            districtId: addressObj.districtId || null,
+            wardId: addressObj.wardId || null
+          });
+        } catch (e) {
+          // If parsing fails, save as plain string
+          addressToSave = address.trim();
+        }
+      }
+
+      const updated = await updateBarPage(barPageId, {
+        barName: nameToUpdate,
+        avatar: barPage.Avatar, // Keep existing avatar
+        background: barPage.Background, // Keep existing background
+        address: addressToSave || barPage.Address,
+        phoneNumber: phoneNumber || barPage.PhoneNumber,
+        email: email || barPage.Email,
+      });
+
+      // Parse address để trả về structured data
+      let parsedAddress = updated.Address || "";
+      let parsedAddressData = null;
+      
+      if (parsedAddress) {
+        try {
+          const parsed = JSON.parse(parsedAddress);
+          if (parsed && typeof parsed === 'object') {
+            parsedAddressData = {
+              detail: parsed.detail || "",
+              provinceId: parsed.provinceId || null,
+              districtId: parsed.districtId || null,
+              wardId: parsed.wardId || null
+            };
+            // Build full address text if we have components
+            const parts = [parsed.detail, parsed.wardName, parsed.districtName, parsed.provinceName].filter(Boolean);
+            parsedAddress = parts.length > 0 ? parts.join(', ') : parsedAddress;
+          }
+        } catch (e) {
+          parsedAddress = updated.Address || "";
+        }
+      }
+
+      return res.status(200).json({ 
+        status: "success", 
+        data: {
+          ...updated,
+          Address: parsedAddress,
+          addressObject: parsedAddressData
+        }
+      });
+    } catch (err) {
+      console.error("updateBarPageByEntityAccountId error:", err);
       return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
     }
   };
