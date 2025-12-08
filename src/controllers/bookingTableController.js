@@ -130,6 +130,82 @@ class BookingTableController {
     }
   }
 
+  // PATCH /api/booking-tables/:id/mark-paid - Đánh dấu đã thanh toán
+  async markPaid(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { id } = req.params;
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+
+      // Cập nhật PaymentStatus thành "Paid"
+      const result = await bookedScheduleModel.updateBookedScheduleStatuses(id, {
+        paymentStatus: "Paid"
+      });
+
+      if (!result) {
+        return res.status(404).json({
+          success: false,
+          message: "Booking not found"
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+        message: "Đã đánh dấu thanh toán"
+      });
+    } catch (error) {
+      console.error("markPaid error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error marking booking as paid",
+        error: error.message
+      });
+    }
+  }
+
+  // PATCH /api/booking-tables/:id/end - Cập nhật status thành Ended
+  async endBooking(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { id } = req.params;
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+
+      // Cập nhật ScheduleStatus thành "Ended"
+      const result = await bookedScheduleModel.updateBookedScheduleStatuses(id, {
+        scheduleStatus: "Ended"
+      });
+
+      if (!result) {
+        return res.status(404).json({
+          success: false,
+          message: "Booking not found"
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+        message: "Đã cập nhật trạng thái thành Ended"
+      });
+    } catch (error) {
+      console.error("endBooking error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error ending booking",
+        error: error.message
+      });
+    }
+  }
+
   // POST /api/booking-tables/:id/create-payment - Tạo payment link cho table booking (cọc)
   async createPayment(req, res) {
     try {

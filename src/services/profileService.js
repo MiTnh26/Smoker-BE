@@ -1,5 +1,7 @@
 const { getPool, sql } = require('../db/sqlserver');
-const postService = require('./postService');
+const axios = require('axios');
+
+const LOCATION_API_BASE = 'https://open.oapi.vn/location';
 
 const getFirstString = (...values) => {
   for (const value of values) {
@@ -10,7 +12,57 @@ const getFirstString = (...values) => {
   return null;
 };
 
-const buildAddressText = (addressObj) => {
+/**
+ * Fetch location name from location API by ID
+ * @param {string} type - 'province', 'district', or 'ward'
+ * @param {string} id - The ID of the location
+ * @param {string} parentId - For district: provinceId, for ward: districtId
+ */
+const fetchLocationName = async (type, id, parentId = null) => {
+  if (!id) return null;
+  
+  try {
+    let url;
+    if (type === 'province') {
+      // For province, fetch all provinces and find by id
+      url = `${LOCATION_API_BASE}/provinces?page=0&size=100`;
+    } else if (type === 'district') {
+      // For district, need provinceId as parent
+      if (!parentId) {
+        console.warn('[ProfileService] Cannot fetch district without provinceId');
+        return null;
+      }
+      url = `${LOCATION_API_BASE}/districts/${parentId}?page=0&size=100`;
+    } else if (type === 'ward') {
+      // For ward, need districtId as parent
+      if (!parentId) {
+        console.warn('[ProfileService] Cannot fetch ward without districtId');
+        return null;
+      }
+      url = `${LOCATION_API_BASE}/wards/${parentId}?page=0&size=100`;
+    } else {
+      return null;
+    }
+
+    const response = await axios.get(url, { timeout: 10000 });
+    if (response.data && response.data.code === 'success' && response.data.data) {
+      const items = response.data.data;
+      // Find by id
+      const found = items.find(item => String(item.id) === String(id));
+      return found ? found.name : null;
+    }
+    return null;
+  } catch (error) {
+    console.warn(`[ProfileService] Failed to fetch ${type} name for id ${id}:`, error.message);
+    return null;
+  }
+};
+
+/**
+ * Build full address text from address object
+ * If only IDs are provided, fetch names from location API
+ */
+const buildAddressText = async (addressObj) => {
   if (!addressObj || typeof addressObj !== 'object') return null;
 
   const fullAddress = getFirstString(
@@ -29,30 +81,48 @@ const buildAddressText = (addressObj) => {
     addressObj.street,
     addressObj.Street
   );
-  const ward = getFirstString(
+  
+  // Try to get names from object first
+  let ward = getFirstString(
     addressObj.wardName,
     addressObj.WardName,
     addressObj.ward,
     addressObj.Ward
   );
-  const district = getFirstString(
+  let district = getFirstString(
     addressObj.districtName,
     addressObj.DistrictName,
     addressObj.district,
     addressObj.District
   );
-  const province = getFirstString(
+  let province = getFirstString(
     addressObj.provinceName,
     addressObj.ProvinceName,
     addressObj.province,
     addressObj.Province
   );
 
+  // If names are missing but we have IDs, fetch from location API
+  const provinceId = getFirstString(addressObj.provinceId, addressObj.ProvinceId);
+  const districtId = getFirstString(addressObj.districtId, addressObj.DistrictId);
+  const wardId = getFirstString(addressObj.wardId, addressObj.WardId);
+
+  // Fetch in order: province -> district -> ward (each needs parent ID)
+  if (!province && provinceId) {
+    province = await fetchLocationName('province', provinceId);
+  }
+  if (!district && districtId && provinceId) {
+    district = await fetchLocationName('district', districtId, provinceId);
+  }
+  if (!ward && wardId && districtId) {
+    ward = await fetchLocationName('ward', wardId, districtId);
+  }
+
   const parts = [detail, ward, district, province].filter(Boolean);
-  return parts.length ? parts.join(', ') : null;
+  return parts.length > 0 ? parts.join(', ') : null;
 };
 
-const normalizeAddressField = (rawAddress) => {
+const normalizeAddressField = async (rawAddress) => {
   if (!rawAddress) {
     return { text: null, object: null, raw: null };
   }
@@ -62,8 +132,9 @@ const normalizeAddressField = (rawAddress) => {
     if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
       try {
         const parsed = JSON.parse(trimmed);
+        const addressText = await buildAddressText(parsed);
         return {
-          text: buildAddressText(parsed) || trimmed,
+          text: addressText || trimmed,
           object: parsed,
           raw: rawAddress
         };
@@ -76,8 +147,9 @@ const normalizeAddressField = (rawAddress) => {
   }
 
   if (typeof rawAddress === 'object') {
+    const addressText = await buildAddressText(rawAddress);
     return {
-      text: buildAddressText(rawAddress),
+      text: addressText,
       object: rawAddress,
       raw: rawAddress
     };
@@ -196,11 +268,54 @@ class ProfileService {
       
       const entityInfo = result.recordset[0];
       if (entityInfo) {
-        const normalizedAddress = normalizeAddressField(entityInfo.address);
+        const normalizedAddress = await normalizeAddressField(entityInfo.address);
+        
+        // Set addressText (formatted full address)
         entityInfo.addressText = normalizedAddress.text;
-        entityInfo.addressObject = normalizedAddress.object;
-        entityInfo.addressRaw = normalizedAddress.raw;
+        
+        // Set address to addressText for consistency (keep both for backward compatibility)
         entityInfo.address = normalizedAddress.text || entityInfo.address;
+        
+        // Set addressObject if available (for edit form)
+        entityInfo.addressObject = normalizedAddress.object;
+        
+        // Only set addressRaw if address was originally a JSON string (for backward compatibility)
+        // If addressObject exists, we can reconstruct it, so addressRaw is optional
+        if (normalizedAddress.raw && typeof normalizedAddress.raw === 'string' && normalizedAddress.raw.trim().startsWith('{')) {
+        entityInfo.addressRaw = normalizedAddress.raw;
+        } else {
+          entityInfo.addressRaw = normalizedAddress.object ? JSON.stringify(normalizedAddress.object) : null;
+        }
+        
+        // Extract address components for edit form
+        if (normalizedAddress.object) {
+          const addrObj = normalizedAddress.object;
+          entityInfo.provinceId = getFirstString(
+            addrObj.provinceId,
+            addrObj.ProvinceId
+          ) || null;
+          entityInfo.districtId = getFirstString(
+            addrObj.districtId,
+            addrObj.DistrictId
+          ) || null;
+          entityInfo.wardId = getFirstString(
+            addrObj.wardId,
+            addrObj.WardId
+          ) || null;
+          entityInfo.addressDetail = getFirstString(
+            addrObj.detail,
+            addrObj.Detail,
+            addrObj.addressDetail,
+            addrObj.AddressDetail,
+            addrObj.street,
+            addrObj.Street
+          ) || null;
+        } else {
+          entityInfo.provinceId = null;
+          entityInfo.districtId = null;
+          entityInfo.wardId = null;
+          entityInfo.addressDetail = null;
+        }
       }
       console.log('[ProfileService] _getEntityInfo - Entity found:', {
         entityAccountId: entityInfo.EntityAccountId,
@@ -321,8 +436,8 @@ class ProfileService {
       console.log('[ProfileService] Database pool obtained');
 
       console.log('[ProfileService] Starting parallel queries...');
-      // Thực thi các truy vấn song song
-      const [entityInfo, followStats, followStatus, postsResult] = await Promise.all([
+      // Thực thi các truy vấn song song (không fetch posts vì FE đã gọi riêng API /posts/author/:entityId)
+      const [entityInfo, followStats, followStatus] = await Promise.all([
         this._getEntityInfo(pool, entityId).catch(err => {
           console.error('[ProfileService] _getEntityInfo failed:', err);
           throw err;
@@ -336,15 +451,6 @@ class ProfileService {
           console.error('[ProfileService] _getFollowStatus failed:', err);
           // Return default status instead of throwing
           return { isFollowing: false };
-        }),
-        postService.getPostsByEntityAccountId(entityId, { limit: 12 }).catch(err => {
-          console.error('[ProfileService] Error fetching posts:', err);
-          console.error('[ProfileService] Posts error details:', {
-            message: err.message,
-            name: err.name,
-            stack: err.stack
-          });
-          return { success: false, data: [], nextCursor: null, hasMore: false };
         })
       ]);
 
@@ -352,9 +458,7 @@ class ProfileService {
       console.log('[ProfileService] Results:', {
         hasEntityInfo: !!entityInfo,
         hasFollowStats: !!followStats,
-        hasFollowStatus: !!followStatus,
-        hasPostsResult: !!postsResult,
-        postsSuccess: postsResult?.success
+        hasFollowStatus: !!followStatus
       });
 
       if (!entityInfo) {
@@ -386,16 +490,11 @@ class ProfileService {
       }
 
       console.log('[ProfileService] Merging results...');
-      // Gộp kết quả
+      // Gộp kết quả (không include posts vì FE đã gọi riêng API /posts/author/:entityId)
       const profileData = {
         ...entityInfo,
         ...followStats,
-        ...followStatus,
-        posts: postsResult && postsResult.success ? (postsResult.data || []) : [],
-        postsPagination: postsResult && postsResult.success ? { 
-          nextCursor: postsResult.nextCursor || null, 
-          hasMore: postsResult.hasMore || false 
-        } : { nextCursor: null, hasMore: false },
+        ...followStatus
       };
 
       console.log('[ProfileService] Profile data merged successfully');
