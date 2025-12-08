@@ -35,6 +35,7 @@ const {
   adminAdRoutes,
   feedRoutes,
   profileRoutes,
+  reviveMaintenanceRoutes,
 } = require("./routes");
 
 
@@ -172,6 +173,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/event-advertisements", require("./routes/eventAdvertisementRoutes"));
 app.use("/api/feed", feedRoutes);
 app.use("/api/profile", profileRoutes);
+app.use("/api/revive/maintenance", reviveMaintenanceRoutes);
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);
