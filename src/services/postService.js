@@ -537,6 +537,8 @@ class PostService {
       title: post.title || null,
       createdAt: post.createdAt || null,
       updatedAt: post.updatedAt || null,
+      trashedAt: post.trashedAt || null,
+      status: post.status || null,
       author,
       medias,
       stats,
@@ -2605,27 +2607,38 @@ class PostService {
     }
   }
 
-  // Lấy posts đã trash của user hiện tại
-  async getTrashedPosts(userEntityAccountId, page = 1, limit = 10) {
+  // Lấy posts đã trash của user hiện tại (trả về DTO giống newsfeed)
+  async getTrashedPosts(userEntityAccountId, page = 1, limit = 10, viewer = {}) {
     try {
+      if (!userEntityAccountId) {
+        return { success: false, message: "entityAccountId is required" };
+      }
+
+      const normalizedEntityId = String(userEntityAccountId).trim();
       const skip = (page - 1) * limit;
+
       const query = Post.find({ 
         status: "trashed",
-        trashedBy: String(userEntityAccountId).trim()
+        trashedBy: normalizedEntityId
       })
-        .sort({ trashedAt: -1 }) // Sort theo thời gian trash (mới nhất trước)
+        .sort({ trashedAt: -1, createdAt: -1, _id: -1 }) // mới nhất trước
         .skip(skip)
-        .limit(limit);
+        .limit(limit)
+        .populate("mediaIds")
+        .populate("musicId")
+        .populate("songId")
+        .populate({
+          path: "repostedFromId",
+          populate: ["mediaIds", "musicId", "songId"]
+        });
 
-      const posts = await query.lean();
+      const posts = await query;
       const total = await Post.countDocuments({ 
         status: "trashed",
-        trashedBy: String(userEntityAccountId).trim()
+        trashedBy: normalizedEntityId
       });
 
-      // Enrich với author info
-      const postsPlain = posts.map(p => {
-        const plain = p;
+      const normalizeMaps = (plain) => {
         if (plain.likes instanceof Map) {
           const likesObj = {};
           plain.likes.forEach((value, key) => {
@@ -2637,7 +2650,7 @@ class PostService {
           const commentsObj = {};
           plain.comments.forEach((value, key) => {
             const commentObj = value instanceof Map ? Object.fromEntries(value) : value;
-            if (commentObj.replies instanceof Map) {
+            if (commentObj && commentObj.replies instanceof Map) {
               const repliesObj = {};
               commentObj.replies.forEach((replyValue, replyKey) => {
                 repliesObj[replyKey] = replyValue instanceof Map ? Object.fromEntries(replyValue) : replyValue;
@@ -2648,27 +2661,133 @@ class PostService {
           });
           plain.comments = commentsObj;
         }
+      };
+
+      const mapMediaIdsToMedias = (plain) => {
+        if (!plain || !Array.isArray(plain.mediaIds)) {
+          plain.medias = plain.medias || [];
+          return;
+        }
+
+        plain.medias = plain.mediaIds.map((media) => {
+          const mediaObj = media.toObject ? media.toObject({ flattenMaps: true }) : media;
+          const urlLower = (mediaObj.url || "").toLowerCase();
+
+          let detectedType = mediaObj.type;
+          if (
+            urlLower.includes(".mp4") ||
+            urlLower.includes(".webm") ||
+            urlLower.includes(".mov") ||
+            urlLower.includes(".avi") ||
+            urlLower.includes(".mkv") ||
+            urlLower.includes("video")
+          ) {
+            detectedType = "video";
+          } else if (
+            urlLower.includes(".mp3") ||
+            urlLower.includes(".wav") ||
+            urlLower.includes(".m4a") ||
+            urlLower.includes(".ogg") ||
+            urlLower.includes(".aac") ||
+            urlLower.includes("audio")
+          ) {
+            detectedType = "audio";
+          } else if (!detectedType || detectedType === "image") {
+            detectedType = detectedType || "image";
+          }
+
+          return {
+            ...mediaObj,
+            id: mediaObj._id,
+            type: detectedType,
+          };
+        });
+      };
+
+      const mapMusic = (plain) => {
+        if (plain.songId) {
+          plain.song = plain.songId.toObject ? plain.songId.toObject() : plain.songId;
+        }
+        if (plain.musicId) {
+          plain.music = plain.musicId.toObject ? plain.musicId.toObject() : plain.musicId;
+        }
+      };
+
+      const postsPlain = posts.map((p) => {
+        const plain = p.toObject ? p.toObject({ flattenMaps: true }) : p;
+
+        normalizeMaps(plain);
+
+        if (plain.repostedFromId) {
+          const original = plain.repostedFromId.toObject
+            ? plain.repostedFromId.toObject({ flattenMaps: true })
+            : plain.repostedFromId;
+          normalizeMaps(original);
+          mapMediaIdsToMedias(original);
+          mapMusic(original);
+          plain.originalPost = original;
+          plain.repostedFromId = String(original?._id || original?.id || "");
+        }
+
+        mapMediaIdsToMedias(plain);
+        mapMusic(plain);
+
         return plain;
       });
 
       await this.enrichPostsWithAuthorInfo(postsPlain);
+
+      const originalPosts = postsPlain.map((p) => p.originalPost).filter(Boolean);
+      if (originalPosts.length > 0) {
+        await this.enrichPostsWithAuthorInfo(originalPosts);
+      }
+
+      postsPlain.forEach((post) => {
+        if (!post.authorName) post.authorName = "Người dùng";
+        if (post.authorAvatar === undefined) post.authorAvatar = null;
+      });
+
       await this.enrichCommentsWithAuthorInfo(postsPlain);
+      postsPlain.forEach((post) => {
+        post.topComments = getTopComments(post.comments, 2);
+
+        if (post.originalPost && Array.isArray(post.medias) && post.medias.length > 0) {
+          const original = post.originalPost;
+          if (!original.medias || !Array.isArray(original.medias) || original.medias.length === 0) {
+            original.medias = post.medias;
+          }
+          post.medias = [];
+        }
+      });
+
+      const postsDTO = postsPlain
+        .map((post) =>
+          this.buildPostDTO(post, {
+            viewer: {
+              accountId: viewer.accountId || null,
+              entityAccountId: viewer.entityAccountId || null,
+            },
+            includeTopComments: true,
+            isChild: false,
+          })
+        )
+        .filter(Boolean);
 
       return {
         success: true,
-        data: postsPlain,
+        data: postsDTO,
         pagination: {
           page,
           limit,
           total,
-          pages: Math.ceil(total / limit)
-        }
+          pages: Math.ceil(total / limit),
+        },
       };
     } catch (error) {
       return {
         success: false,
         message: "Error getting trashed posts",
-        error: error.message
+        error: error.message,
       };
     }
   }
