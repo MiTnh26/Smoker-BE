@@ -246,7 +246,8 @@ class BookingController {
         endTime,
         location,
         note,
-        offeredPrice
+        offeredPrice,
+        slots // Array of slot IDs: [1, 2, 3]
       } = req.body;
 
       if (!requesterEntityAccountId || !performerEntityAccountId) {
@@ -263,11 +264,11 @@ class BookingController {
         });
       }
 
-      // Tạo detailSchedule trong MongoDB cho Location và Note
+      // Tạo detailSchedule trong MongoDB cho Location, Note và Slots
       const DetailSchedule = require("../models/detailSchedule");
       let mongoDetailId = null;
       
-      if (location || note) {
+      if (location || note || (slots && Array.isArray(slots) && slots.length > 0)) {
         try {
           const detailDoc = await DetailSchedule.create({
             Location: location || "",
@@ -275,6 +276,7 @@ class BookingController {
             OfferedPrice: offeredPrice || 0,
             PerformerRole: performerRole,
             RequesterRole: requesterRole || "Customer",
+            Slots: Array.isArray(slots) ? slots : [],
           });
           mongoDetailId = detailDoc._id.toString();
         } catch (error) {
