@@ -29,6 +29,7 @@ const adRoutes = require("./adRoutes");
 const adminAdRoutes = require("./adminAdRoutes");
 const feedRoutes = require("./feedRoutes");
 const profileRoutes = require("./profileRoutes");
+const reviveMaintenanceRoutes = require("./reviveMaintenanceRoutes");
 
 module.exports = { 
   adRoutes,
@@ -61,5 +62,6 @@ module.exports = {
   adminRoutes,
   payosRoutes,
   feedRoutes,
-  profileRoutes
+  profileRoutes,
+  reviveMaintenanceRoutes
 };
