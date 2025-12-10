@@ -3,7 +3,7 @@
 
 [openads]
 installed=1
-requireSSL=
+requireSSL=1
 sslPort=443
 
 [ui]
