@@ -1711,7 +1711,15 @@ class PostController {
       }
 
       const { page = 1, limit = 10 } = req.query;
-      const result = await postService.getTrashedPosts(entityAccountId, parseInt(page), parseInt(limit));
+      const result = await postService.getTrashedPosts(
+        entityAccountId,
+        parseInt(page),
+        parseInt(limit),
+        {
+          accountId: req.user?.id || null,
+          entityAccountId: req.user?.entityAccountId || null
+        }
+      );
 
       if (result.success) {
         res.status(200).json(result);
