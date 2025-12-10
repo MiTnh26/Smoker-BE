@@ -41,6 +41,11 @@ const detailScheduleSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    // Slots đã chọn cho DJ/Dancer booking (array of numbers: [1, 2, 3])
+    Slots: {
+      type: [Number],
+      default: [],
+    },
   },
   {
     timestamps: true,
