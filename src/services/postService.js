@@ -1,4 +1,5 @@
 const Post = require("../models/postModel");
+const Media = require("../models/mediaModel");
 const mongoose = require("mongoose");
 const FeedAlgorithm = require("./feedAlgorithm");
 const { getPool, sql } = require("../db/sqlserver");
@@ -17,6 +18,19 @@ const countCollectionItems = (value) => {
   if (typeof value === "object") return Object.keys(value).length;
   if (typeof value === "number") return value;
   return 0;
+};
+
+// Detect media type from url/file extension (fallback image)
+const inferMediaType = (url, fallback = "image") => {
+  if (!url || typeof url !== "string") return fallback;
+  const lower = url.toLowerCase();
+  if (lower.includes(".mp4") || lower.includes(".webm") || lower.includes(".mov") || lower.includes(".avi") || lower.includes(".mkv") || lower.includes("video")) {
+    return "video";
+  }
+  if (lower.includes(".mp3") || lower.includes(".wav") || lower.includes(".m4a") || lower.includes(".ogg") || lower.includes(".aac") || lower.includes("audio")) {
+    return "audio";
+  }
+  return fallback;
 };
 
 /**
@@ -332,39 +346,27 @@ class PostService {
 
     // 2. Build medias array (clean, no buffer/__v/empty fields)
     const medias = [];
+    const pushMedia = (mediaObjRaw, fallbackId = null) => {
+      if (!mediaObjRaw) return;
+      const mediaObj = mediaObjRaw.toObject ? mediaObjRaw.toObject({ flattenMaps: true }) : mediaObjRaw;
+      const url = mediaObj.url || mediaObj.path || '';
+      if (!url) return;
+      const detectedType = mediaObj.type || inferMediaType(url, 'image');
+      const cleanMedia = {
+        id: String(mediaObj._id || mediaObj.id || fallbackId || ''),
+        url,
+        type: detectedType,
+        caption: mediaObj.caption || '',
+        createdAt: mediaObj.createdAt || mediaObj.uploadDate || null
+      };
+      if (cleanMedia.id && cleanMedia.url) medias.push(cleanMedia);
+    };
+
     if (post.medias && Array.isArray(post.medias) && post.medias.length > 0) {
-      post.medias.forEach(media => {
-        if (!media || !media.url) return; // Skip empty medias
-        
-        const mediaObj = media.toObject ? media.toObject({ flattenMaps: true }) : media;
-        const urlLower = (mediaObj.url || '').toLowerCase();
-        
-        // Detect type from URL extension
-        let detectedType = mediaObj.type;
-        if (urlLower.includes('.mp4') || urlLower.includes('.webm') || urlLower.includes('.mov') || 
-            urlLower.includes('.avi') || urlLower.includes('.mkv') || urlLower.includes('video')) {
-          detectedType = 'video';
-        } else if (urlLower.includes('.mp3') || urlLower.includes('.wav') || urlLower.includes('.m4a') || 
-                   urlLower.includes('.ogg') || urlLower.includes('.aac') || urlLower.includes('audio')) {
-          detectedType = 'audio';
-        } else {
-          detectedType = detectedType || 'image';
-        }
-
-        // Build clean media object (no buffer, __v, empty fields)
-        const cleanMedia = {
-          id: String(mediaObj._id || mediaObj.id || ''),
-          url: mediaObj.url || '',
-          type: detectedType,
-          caption: mediaObj.caption || '',
-          createdAt: mediaObj.createdAt || mediaObj.uploadDate || null
-        };
-
-        // Only add if has valid id and url
-        if (cleanMedia.id && cleanMedia.url) {
-          medias.push(cleanMedia);
-        }
-      });
+      post.medias.forEach(pushMedia);
+    } else if (post.medias && typeof post.medias === 'object') {
+      // Support legacy shape: medias is an object keyed by index
+      Object.entries(post.medias).forEach(([key, mediaObj]) => pushMedia(mediaObj, key));
     }
 
     // 3. Build stats object
@@ -2402,7 +2404,7 @@ class PostService {
     }
   }
 
-  // Cập nhật bài viết
+  // Cập nhật bài viết (cho phép sửa nội dung và media captions / thêm media mới)
   async updatePost(postId, updateData, userId, userEntityAccountId = null) {
     try {
       const post = await Post.findById(postId);
@@ -2428,30 +2430,86 @@ class PostService {
         };
       }
 
-      // Chỉ cho phép cập nhật title và content, không cho phép cập nhật images
-      const allowedFields = ['title', 'content'];
-      const filteredUpdateData = {};
-
-      for (const field of allowedFields) {
-        if (updateData[field] !== undefined) {
-          filteredUpdateData[field] = updateData[field];
-        }
-      }
-
-      // Kiểm tra có ít nhất một field được cập nhật
-      if (Object.keys(filteredUpdateData).length === 0) {
+      const hasValidField = ['title', 'content', 'caption', 'medias'].some(
+        (field) => updateData[field] !== undefined
+      );
+      if (!hasValidField) {
         return {
           success: false,
           message: "No valid fields to update"
         };
       }
 
-      // Cập nhật post
-      const updatedPost = await Post.findByIdAndUpdate(
-        postId,
-        filteredUpdateData,
-        { new: true, runValidators: true }
-      );
+      if (updateData.title !== undefined) {
+        post.title = updateData.title;
+      }
+      if (updateData.content !== undefined) {
+        post.content = updateData.content;
+      }
+      if (updateData.caption !== undefined) {
+        post.caption = updateData.caption;
+      }
+
+      // Handle medias update: update captions for existing, add new ones from url, drop removed
+      if (Array.isArray(updateData.medias)) {
+        // Load current medias
+        const existingIds = Array.isArray(post.mediaIds) ? post.mediaIds : [];
+        const existingMedias = existingIds.length
+          ? await Media.find({ _id: { $in: existingIds } })
+          : [];
+        const existingMap = new Map(
+          existingMedias.map((m) => [String(m._id), m])
+        );
+
+        const nextMediaIds = [];
+
+        for (const mediaItem of updateData.medias) {
+          if (!mediaItem) continue;
+          const mediaId = mediaItem.id || mediaItem._id;
+          const caption = mediaItem.caption ?? "";
+          const mediaUrl = mediaItem.url || mediaItem.path;
+          const mediaType = mediaItem.type || inferMediaType(mediaUrl);
+
+          if (mediaId && existingMap.has(String(mediaId))) {
+            const mediaDoc = existingMap.get(String(mediaId));
+            if (caption !== undefined) mediaDoc.caption = caption;
+            if (mediaUrl) mediaDoc.url = mediaUrl;
+            if (mediaType) mediaDoc.type = mediaType;
+            await mediaDoc.save();
+            nextMediaIds.push(mediaDoc._id);
+            continue;
+          }
+
+          // New media: require url to persist
+          if (mediaUrl) {
+            const newMedia = new Media({
+              postId: post._id,
+              accountId: post.accountId,
+              entityAccountId: post.entityAccountId,
+              entityId: post.entityId,
+              entityType: post.entityType,
+              url: mediaUrl,
+              caption,
+              type: mediaType,
+              comments: new Map(),
+              likes: new Map()
+            });
+            await newMedia.save();
+            nextMediaIds.push(newMedia._id);
+          }
+        }
+
+        // Nếu payload không gửi media nào, nghĩa là xóa hết media
+        post.mediaIds = nextMediaIds;
+      }
+
+      await post.save();
+
+      // Populate mediaIds để FE nhận được caption/url mới
+      const updatedPost = await Post.findById(postId)
+        .populate("mediaIds");
+
+      await FeedAlgorithm.updatePostTrendingScore(postId.toString());
 
       return {
         success: true,

@@ -1361,7 +1361,7 @@ class PostController {
   async updatePost(req, res) {
     try {
       const { id } = req.params;
-      const { title, content } = req.body;
+      const { title, content, caption, medias, images, videos } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -1371,17 +1371,42 @@ class PostController {
         });
       }
 
+      // Chuẩn hóa medias từ nhiều nguồn (array trực tiếp hoặc images/videos object)
+      let normalizedMedias = Array.isArray(medias) ? medias.filter(Boolean) : [];
+      if ((!normalizedMedias || normalizedMedias.length === 0) && (images || videos)) {
+        const allMedias = { ...(images || {}), ...(videos || {}) };
+        normalizedMedias = Object.keys(allMedias).map((key) => {
+          const item = allMedias[key];
+          const isVideo = videos && Object.prototype.hasOwnProperty.call(videos, key);
+          const url = item?.url || item?.path || (typeof item === "string" ? item : null);
+          return {
+            id: item?.id || item?._id,
+            url,
+            caption: item?.caption || "",
+            type: item?.type || (isVideo ? "video" : "image")
+          };
+        }).filter((m) => m && m.url);
+      }
+
       // Kiểm tra có ít nhất một field được cập nhật
-      if (!title && !content) {
+      const hasField =
+        title !== undefined ||
+        content !== undefined ||
+        caption !== undefined ||
+        (normalizedMedias && normalizedMedias.length > 0);
+
+      if (!hasField) {
         return res.status(400).json({
           success: false,
-          message: "At least one field (title or content) is required"
+          message: "At least one field (title, content, caption or medias) is required"
         });
       }
 
       const updateData = {};
       if (title !== undefined) updateData.title = title;
       if (content !== undefined) updateData.content = content;
+      if (caption !== undefined) updateData.caption = caption;
+      if (normalizedMedias && normalizedMedias.length >= 0) updateData.medias = normalizedMedias;
 
       // Lấy entityAccountId từ request hoặc từ accountId
       const entityAccountId = req.body.entityAccountId || req.user?.entityAccountId;
