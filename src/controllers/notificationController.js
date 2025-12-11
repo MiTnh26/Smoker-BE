@@ -269,10 +269,11 @@ class NotificationController {
       }
 
       // Chỉ query theo EntityAccountId - không fallback về AccountId
-      const entityAccountId = String(requestedEntityAccountId).trim();
+      const entityAccountId = String(requestedEntityAccountId).trim().toLowerCase();
+      const normalizedEntityAccountId = entityAccountId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const query = {
         _id: notificationId,
-        receiverEntityAccountId: entityAccountId
+        receiverEntityAccountId: { $regex: new RegExp(`^${normalizedEntityAccountId}$`, 'i') }
       };
 
       const notification = await Notification.findOneAndUpdate(
@@ -325,10 +326,11 @@ class NotificationController {
 
       // Chỉ query theo EntityAccountId - không fallback về AccountId
       // Exclude Messages type - message notifications are handled separately
-      const entityAccountId = String(requestedEntityAccountId).trim();
+      const entityAccountId = String(requestedEntityAccountId).trim().toLowerCase();
+      const normalizedEntityAccountId = entityAccountId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const query = {
         status: "Unread",
-        receiverEntityAccountId: entityAccountId,
+        receiverEntityAccountId: { $regex: new RegExp(`^${normalizedEntityAccountId}$`, 'i') },
         type: { $ne: "Messages" } // Exclude message notifications
       };
 
@@ -373,9 +375,10 @@ class NotificationController {
 
       // Chỉ query theo EntityAccountId - không fallback về AccountId
       // Exclude Messages type - message notifications are handled separately
-      const entityAccountId = String(requestedEntityAccountId).trim();
+      const entityAccountId = String(requestedEntityAccountId).trim().toLowerCase();
+      const normalizedEntityAccountId = entityAccountId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const count = await Notification.countDocuments({
-        receiverEntityAccountId: entityAccountId,
+        receiverEntityAccountId: { $regex: new RegExp(`^${normalizedEntityAccountId}$`, 'i') },
         status: "Unread",
         type: { $ne: "Messages" } // Exclude message notifications
       });

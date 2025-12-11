@@ -35,6 +35,7 @@ const {
   adminAdRoutes,
   feedRoutes,
   profileRoutes,
+  reviveMaintenanceRoutes,
 } = require("./routes");
 
 
@@ -172,6 +173,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/event-advertisements", require("./routes/eventAdvertisementRoutes"));
 app.use("/api/feed", feedRoutes);
 app.use("/api/profile", profileRoutes);
+app.use("/api/revive/maintenance", reviveMaintenanceRoutes);
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);
@@ -182,6 +184,19 @@ app.get("/", (req, res) => {
     timestamp: new Date().toISOString(),
     databases: {
       sqlserver: "Attempting connection...", // SQL Server connection status
+      mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
+    }
+  });
+});
+
+// Health check endpoint for Render
+app.get("/health", (req, res) => {
+  res.status(200).json({ 
+    status: "OK",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    databases: {
+      sqlserver: "Checking...",
       mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
     }
   });

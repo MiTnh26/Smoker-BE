@@ -7,6 +7,19 @@ const mediaLikeSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed, // Can be String or ObjectId
       required: true,
     },
+    entityAccountId: {
+      type: String, // EntityAccountId của người like
+      default: null,
+    },
+    entityId: {
+      type: String, // EntityId của người like
+      default: null,
+    },
+    entityType: {
+      type: String, // EntityType của người like
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+    },
     TypeRole: {
       type: String,
       enum: ["Account", "BusinessAccount", "BarPage"],
@@ -22,6 +35,40 @@ const mediaReplySchema = new mongoose.Schema(
     accountId: {
       type: mongoose.Schema.Types.Mixed, // Can be String or ObjectId
       required: true,
+    },
+    entityAccountId: {
+      type: String, // EntityAccountId của người reply
+      default: null,
+    },
+    entityId: {
+      type: String, // EntityId của người reply
+      default: null,
+    },
+    entityType: {
+      type: String, // EntityType của người reply
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+    },
+    authorEntityAccountId: {
+      type: String, // EntityAccountId của author (enriched từ SQL Server)
+      default: null,
+    },
+    authorEntityId: {
+      type: String, // EntityId của author (enriched từ SQL Server)
+      default: null,
+    },
+    authorEntityType: {
+      type: String, // EntityType của author (enriched từ SQL Server)
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+    },
+    authorName: {
+      type: String, // Tên author (enriched từ SQL Server)
+      default: null,
+    },
+    authorAvatar: {
+      type: String, // Avatar author (enriched từ SQL Server)
+      default: null,
     },
     content: {
       type: String,
@@ -67,6 +114,40 @@ const mediaCommentSchema = new mongoose.Schema(
     accountId: {
       type: mongoose.Schema.Types.Mixed, // Can be String or ObjectId
       required: true,
+    },
+    entityAccountId: {
+      type: String, // EntityAccountId của người comment
+      default: null,
+    },
+    entityId: {
+      type: String, // EntityId của người comment
+      default: null,
+    },
+    entityType: {
+      type: String, // EntityType của người comment
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+    },
+    authorEntityAccountId: {
+      type: String, // EntityAccountId của author (enriched từ SQL Server)
+      default: null,
+    },
+    authorEntityId: {
+      type: String, // EntityId của author (enriched từ SQL Server)
+      default: null,
+    },
+    authorEntityType: {
+      type: String, // EntityType của author (enriched từ SQL Server)
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+    },
+    authorName: {
+      type: String, // Tên author (enriched từ SQL Server)
+      default: null,
+    },
+    authorAvatar: {
+      type: String, // Avatar author (enriched từ SQL Server)
+      default: null,
     },
     content: {
       type: String,

@@ -47,7 +47,10 @@ router.post(
   barPageController.updateBarPageInfo
 );
 
-// 4) Xóa trang bar
+// 4) Update bar page by EntityAccountId (PUT /bar/:entityAccountId)
+router.put("/:entityAccountId", verifyToken, requireActiveEntity, barPageController.updateBarPageByEntityAccountId);
+
+// 5) Xóa trang bar
 router.delete("/:barPageId", verifyToken, requireActiveEntity, barPageController.deleteBarPage);
 
 module.exports = router;

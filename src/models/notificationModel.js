@@ -61,6 +61,10 @@ const notificationSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    isAnonymous: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

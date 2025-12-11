@@ -51,7 +51,7 @@ class FeedService {
 
       const authorMap = new Map();
       result.recordset.forEach(row => {
-        authorMap.set(String(row.EntityAccountId).toLowerCase(), {
+        authorMap.set(String(row.EntityAccountId).trim(), {
           authorName: row.authorName || 'Người dùng',
           authorAvatar: row.authorAvatar || null,
         });
@@ -61,7 +61,7 @@ class FeedService {
         // Enrich the main item (post or livestream)
         const entityId = item.entityAccountId || item.hostEntityAccountId;
         if (entityId) {
-          const authorInfo = authorMap.get(String(entityId).toLowerCase());
+          const authorInfo = authorMap.get(String(entityId).trim());
           if (authorInfo) {
             item.authorName = authorInfo.authorName;
             item.authorAvatar = authorInfo.authorAvatar;
@@ -70,7 +70,7 @@ class FeedService {
 
         // If it's a repost, enrich the original post as well
         if (item.originalPost && item.originalPost.entityAccountId) {
-          const originalAuthorInfo = authorMap.get(String(item.originalPost.entityAccountId).toLowerCase());
+          const originalAuthorInfo = authorMap.get(String(item.originalPost.entityAccountId).trim());
           if (originalAuthorInfo) {
             item.originalPost.authorName = originalAuthorInfo.authorName;
             item.originalPost.authorAvatar = originalAuthorInfo.authorAvatar;
@@ -89,8 +89,14 @@ class FeedService {
    */
   async getFeed({ currentUser, limit = 10, cursor }) {
     // 1. Lấy dữ liệu từ hai nguồn khác nhau
+    const viewerAccountId = currentUser?.id || null;
+    const viewerEntityAccountId = currentUser?.entityAccountId || null;
+    
     const [postResult, livestreams] = await Promise.all([
-            postService.getAllPosts(null, limit, true, true, cursor, true), // populateReposts = true
+      postService.getAllPosts(null, limit, true, true, cursor, true, {
+        viewerAccountId,
+        viewerEntityAccountId
+      }), // populateReposts = true
       livestreamRepository.findActive(5) // Lấy 5 livestreams mới nhất
     ]);
 
@@ -102,22 +108,46 @@ class FeedService {
     await this._enrichItemsWithAuthorInfo(postResult.data);
     await this._enrichItemsWithAuthorInfo(livestreams);
 
-    // 3. Chuyển đổi posts và livestreams thành một cấu trúc chung
+    // 3. Chuyển đổi posts thành feed items và sort theo timestamp (newest first)
     const postItems = postResult.data.map(post => ({
       type: 'post',
       timestamp: new Date(post.createdAt),
       data: this.transformPost(post, currentUser),
-    }));
+    })).sort((a, b) => b.timestamp - a.timestamp);
 
-    const livestreamItems = livestreams.map(stream => ({
+    // 4. Shuffle livestreams và chuyển đổi thành feed items
+    const shuffledLivestreams = [...livestreams].sort(() => Math.random() - 0.5);
+    const livestreamItems = shuffledLivestreams.map(stream => ({
       type: 'livestream',
       timestamp: new Date(stream.startTime),
       data: this.transformLivestream(stream, currentUser),
     }));
 
-    // 4. Gộp và sắp xếp
-    const feedItems = [...postItems, ...livestreamItems];
-    feedItems.sort((a, b) => b.timestamp - a.timestamp);
+    // 5. Insert livestreams vào các vị trí ngẫu nhiên trong posts
+    const feedItems = [...postItems];
+    livestreamItems.forEach(livestreamItem => {
+      const random = Math.random();
+      let insertIndex;
+      
+      if (random < 0.3) {
+        // 30% đầu feed (0 đến 30% của length)
+        insertIndex = Math.floor(Math.random() * Math.max(1, Math.floor(feedItems.length * 0.3)));
+      } else if (random < 0.7) {
+        // 40% giữa feed (30% đến 70% của length)
+        const start = Math.floor(feedItems.length * 0.3);
+        const end = Math.floor(feedItems.length * 0.7);
+        insertIndex = start + Math.floor(Math.random() * Math.max(1, end - start));
+      } else {
+        // 30% cuối feed (70% đến 100% của length)
+        const start = Math.floor(feedItems.length * 0.7);
+        insertIndex = start + Math.floor(Math.random() * Math.max(1, feedItems.length - start));
+      }
+      
+      // Đảm bảo insertIndex không vượt quá length
+      insertIndex = Math.min(insertIndex, feedItems.length);
+      
+      feedItems.splice(insertIndex, 0, livestreamItem);
+    });
 
     return {
       feed: feedItems,
@@ -128,35 +158,53 @@ class FeedService {
 
   /**
    * Chuyển đổi dữ liệu Post thô sang định dạng cho client.
-   * Đây là nơi logic của `transformPost` từ frontend được chuyển về.
-   * @param {object} post - Dữ liệu post từ service
+   * Updated to work with new DTO schema (author, stats, originalPost)
+   * @param {object} post - Dữ liệu post từ service (DTO format)
    * @param {object} currentUser - Thông tin user đang đăng nhập
    * @returns {object} - Dữ liệu post đã được xử lý
    */
   transformPost(post, currentUser) {
     const viewerEntityAccountId = currentUser?.entityAccountId;
 
+    // Read from new DTO schema: author.entityAccountId or legacy format
+    const postEntityAccountId = post.author?.entityAccountId || post.entityAccountId;
+    
     // Logic kiểm tra quyền quản lý (canManage) cho bài post chính
-    const canManage = post.entityAccountId && viewerEntityAccountId &&
-                      String(post.entityAccountId).toLowerCase() === String(viewerEntityAccountId).toLowerCase();
+    // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
+    const canManage = postEntityAccountId && viewerEntityAccountId &&
+                      String(postEntityAccountId).trim().toLowerCase() === String(viewerEntityAccountId).trim().toLowerCase();
 
-    // Logic kiểm tra đã thích (isLikedByCurrentUser) cho bài post chính
-    const isLiked = post.likes && viewerEntityAccountId
-      ? Object.values(post.likes).some(like => String(like.entityAccountId).toLowerCase() === String(viewerEntityAccountId).toLowerCase())
-      : false;
+    // Read isLiked from new DTO schema: stats.isLikedByMe (already calculated correctly in buildPostDTO)
+    // Only use fallback if stats.isLikedByMe is not available (shouldn't happen with new DTO)
+    // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
+    const isLiked = post.stats?.isLikedByMe !== undefined ? post.stats.isLikedByMe :
+                   (post.likes && viewerEntityAccountId
+                     ? Object.values(post.likes).some(like => {
+                         const likeEntityId = like?.entityAccountId || like?.EntityAccountId;
+                         return likeEntityId && String(likeEntityId).trim().toLowerCase() === String(viewerEntityAccountId).trim().toLowerCase();
+                       })
+                     : false);
 
     // Nếu là repost, xử lý thêm cho bài post gốc
     if (post.originalPost) {
-      // Kiểm tra isLiked cho bài post gốc
-      const isOriginalPostLiked = post.originalPost.likes && viewerEntityAccountId
-        ? Object.values(post.originalPost.likes).some(like => String(like.entityAccountId).toLowerCase() === String(viewerEntityAccountId).toLowerCase())
-        : false;
+      const originalPostEntityAccountId = post.originalPost.author?.entityAccountId || post.originalPost.entityAccountId;
+      
+      // Read isLiked from new DTO schema for originalPost (already calculated correctly in buildPostDTO)
+      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
+      const isOriginalPostLiked = post.originalPost.stats?.isLikedByMe !== undefined ? post.originalPost.stats.isLikedByMe :
+                                  (post.originalPost.likes && viewerEntityAccountId
+                                    ? Object.values(post.originalPost.likes).some(like => {
+                                        const likeEntityId = like?.entityAccountId || like?.EntityAccountId;
+                                        return likeEntityId && String(likeEntityId).trim().toLowerCase() === String(viewerEntityAccountId).trim().toLowerCase();
+                                      })
+                                    : false);
       
       post.originalPost.isLikedByCurrentUser = isOriginalPostLiked;
 
       // Logic canManage cho bài post gốc
-      const canManageOriginal = post.originalPost.entityAccountId && viewerEntityAccountId &&
-                                String(post.originalPost.entityAccountId).toLowerCase() === String(viewerEntityAccountId).toLowerCase();
+      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
+      const canManageOriginal = originalPostEntityAccountId && viewerEntityAccountId &&
+                                String(originalPostEntityAccountId).trim().toLowerCase() === String(viewerEntityAccountId).trim().toLowerCase();
       post.originalPost.canManage = canManageOriginal;
     }
 

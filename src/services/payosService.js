@@ -196,10 +196,11 @@ class PayOSService {
 
   /**
    * Xử lý webhook từ PayOS
-   * @param {Object} verifiedData - Dữ liệu webhook đã được verify
+   * @param {Object} verifiedData - Dữ liệu webhook đã được verify (data object)
+   * @param {Object} webhookData - Webhook object gốc (để lấy code/desc)
    * @returns {Object} Thông tin đơn hàng đã được xử lý
    */
-  async processWebhook(verifiedData) {
+  async processWebhook(verifiedData, webhookData = null) {
     try {
       // verifiedData từ verifyPaymentWebhookData trả về chính là data object
       // (không phải toàn bộ webhook object)
@@ -215,18 +216,43 @@ class PayOSService {
         throw new Error("Invalid webhook data: missing orderCode");
       }
 
-      // Xác định status dựa trên code trong data hoặc từ webhook gốc
-      // PayOS trả về code "00" cho thành công
-      const status = (verifiedData.code === "00" || verifiedData.desc === "success") 
-        ? "PAID" 
-        : "FAILED";
+      // Xác định status dựa trên code từ webhook gốc hoặc từ verifiedData
+      // PayOS trả về code "00" cho thành công trong webhook object gốc
+      let status = "PAID"; // Mặc định là PAID nếu đã verify thành công
+      
+      // Ưu tiên lấy code từ webhook gốc (webhookData.code)
+      if (webhookData && webhookData.code) {
+        status = (webhookData.code === "00" || webhookData.code === 0 || webhookData.code === "0") ? "PAID" : "FAILED";
+      } else if (verifiedData.status) {
+        // Nếu có status trong data object
+        status = verifiedData.status === "PAID" || verifiedData.status === "paid" ? "PAID" : "FAILED";
+      } else if (verifiedData.code) {
+        // Nếu có code trong data object
+        status = (verifiedData.code === "00" || verifiedData.code === 0 || verifiedData.code === "0") ? "PAID" : "FAILED";
+      } else if (webhookData && webhookData.desc) {
+        // Nếu có desc trong webhook gốc
+        const desc = webhookData.desc.toLowerCase();
+        status = (desc.includes("success") || desc === "thành công" || desc === "success") ? "PAID" : "FAILED";
+      } else if (verifiedData.desc) {
+        // Nếu có desc trong data object
+        const desc = verifiedData.desc.toLowerCase();
+        status = (desc.includes("success") || desc === "thành công" || desc === "success") ? "PAID" : "FAILED";
+      }
+
+      console.log("[PayOS Service] Processed webhook status:", {
+        orderCode: verifiedData.orderCode,
+        status: status,
+        webhookCode: webhookData?.code,
+        verifiedDataCode: verifiedData?.code,
+        verifiedDataStatus: verifiedData?.status
+      });
 
       return {
         success: true,
         orderCode: verifiedData.orderCode,
         amount: verifiedData.amount,
         status: status,
-        description: verifiedData.description || verifiedData.desc,
+        description: verifiedData.description || verifiedData.desc || webhookData?.desc,
         transactionData: verifiedData,
       };
     } catch (error) {

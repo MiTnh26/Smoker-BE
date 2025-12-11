@@ -1,0 +1,57 @@
+FROM php:8.1-apache
+
+# Install dependencies
+
+RUN apt-get update && apt-get install -y \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    libicu-dev \
+    libzip-dev \
+    zip \
+    unzip \
+    curl \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-configure intl \
+    && docker-php-ext-install -j$(nproc) gd mysqli pdo pdo_mysql zip intl \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Enable Apache mod_rewrite
+RUN a2enmod rewrite
+RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
+# Create certs directory (certificate file will be copied with revive files)
+RUN mkdir -p /var/www/html/revive/certs
+
+# Copy Revive files
+COPY revive/ /var/www/html/revive/
+
+# Set permissions
+RUN chown -R www-data:www-data /var/www/html/revive
+RUN chmod -R 755 /var/www/html/revive
+
+# Configure Apache virtual host to allow access to revive
+RUN sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf && \
+    sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/Require all denied/Require all granted/' /etc/apache2/apache2.conf
+
+# Create Apache config to override .htaccess blocking in revive directory
+RUN echo '# Revive Ad Server Configuration' > /etc/apache2/conf-available/revive.conf && \
+    echo '<Directory /var/www/html/revive>' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    Options Indexes FollowSymLinks' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    AllowOverride None' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    Require all granted' >> /etc/apache2/conf-available/revive.conf && \
+    echo '</Directory>' >> /etc/apache2/conf-available/revive.conf && \
+    echo '<Directory /var/www/html/revive/www>' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    Options Indexes FollowSymLinks' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    AllowOverride All' >> /etc/apache2/conf-available/revive.conf && \
+    echo '    Require all granted' >> /etc/apache2/conf-available/revive.conf && \
+    echo '</Directory>' >> /etc/apache2/conf-available/revive.conf && \
+    a2enconf revive
+
+# Create a simple index.php in root to redirect to revive
+RUN echo '<?php header("Location: /revive/www/admin/"); ?>' > /var/www/html/index.php
+
+# Expose port 80
+EXPOSE 80
+
+# Start Apache
+CMD ["apache2-foreground"]

@@ -31,6 +31,18 @@ const BarReview = sequelize.define('BarReview', {
         type: DataTypes.STRING(1000),
         allowNull: true,
     },
+    BookingId: {
+        type: DataTypes.UUID,
+        allowNull: true,
+    },
+    BookingDate: {
+        type: DataTypes.DATE,
+        allowNull: true,
+    },
+    TableName: {
+        type: DataTypes.STRING(500),
+        allowNull: true,
+    },
     created_at: {
         type: DataTypes.DATE,
         allowNull: true,

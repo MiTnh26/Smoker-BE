@@ -19,7 +19,32 @@ const detailScheduleSchema = new mongoose.Schema(
     },
     Note: {
       type: String,
-      required: true,
+      default: "",
+    },
+    // Địa chỉ cho DJ/Dancer booking
+    Location: {
+      type: String,
+      default: "",
+    },
+    // Giá đề xuất cho DJ/Dancer booking
+    OfferedPrice: {
+      type: Number,
+      default: 0,
+    },
+    // Vai trò của performer (DJ/Dancer)
+    PerformerRole: {
+      type: String,
+      default: "",
+    },
+    // Vai trò của người đặt (Customer/Bar)
+    RequesterRole: {
+      type: String,
+      default: "",
+    },
+    // Slots đã chọn cho DJ/Dancer booking (array of numbers: [1, 2, 3])
+    Slots: {
+      type: [Number],
+      default: [],
     },
   },
   {

@@ -18,4 +18,13 @@ router.get("/booker/:bookerId", verifyToken, bookingTableController.getByBooker)
 // Lấy booking theo bar
 router.get("/receiver/:receiverId", verifyToken, bookingTableController.getByReceiver);
 
+// Tạo payment link cho table booking (cọc)
+router.post("/:id/create-payment", verifyToken, bookingTableController.createPayment);
+
+// Đánh dấu đã thanh toán
+router.patch("/:id/mark-paid", verifyToken, bookingTableController.markPaid);
+
+// Cập nhật status thành Ended
+router.patch("/:id/end", verifyToken, bookingTableController.endBooking);
+
 module.exports = router;
