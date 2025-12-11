@@ -22,7 +22,7 @@ async function getAccountById(accountId) {
     .input("accountId", sql.UniqueIdentifier, accountId)
     .query(
       ` SELECT TOP 1 
-        AccountId, Email, Role, UserName, Avatar, Background, 
+        AccountId, Email, Password, Role, UserName, Avatar, Background, 
         Phone, Address, Bio, Gender, Status, LastLogin, created_at
       FROM Accounts
       WHERE AccountId = @AccountId`
