@@ -13,15 +13,18 @@ async function findByChannel(agoraChannelName) {
 }
 
 async function findActive(limit = 50) {
-  return await Livestream.find({ status: "live" })
+  const livestreams = await Livestream.find({ status: "live" })
     .sort({ startTime: -1 })
-    .limit(limit);
+    .limit(limit)
+    .lean(); // Convert to plain objects để có thể enrich dễ dàng
+  return livestreams;
 }
 
 async function findByHost(hostAccountId, limit = 20) {
   return await Livestream.find({ hostAccountId })
     .sort({ startTime: -1 })
-    .limit(limit);
+    .limit(limit)
+    .lean(); // Convert to plain objects
 }
 
 async function updateStatus(livestreamId, updates) {

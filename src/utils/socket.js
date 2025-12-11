@@ -19,11 +19,25 @@ function initSocket(server) {
         console.log('=== SOCKET CONNECTION ===');
         console.log('Socket connected:', socket.id);
         
-        // Join user room (for notifications)
+        // Join user room (for notifications) - support both userId and entityAccountId
         socket.on('join', (userId) => {
             const roomId = String(userId);
             socket.join(roomId);
             console.log('User', socket.id, 'joined room:', roomId);
+        });
+        
+        // Join entityAccountId room (for notifications)
+        socket.on('join_notification', (entityAccountId) => {
+            const roomId = String(entityAccountId).trim().toLowerCase();
+            socket.join(roomId);
+            console.log('Socket', socket.id, 'joined notification room:', roomId);
+        });
+        
+        // Leave entityAccountId room
+        socket.on('leave_notification', (entityAccountId) => {
+            const roomId = String(entityAccountId).trim().toLowerCase();
+            socket.leave(roomId);
+            console.log('Socket', socket.id, 'left notification room:', roomId);
         });
         
         // Join conversation room (for realtime chat - like Messenger)

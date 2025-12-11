@@ -11,6 +11,15 @@ const likeSchema = new mongoose.Schema(
       type: String, // EntityAccountId của người tương tác
       default: null,
     },
+    entityId: {
+      type: String, // EntityId của người like
+      default: null,
+    },
+    entityType: {
+      type: String, // EntityType của người like
+      enum: ["Account", "BarPage", "BusinessAccount"],
+      default: null,
+    },
     TypeRole: {
       type: String,
       enum: ["Account", "BusinessAccount", "BarPage"],
@@ -86,6 +95,16 @@ const commentSchema = new mongoose.Schema(
       enum: ["Account", "BusinessAccount", "BarPage"],
       default: null,
     },
+    // Cờ bình luận ẩn danh
+    isAnonymous: {
+      type: Boolean,
+      default: false,
+    },
+    // Số thứ tự \"Người ẩn danh #n\" trong phạm vi một post
+    anonymousIndex: {
+      type: Number,
+      default: null,
+    },
     content: {
       type: String,
       required: true,
@@ -144,6 +163,12 @@ const postSchema = new mongoose.Schema(
       type: Map,
       of: commentSchema,
       default: new Map(),
+    },
+    // Map dùng để gán số ẩn danh ổn định theo entityAccountId trong từng post
+    anonymousIdentityMap: {
+      type: Map,
+      of: Number,
+      default: {},
     },
     likes: {
       type: Map,

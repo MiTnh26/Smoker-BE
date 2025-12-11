@@ -12,7 +12,7 @@ router.get("/", postController.getAllPosts);
 router.get("/search", postController.searchPosts);
 router.get("/search/title", postController.searchPostsByTitle);
 router.get("/search/author", postController.searchPostsByAuthor);
-router.get("/author/:authorId", postController.getPostsByAuthor);
+router.get("/author/:authorId", optionalVerifyToken, postController.getPostsByAuthor);
 
 // Routes cho Comments (cần auth) - phải đặt trước routes có :id
 router.post("/:postId/comments", verifyToken, checkBannedStatus, requireActiveEntity, postController.addComment);
@@ -57,6 +57,8 @@ router.post("/:id/trash", verifyToken, checkBannedStatus, requireActiveEntity, p
 router.post("/:id/restore", verifyToken, checkBannedStatus, requireActiveEntity, postController.restorePost);
 
 // Routes không cần authentication (public routes) - phải đặt cuối
+// Route cho post detail (enrich đầy đủ comments với author info) - đặt trước route :id
+router.get("/:id/detail", optionalVerifyToken, postController.getPostDetail);
 router.get("/:id", optionalVerifyToken, postController.getPostById);
 
 module.exports = router;

@@ -1,0 +1,83 @@
+# Preview Environments không khả dụng trên Hobby plan, đã xóa phần này
+
+services:
+  # 1) Revive Adserver (Apache + PHP) – Public web service
+  - type: web
+    name: smoker-revive
+    runtime: docker
+    dockerfilePath: ./Dockerfile.revive
+    plan: free
+    healthCheckPath: /revive/www/admin/
+    envVars:
+      # Sử dụng Azure MySQL thay vì Render MySQL service
+      - key: PORT
+        value: "80"
+      - key: REVIVE_DB_HOST
+        value: mysql-smoker.mysql.database.azure.com
+      - key: REVIVE_DB_PORT
+        value: "3306"
+      - key: REVIVE_DB_USER
+        value: smoker
+      - key: REVIVE_DB_PASSWORD
+        value: Minhtran26
+      - key: REVIVE_DB_NAME
+        value: revive_adserver
+    region: singapore
+    autoDeploy: true
+
+  # 2) Node.js Backend – build from Dockerfile
+  - type: web
+    name: smoker-node
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      
+      # SQL Server cho database chính (cần cấu hình riêng)
+      - key: MSSQL_SERVER
+        value: smoker.database.windows.net
+      - key: MSSQL_PORT
+        value: "1433"
+      - key: MSSQL_USER
+        value: smoker
+      - key: MSSQL_PASSWORD
+        value: Minhtran26
+      - key: MSSQL_DATABASE
+        value: Smoker
+      
+      # Revive Database (Azure MySQL)
+      - key: REVIVE_DB_HOST
+        value: mysql-smoker.mysql.database.azure.com
+      - key: REVIVE_DB_PORT
+        value: "3306"
+      - key: REVIVE_DB_USER
+        value: smoker
+      - key: REVIVE_DB_PASSWORD
+        value: Minhtran26
+      - key: REVIVE_DB_NAME
+        value: revive_adserver
+      
+      # Revive Ad Server URL
+      # Note: fromService returns base URL, we need to append /revive
+      # Using direct URL for now (can be updated after deployment)
+      - key: REVIVE_AD_SERVER_URL
+        value: https://smoker-revive.onrender.com/revive
+      
+      # Frontend URL for redirect URLs
+      - key: FRONTEND_URL
+        value: https://smoker-fe-henna.vercel.app
+      
+      # Revive Maintenance Secret (cho cron job trigger)
+      - key: REVIVE_MAINTENANCE_SECRET
+        value: revive-maintenance-secret-key-2025-change-this
+      
+      # Các biến môi trường khác cần thiết
+      - key: JWT_SECRET
+        value: your_very_strong_secret_key_here_2025
+      - key: PORT
+        value: "9999"
+    healthCheckPath: /health
+    region: singapore
+    autoDeploy: true

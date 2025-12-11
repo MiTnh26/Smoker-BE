@@ -200,12 +200,26 @@ class MessageController {
       // Normalize entityAccountIds for comparison
       const entityAccountIdsNormalized = entityAccountIds.map(id => normalizeParticipant(id));
       
-      // Find conversations where user is a participant
-      const conversations = await Conversation.find({
-        participants: { $in: entityAccountIds }
+      // Find active participants (not deleted) for this user
+      const activeParticipants = await Participant.find({
+        user_id: { $in: entityAccountIds },
+        $or: [{ is_deleted: { $exists: false } }, { is_deleted: false }],
       })
-      .sort({ last_message_time: -1, updatedAt: -1 })
-      .lean();
+        .select("conversation_id user_id")
+        .lean();
+
+      if (!activeParticipants || activeParticipants.length === 0) {
+        return res.status(200).json({ success: true, data: [], message: "Conversations retrieved successfully" });
+      }
+
+      const activeConversationIds = [...new Set(activeParticipants.map((p) => p.conversation_id))];
+
+      // Find conversations where user is an active participant
+      const conversations = await Conversation.find({
+        _id: { $in: activeConversationIds },
+      })
+        .sort({ last_message_time: -1, updatedAt: -1 })
+        .lean();
       
       // Get participants and unread counts for each conversation
       const enrichedConversations = await Promise.all(
@@ -288,9 +302,26 @@ class MessageController {
       // Normalize entityAccountIds for comparison
       const entityAccountIdsNormalized = entityAccountIds.map(id => normalizeParticipant(id));
       
-      // Find conversations where user is a participant
+      // Chỉ tính unread cho các cuộc trò chuyện mà user chưa xóa (is_deleted = false)
+      const activeParticipants = await Participant.find({
+        user_id: { $in: entityAccountIds },
+        $or: [{ is_deleted: { $exists: false } }, { is_deleted: false }],
+      })
+        .select("conversation_id user_id")
+        .lean();
+
+      if (!activeParticipants || activeParticipants.length === 0) {
+        return res.status(200).json({
+          success: true,
+          data: { totalUnreadCount: 0 },
+          message: "Total unread messages count retrieved successfully",
+        });
+      }
+
+      const activeConversationIds = [...new Set(activeParticipants.map((p) => p.conversation_id))];
+
       const conversations = await Conversation.find({
-        participants: { $in: entityAccountIds }
+        _id: { $in: activeConversationIds },
       }).lean();
       
       let totalUnreadCount = 0;
@@ -448,81 +479,15 @@ class MessageController {
         }
       }
       
-      // Handle post sharing - fetch post details if postId is provided
-      let postData = null;
+      // Validate postId format if provided
+      let validPostId = null;
       if (postId) {
-        try {
-          const postService = require("../services/postService");
-          const postResult = await postService.getPostById(postId, true, false, {});
-          
-          if (postResult && postResult.success !== false && postResult.data) {
-            const post = postResult.data;
-            
-            // Get first image from medias or images field
-            let postImage = null;
-            if (post.medias && Array.isArray(post.medias) && post.medias.length > 0) {
-              const firstImage = post.medias.find(m => m.type === 'image' || !m.type || m.type === 'image');
-              if (firstImage) {
-                postImage = firstImage.url;
-              } else if (post.medias[0]) {
-                postImage = post.medias[0].url;
-              }
-            } else if (post.images) {
-              postImage = typeof post.images === 'string' ? post.images : (post.images[0] || null);
-            }
-            
-            // Get author info
-            let postAuthorName = "Người dùng";
-            let postAuthorAvatar = null;
-            
-            if (post.entityAccountId) {
-              try {
-                const authorQuery = await pool.request()
-                  .input("EntityAccountId", sql.UniqueIdentifier, post.entityAccountId)
-                  .query(`
-                    SELECT TOP 1 
-                      a.UserName,
-                      a.Avatar,
-                      bp.BarName,
-                      bp.Avatar as BarAvatar,
-                      ba.UserName as BusinessName,
-                      ba.Avatar as BusinessAvatar
-                    FROM EntityAccounts ea
-                    LEFT JOIN Accounts a ON ea.EntityId = a.AccountId AND ea.EntityType = 'Account'
-                    LEFT JOIN BarPages bp ON ea.EntityId = bp.BarPageId AND ea.EntityType = 'BarPage'
-                    LEFT JOIN BussinessAccounts ba ON ea.EntityId = ba.BussinessAccountId AND ea.EntityType = 'BusinessAccount'
-                    WHERE ea.EntityAccountId = @EntityAccountId
-                  `);
-                
-                if (authorQuery.recordset.length > 0) {
-                  const row = authorQuery.recordset[0];
-                  postAuthorName = row.UserName || row.BarName || row.BusinessName || postAuthorName;
-                  postAuthorAvatar = row.Avatar || row.BarAvatar || row.BusinessAvatar || null;
-                }
-              } catch (err) {
-                console.warn('[MessageController] Error getting post author info:', err);
-              }
-            }
-            
-            // Create summary from content or title
-            const postContent = post.content || post.title || "";
-            const postSummary = postContent.length > 150 
-              ? postContent.substring(0, 150) + "..." 
-              : postContent;
-            
-            postData = {
-              post_id: String(postId),
-              post_summary: postSummary,
-              post_image: postImage,
-              post_author_name: postAuthorName,
-              post_author_avatar: postAuthorAvatar,
-              post_title: post.title || null,
-              post_content: post.content || null,
-            };
-          }
-        } catch (error) {
-          console.error('[MessageController] Error fetching post data:', error);
-          // Continue without post data if fetch fails
+        const postIdStr = String(postId).trim();
+        // Validate MongoDB ObjectId format (24 hex characters)
+        if (mongoose.Types.ObjectId.isValid(postIdStr)) {
+          validPostId = postIdStr;
+        } else {
+          console.warn('[MessageController] Invalid postId format:', postIdStr);
         }
       }
       
@@ -536,14 +501,8 @@ class MessageController {
         is_story_reply: req.body.isStoryReply || false,
         story_id: req.body.storyId || null,
         story_url: req.body.storyUrl || null,
-        is_post_share: !!postId,
-        post_id: postData?.post_id || null,
-        post_summary: postData?.post_summary || null,
-        post_image: postData?.post_image || null,
-        post_author_name: postData?.post_author_name || null,
-        post_author_avatar: postData?.post_author_avatar || null,
-        post_title: postData?.post_title || null,
-        post_content: postData?.post_content || null,
+        is_post_share: !!validPostId,
+        post_id: validPostId,
       });
       
       await message.save();
@@ -561,79 +520,7 @@ class MessageController {
         return pNormalized && pNormalized !== senderEntityAccountIdNormalized;
       });
       
-      // Create notification for receiver only if receiverId is found
-      if (receiverId) {
-      try {
-        const notificationService = require("../services/notificationService");
-        const { t } = require("../utils/translation");
-        const pool = await getPool();
-        
-        // Get sender name (fallback to "Someone")
-        let senderName = t('common.someone', 'vi'); // Default fallback
-        try {
-          const senderQuery = await pool.request()
-            .input("EntityAccountId", sql.UniqueIdentifier, senderEntityAccountId)
-            .query(`
-              SELECT TOP 1 
-                a.UserName,
-                bp.BarName,
-                ba.BusinessName
-              FROM EntityAccounts ea
-              LEFT JOIN Accounts a ON ea.EntityId = a.AccountId AND ea.EntityType = 'Account'
-              LEFT JOIN BarPages bp ON ea.EntityId = bp.BarPageId AND ea.EntityType = 'BarPage'
-              LEFT JOIN BussinessAccounts ba ON ea.EntityId = ba.BussinessAccountId AND ea.EntityType = 'BusinessAccount'
-              WHERE ea.EntityAccountId = @EntityAccountId
-            `);
-          
-          if (senderQuery.recordset.length > 0) {
-            const row = senderQuery.recordset[0];
-            senderName = row.UserName || row.BarName || row.BusinessName || senderName;
-          }
-        } catch (err) {
-          console.warn('[MessageController] Error getting sender name:', err);
-        }
-        
-        // Create notification with raw data (no translation)
-        // Frontend will handle translation based on user's locale
-        const messagePreview = content.length > 50 
-          ? content.substring(0, 50) + "..." 
-          : content;
-        
-          // Normalize receiverId to string
-          const receiverEntityAccountId = String(receiverId).trim();
-          
-          const notificationResult = await notificationService.createMessageNotification(
-          senderEntityAccountId,
-            receiverEntityAccountId,
-          senderName,
-          messagePreview,
-          conversationId.toString()
-        );
-          
-          // Emit notification event for message notification (since notificationService skips it for Messages type)
-          if (notificationResult && notificationResult.success && notificationResult.data) {
-            try {
-              const io = getIO();
-              if (io) {
-                const receiverRoom = String(receiverEntityAccountId).trim();
-                // Emit a custom event that frontend can listen to for updating message count
-                io.to(receiverRoom).emit("message_notification_created", {
-                  notification: notificationResult.data,
-                  conversationId: conversationId.toString(),
-                  senderId: senderEntityAccountId
-                });
-              }
-            } catch (emitError) {
-              console.error('[MessageController] Error emitting message notification event:', emitError);
-            }
-          }
-      } catch (notificationError) {
-        console.error('[MessageController] Error creating notification:', notificationError);
-        // Don't fail the request if notification creation fails
-        }
-      } else {
-        console.warn('[MessageController] Could not find receiverId for notification. Participants:', conversation.participants, 'Sender:', senderEntityAccountId);
-      }
+      // Không tạo notification cho messages - messages có unread count riêng trong conversation
       
       // Emit socket event for real-time message update
       try {
@@ -651,12 +538,6 @@ class MessageController {
           story_url: message.story_url,
           is_post_share: message.is_post_share,
           post_id: message.post_id,
-          post_summary: message.post_summary,
-          post_image: message.post_image,
-          post_author_name: message.post_author_name,
-          post_author_avatar: message.post_author_avatar,
-          post_title: message.post_title,
-          post_content: message.post_content,
           createdAt: message.createdAt,
         };
         
@@ -703,13 +584,16 @@ class MessageController {
         return res.status(404).json({ success: false, message: "Conversation not found" });
       }
       
-      // Check if user is a participant - use helper function for consistency
+      // Get current user's entityAccountIds
+      const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
+
+      // Check if user is a participant AND has not deleted this conversation
       let isParticipant = false;
       try {
-        const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
-        isParticipant = conversation.participants.some(p => {
+        const normalizedIds = allUserEntityAccountIds.map((id) => normalizeParticipant(id));
+        isParticipant = conversation.participants.some((p) => {
           const pNormalized = normalizeParticipant(p);
-          return allUserEntityAccountIds.includes(pNormalized);
+          return normalizedIds.includes(pNormalized);
         });
       } catch (error) {
         console.error('Error checking participant status:', error);
@@ -719,9 +603,15 @@ class MessageController {
         return res.status(403).json({ success: false, message: "Access denied" });
       }
 
-      // Get current user's entityAccountIds
-      const allUserEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
-    
+      // Check soft-delete on Participant: nếu user đã xóa cuộc trò chuyện này thì không cho load messages
+      const participantDoc = await Participant.findOne({
+        conversation_id: conversation._id,
+        user_id: { $in: allUserEntityAccountIds.map((id) => String(id).trim()) },
+      }).lean();
+
+      if (participantDoc && participantDoc.is_deleted) {
+        return res.status(404).json({ success: false, message: "Conversation not found" });
+      }
       // console.log('[DEBUG getMessages] allUserEntityAccountIds:', allUserEntityAccountIds);
       // console.log('[DEBUG getMessages] conversation._id:', conversation._id);
       
@@ -732,9 +622,36 @@ class MessageController {
         conversation_id: conversation._id,
         user_id: { $in: allUserEntityAccountIdsUpper }
       }).lean();
+      
+      // Get other participant's last_read_message_id (để hiển thị "đã xem" cho message của mình)
+      let otherParticipantLastReadMessageId = null;
+      let otherParticipantLastReadAt = null;
+      
+      // Find other participant (không phải current user)
+      const currentUserEntityAccountIdsNormalized = allUserEntityAccountIds.map(id => normalizeParticipant(id));
+      const otherParticipants = conversation.participants.filter(p => {
+        const pNormalized = normalizeParticipant(p);
+        return !currentUserEntityAccountIdsNormalized.includes(pNormalized);
+      });
+      
+      if (otherParticipants.length > 0) {
+        // Get participant của đối phương (dùng format gốc từ conversation.participants)
+        const otherParticipantId = String(otherParticipants[0]).trim();
+        const otherParticipant = await Participant.findOne({
+          conversation_id: conversation._id,
+          user_id: otherParticipantId
+        }).lean();
+        
+        if (otherParticipant) {
+          otherParticipantLastReadMessageId = otherParticipant.last_read_message_id;
+          otherParticipantLastReadAt = otherParticipant.last_read_at;
+        }
+      }
+      
       // console.log('[DEBUG getMessages] currentUserParticipant:', currentUserParticipant);
       // console.log('[DEBUG getMessages] last_read_message_id:', currentUserParticipant?.last_read_message_id);
       // console.log('[DEBUG getMessages] last_read_at:', currentUserParticipant?.last_read_at);
+      // console.log('[DEBUG getMessages] otherParticipantLastReadMessageId:', otherParticipantLastReadMessageId);
 
       // Build query with pagination
       const query = { conversation_id: conversation._id };
@@ -756,8 +673,10 @@ class MessageController {
         data: sortedMessages, 
         message: "Messages retrieved",
         entityAccountReadId: sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1].sender_id : null,
-        last_read_message_id: currentUserParticipant?.last_read_message_id || null,
+        last_read_message_id: currentUserParticipant?.last_read_message_id || null,  // Của current user
         last_read_at: currentUserParticipant?.last_read_at || null,
+        other_participant_last_read_message_id: otherParticipantLastReadMessageId,  // Của đối phương (để hiển thị "đã xem")
+        other_participant_last_read_at: otherParticipantLastReadAt,
         pagination: {
           limit: parseInt(limit),
           offset: parseInt(offset),
@@ -824,16 +743,97 @@ class MessageController {
         });
       }
       
-      // Determine last message ID to mark as read
-      let lastReadMessageId = null;
+      // QUAN TRỌNG: last_read_message_id CHỈ lưu message_id của ĐỐI PHƯƠNG
+      // KHÔNG bao giờ lưu message_id của chính user đó
+      // Nếu message cuối cùng là của chính user → KHÔNG update (giữ nguyên giá trị cũ)
+      
+      const readerEntityAccountId = String(entityAccountId).trim().toLowerCase();
+      
+      // Tìm đối phương (không phải current user)
+      const otherParticipants = conversation.participants.filter(p => {
+        const pNormalized = normalizeParticipant(p);
+        return pNormalized && pNormalized !== normalizeParticipant(entityAccountId);
+      });
+      
+      if (otherParticipants.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot find other participant in conversation"
+        });
+      }
+      
+      // Tìm message cuối cùng của ĐỐI PHƯƠNG (không phải của chính user)
+      const lastMessageFromOther = await Message.findOne({
+        conversation_id: conversation._id,
+        sender_id: { $in: otherParticipants }  // Chỉ lấy message của đối phương
+      }).sort({ createdAt: -1 });
+      
+      if (!lastMessageFromOther) {
+        // Không có message nào từ đối phương → không cần update
+        return res.status(200).json({ 
+          success: true, 
+          message: "No messages from other participant to mark as read",
+          skipped: true
+        });
+      }
+      
+      // Validate: Đảm bảo message không phải của chính user (double check)
+      const lastMessageSenderId = String(lastMessageFromOther.sender_id).trim().toLowerCase();
+      if (lastMessageSenderId === readerEntityAccountId) {
+        console.log('[MessageController] ERROR: Found own message when filtering by other participants', {
+          reader: readerEntityAccountId,
+          sender: lastMessageSenderId,
+          messageId: lastMessageFromOther._id
+        });
+        return res.status(200).json({ 
+          success: true, 
+          message: "Cannot mark own message as read",
+          skipped: true,
+          reason: "Last message from other participant is actually from the reader"
+        });
+      }
+      
+      // Nếu có lastMessageId trong request, validate nó là message của đối phương
+      let lastReadMessageId = lastMessageFromOther._id;
+      
       if (lastMessageId && mongoose.Types.ObjectId.isValid(lastMessageId)) {
-        lastReadMessageId = new mongoose.Types.ObjectId(lastMessageId);
-      } else {
-        // If not provided, use the last message in conversation
-        const lastMessage = await Message.findOne({ conversation_id: conversation._id })
-          .sort({ createdAt: -1 });
-        if (lastMessage) {
-          lastReadMessageId = lastMessage._id;
+        const requestedMessage = await Message.findById(lastMessageId);
+        if (requestedMessage) {
+          // Validate: Message phải thuộc conversation này
+          if (requestedMessage.conversation_id.toString() !== conversation._id.toString()) {
+            return res.status(400).json({
+              success: false,
+              message: "Requested message does not belong to this conversation"
+            });
+          }
+          
+          const requestedSenderId = String(requestedMessage.sender_id).trim().toLowerCase();
+          
+          // QUAN TRỌNG: Chỉ cho phép mark message của đối phương
+          if (requestedSenderId === readerEntityAccountId) {
+            return res.status(400).json({
+              success: false,
+              message: "Cannot mark own message as read",
+              reason: "Requested message is from the reader"
+            });
+          }
+          
+          // Validate: Message phải là của đối phương (trong danh sách otherParticipants)
+          const requestedSenderNormalized = normalizeParticipant(requestedMessage.sender_id);
+          const otherParticipantsNormalized = otherParticipants.map(p => normalizeParticipant(p));
+          
+          if (!otherParticipantsNormalized.includes(requestedSenderNormalized)) {
+            return res.status(400).json({
+              success: false,
+              message: "Requested message is not from other participant",
+              reason: "Message sender is not in other participants list"
+            });
+          }
+          
+          // Nếu message được request là của đối phương và <= lastMessageFromOther → OK
+          if (requestedMessage.createdAt <= lastMessageFromOther.createdAt) {
+            lastReadMessageId = requestedMessage._id;
+          }
         }
       }
       
@@ -859,46 +859,138 @@ class MessageController {
         { upsert: true, new: true }
       );
       
-      // (B) Mark related notifications as read
+      // Emit socket event để thông báo đối phương biết đã đọc message
       try {
-        const Notification = require("../models/notificationModel");
+        const io = getIO();
+        const conversationRoom = `conversation:${conversationId}`;
         
-        // Get other participants (senders) - normalize for comparison
-        // Note: MongoDB query will match regardless of case, but we normalize for consistency
-        const otherParticipants = conversation.participants
-          .filter(p => {
-            const pNormalized = normalizeParticipant(p);
-            return pNormalized && pNormalized !== normalizedEntityAccountId;
-          })
-          .map(p => String(p).trim()); // Keep original format for query (MongoDB stores as-is)
+        // Emit đến conversation room (cho real-time update)
+        io.to(conversationRoom).emit('messages_read', {
+          conversationId: conversationId.toString(),
+          readerEntityAccountId: entityAccountId,
+          last_read_message_id: lastReadMessageId.toString(),
+          last_read_at: new Date()
+        });
         
-        if (otherParticipants.length > 0) {
-          // Mark notifications from the other participants in this specific conversation as read.
-          // Use original format for both receiver and sender to match how notifications are stored
-          const receiverEntityAccountIdForQuery = String(entityAccountId).trim();
-          
-          await Notification.updateMany(
-            {
-              type: "Messages",
-              receiverEntityAccountId: receiverEntityAccountIdForQuery, // Use original format to match stored format
-              senderEntityAccountId: { $in: otherParticipants }, // The users who sent the messages
-              status: "Unread",
-            },
-            { status: "Read" }
-          );
-          
-          console.log(`[MessageController] Marked message notifications as read for conversation ${conversationId}.`, {
-            receiver: receiverEntityAccountIdForQuery,
-            senders: otherParticipants
+        // Emit đến đối phương (để cập nhật "đã xem" cho message của họ)
+        for (const otherParticipantId of otherParticipants) {
+          const otherParticipantIdStr = String(otherParticipantId).trim();
+          io.to(otherParticipantIdStr).emit('messages_read', {
+            conversationId: conversationId.toString(),
+            readerEntityAccountId: entityAccountId,
+            last_read_message_id: lastReadMessageId.toString(),
+            last_read_at: new Date()
           });
         }
-      } catch (notificationError) {
-        console.error('[MessageController] Error marking notifications as read:', notificationError);
-        // Don't fail the request if notification update fails
+        
+        console.log('[MessageController] Emitted messages_read event', {
+          conversationId: conversationId.toString(),
+          reader: entityAccountId,
+          lastReadMessageId: lastReadMessageId.toString()
+        });
+      } catch (socketError) {
+        console.warn('[MessageController] Could not emit socket event for messages_read:', socketError.message);
+        // Không fail request nếu socket emit lỗi
       }
+      
+      // Không cần mark notifications as read - messages không dùng notification
       
       res.status(200).json({ success: true, message: "Messages marked as read" });
     } catch (error) {
+      res.status(500).json({ success: false, message: "Internal server error", error: error.message });
+    }
+  }
+
+  // Xóa toàn bộ cuộc trò chuyện (và tất cả tin nhắn bên trong)
+  async deleteConversation(req, res) {
+    try {
+      const { conversationId } = req.params;
+      const { entityAccountId: requestedEntityAccountId } = req.body || {};
+      const accountId = req.user?.id;
+
+      if (!accountId || !conversationId) {
+        return res.status(400).json({ success: false, message: "Missing required fields" });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+        return res.status(400).json({ success: false, message: "Invalid conversationId" });
+      }
+
+      const conversation = await Conversation.findById(conversationId);
+      if (!conversation) {
+        return res.status(404).json({ success: false, message: "Conversation not found" });
+      }
+
+      const userEntityAccountIds = await getAllEntityAccountIdsForAccount(accountId);
+      if (!userEntityAccountIds || userEntityAccountIds.length === 0) {
+        return res.status(403).json({ success: false, message: "No EntityAccountId for this account" });
+      }
+
+      const normalizedSet = new Set(userEntityAccountIds.map((id) => normalizeParticipant(id)));
+      const participantsNormalized = conversation.participants.map((p) => normalizeParticipant(p));
+
+      // Check if user owns at least one participant
+      let participantIndex = -1;
+      for (let i = 0; i < participantsNormalized.length; i += 1) {
+        if (normalizedSet.has(participantsNormalized[i])) {
+          participantIndex = i;
+          break;
+        }
+      }
+      if (participantIndex === -1) {
+        return res.status(403).json({ success: false, message: "EntityAccountId is not a participant in this conversation." });
+      }
+
+      // Determine acting entity for logging/sockets (keep original formatting)
+      let actingEntityAccountId = conversation.participants[participantIndex];
+      if (requestedEntityAccountId) {
+        const requestedNormalized = normalizeParticipant(requestedEntityAccountId);
+        if (normalizedSet.has(requestedNormalized)) {
+          let matchIndex = -1;
+          for (let i = 0; i < participantsNormalized.length; i += 1) {
+            if (participantsNormalized[i] === requestedNormalized) {
+              matchIndex = i;
+              break;
+            }
+          }
+          if (matchIndex !== -1) {
+            actingEntityAccountId = conversation.participants[matchIndex];
+          }
+        }
+      }
+
+      // Soft delete ONLY for this participant: mark Participant.is_deleted/deleted_at
+      await Participant.findOneAndUpdate(
+        {
+          conversation_id: conversation._id,
+          user_id: actingEntityAccountId,
+        },
+        {
+          $set: {
+            is_deleted: true,
+            deleted_at: new Date(),
+          },
+        },
+        { new: true }
+      );
+
+      // Emit socket event chỉ cho chính actor, để FE ẩn cuộc trò chuyện phía người đó
+      try {
+        const io = getIO();
+        const payload = {
+          conversationId: conversationId.toString(),
+          actorEntityAccountId: actingEntityAccountId,
+        };
+
+        const actorRoom = String(actingEntityAccountId).trim();
+        io.to(actorRoom).emit('conversation_deleted', payload);
+      } catch (socketError) {
+        console.warn('[MessageController] Could not emit socket event for conversation_deleted:', socketError.message);
+      }
+
+      return res.status(200).json({ success: true, message: "Conversation deleted" });
+    } catch (error) {
+      console.error('Error in deleteConversation:', error);
       res.status(500).json({ success: false, message: "Internal server error", error: error.message });
     }
   }

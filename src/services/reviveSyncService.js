@@ -18,7 +18,11 @@ class ReviveSyncService {
         password: process.env.REVIVE_DB_PASSWORD,
         database: process.env.REVIVE_DB_NAME || "revive",
         connectionLimit: 5,
-        connectTimeout: 10000
+        connectTimeout: 10000,
+        // Thêm SSL configuration cho Azure MySQL
+        ssl: {
+          rejectUnauthorized: false  // Azure MySQL yêu cầu SSL nhưng không cần verify certificate
+        }
       };
     }
     
@@ -27,20 +31,69 @@ class ReviveSyncService {
   }
 
   /**
+   * Normalize bannerId - convert to number if possible, otherwise keep as string
+   * Revive thường lưu ad_id là INT, nên cần normalize
+   */
+  normalizeBannerId(bannerId) {
+    if (!bannerId && bannerId !== 0) return null; // Allow 0 as valid bannerId
+    
+    // Convert to string first để trim whitespace
+    const str = String(bannerId).trim();
+    if (str === '') return null;
+    
+    // Thử parse thành số (bao gồm cả "03" -> 3)
+    const num = parseInt(str, 10);
+    const isNumeric = !isNaN(num) && !isNaN(str);
+    
+    if (isNumeric) {
+      // Trả về cả số và string gốc (vì có thể Revive lưu dạng string "03")
+      // Nhưng ưu tiên số vì Revive thường dùng INT
+      return { 
+        asString: str, 
+        asNumber: num, 
+        original: bannerId,
+        // Nếu string có leading zero như "03", vẫn thử cả hai
+        tryBoth: String(num) !== str
+      };
+    }
+    
+    return { asString: str, asNumber: null, original: bannerId, tryBoth: false };
+  }
+
+  /**
    * Lấy stats từ Revive Ad Server cho một banner
    * Ưu tiên: Query database trực tiếp > XML-RPC API > Web scraping
    */
   async getBannerStats(bannerId, startDate = null, endDate = null) {
     try {
-      console.log(`[ReviveSyncService] Getting stats for banner ${bannerId}`);
+      // Normalize bannerId
+      const normalized = this.normalizeBannerId(bannerId);
+      if (!normalized) {
+        console.warn(`[ReviveSyncService] Invalid bannerId: ${bannerId}`);
+        return null;
+      }
+      
+      console.log(`[ReviveSyncService] Getting stats for banner ${bannerId} (normalized: string="${normalized.asString}", number=${normalized.asNumber || 'N/A'})`);
       
       // Method 1: Query Revive database trực tiếp (fastest & most reliable)
       if (this.reviveDbConfig) {
         try {
-          const stats = await this.getBannerStatsFromDB(bannerId, startDate, endDate);
+          // Thử với number trước (vì Revive thường lưu INT), sau đó thử string
+          const bannerIdToTry = normalized.asNumber !== null ? normalized.asNumber : normalized.asString;
+          const stats = await this.getBannerStatsFromDB(bannerIdToTry, startDate, endDate);
           if (stats) {
             console.log(`[ReviveSyncService] Got stats from DB for banner ${bannerId}:`, stats);
             return stats;
+          }
+          
+          // Nếu number không work và có cả hai, thử string
+          if (normalized.asNumber !== null && normalized.asNumber !== normalized.asString) {
+            console.log(`[ReviveSyncService] Retrying with string version: "${normalized.asString}"`);
+            const statsStr = await this.getBannerStatsFromDB(normalized.asString, startDate, endDate);
+            if (statsStr) {
+              console.log(`[ReviveSyncService] Got stats from DB (string version) for banner ${bannerId}:`, statsStr);
+              return statsStr;
+            }
           }
         } catch (dbError) {
           console.warn(`[ReviveSyncService] DB query failed, trying alternative method:`, dbError.message);
@@ -104,25 +157,27 @@ class ReviveSyncService {
         FROM information_schema.TABLES 
         WHERE TABLE_SCHEMA = DATABASE()
         AND TABLE_NAME LIKE '%data%' 
-        AND (TABLE_NAME LIKE '%banner%' OR TABLE_NAME LIKE '%summary%' OR TABLE_NAME LIKE '%daily%' OR TABLE_NAME LIKE '%hourly%')
+        AND (TABLE_NAME LIKE '%banner%' OR TABLE_NAME LIKE '%summary%' OR TABLE_NAME LIKE '%daily%' OR TABLE_NAME LIKE '%hourly%' OR TABLE_NAME LIKE '%intermediate%')
         ORDER BY TABLE_NAME
       `);
 
       console.log(`[ReviveSyncService] Found ${tables.length} potential stats tables:`, tables.map(t => t.TABLE_NAME));
 
       // Thứ tự ưu tiên các table names
-      // Revive có thể dùng prefix 'ox_' hoặc 'rv_' tùy version
+      // Ưu tiên intermediate table trước (bucket-based logging, có data trực tiếp)
+      // Sau đó mới đến summary tables (nếu maintenance đã chạy)
       const preferredTables = [
+        'rv_data_intermediate_ad',      // ƯU TIÊN CAO - Bucket-based logging (có data trực tiếp)
+        'ox_data_intermediate_ad',      // Legacy intermediate table
+        'rv_data_summary_ad_daily',     // Summary tables (nếu maintenance đã chạy)
         'rv_data_summary_ad_hourly',    // Revive 5.x (prefix rv_)
-        'rv_data_summary_ad_daily',
         'ox_data_summary_ad_daily',     // Revive 4.x (prefix ox_)
         'ox_data_banner_daily',
         'rv_data_summary_ad_zone_assoc',
         'ox_data_summary_ad_hourly',
         'ox_data_banner_hourly',
         'ox_data_summary_ad_zone_daily',
-        'ox_data_banner_summary',
-        'ox_data_intermediate_ad'
+        'ox_data_banner_summary'
       ];
 
       // Tìm table có trong danh sách preferred
@@ -161,22 +216,32 @@ class ReviveSyncService {
     try {
       connection = await mysql.createConnection(this.reviveDbConfig);
       
-      // Tự động detect table name
+      // Tự động detect table name (ưu tiên intermediate table)
       const tableName = await this.detectStatsTableName(connection);
       if (!tableName) {
-        console.warn(`[ReviveSyncService] No stats table found in database. Please check your Revive installation.`);
-        // Thử các tên table phổ biến nhất
-        const fallbackTables = ['ox_data_summary_ad_daily', 'ox_data_banner_daily', 'ox_data_summary_ad_hourly'];
+        console.warn(`[ReviveSyncService] No stats table found via auto-detect. Trying fallback tables...`);
+        // Thử các tên table phổ biến nhất, ưu tiên intermediate trước
+        const fallbackTables = [
+          'rv_data_intermediate_ad',      // Ưu tiên - bucket-based logging
+          'ox_data_intermediate_ad',      // Legacy intermediate
+          'rv_data_summary_ad_daily',     // Summary tables
+          'rv_data_summary_ad_hourly',
+          'ox_data_summary_ad_daily',
+          'ox_data_banner_daily',
+          'ox_data_summary_ad_hourly'
+        ];
         
         for (const fallbackTable of fallbackTables) {
           try {
             console.log(`[ReviveSyncService] Trying fallback table: ${fallbackTable}`);
             const stats = await this.queryStatsFromTable(connection, fallbackTable, bannerId, startDate, endDate);
             if (stats !== null) {
+              console.log(`[ReviveSyncService] ✅ Successfully queried from fallback table: ${fallbackTable}`);
               return stats;
             }
           } catch (err) {
-            // Table không tồn tại, thử table tiếp theo
+            // Table không tồn tại hoặc query failed, thử table tiếp theo
+            console.log(`[ReviveSyncService] Fallback table ${fallbackTable} failed:`, err.message);
             continue;
           }
         }
@@ -184,7 +249,27 @@ class ReviveSyncService {
         throw new Error('No valid stats table found. Please check Revive database structure.');
       }
 
-      return await this.queryStatsFromTable(connection, tableName, bannerId, startDate, endDate);
+      // Query từ table đã detect
+      const stats = await this.queryStatsFromTable(connection, tableName, bannerId, startDate, endDate);
+      
+      // Nếu table detected là summary nhưng không có data, thử intermediate table
+      if (!stats && (tableName.includes('summary') || tableName.includes('hourly') || tableName.includes('daily'))) {
+        console.log(`[ReviveSyncService] No data in summary table ${tableName}, trying intermediate table...`);
+        const intermediateTables = ['rv_data_intermediate_ad', 'ox_data_intermediate_ad'];
+        for (const intermediateTable of intermediateTables) {
+          try {
+            const intermediateStats = await this.queryStatsFromTable(connection, intermediateTable, bannerId, startDate, endDate);
+            if (intermediateStats !== null) {
+              console.log(`[ReviveSyncService] ✅ Got stats from intermediate table: ${intermediateTable}`);
+              return intermediateStats;
+            }
+          } catch (intermediateErr) {
+            continue;
+          }
+        }
+      }
+      
+      return stats;
     } catch (error) {
       console.error("[ReviveSyncService] DB query error:", error);
       throw error;
@@ -223,10 +308,22 @@ class ReviveSyncService {
         console.log(`[ReviveSyncService] Table ${tableName} columns:`, columns.map(c => `${c.COLUMN_NAME} (${c.DATA_TYPE})`).join(', '));
         
         // Tìm column chứa banner ID (có thể là ad_id, bannerid, banner_id, etc.)
-        const idColumns = columns.filter(c => 
-          c.COLUMN_NAME.toLowerCase().includes('ad_id') || 
-          c.COLUMN_NAME.toLowerCase().includes('banner') && c.COLUMN_NAME.toLowerCase().includes('id')
-        );
+        // Intermediate table dùng 'ad_id', summary tables có thể dùng 'ad_id' hoặc 'bannerid'
+        const idColumns = columns.filter(c => {
+          const colLower = c.COLUMN_NAME.toLowerCase();
+          return colLower === 'ad_id' ||  // Ưu tiên ad_id (intermediate table)
+                 colLower.includes('ad_id') || 
+                 (colLower.includes('banner') && colLower.includes('id'));
+        });
+        
+        // Sắp xếp để ưu tiên 'ad_id' trước (intermediate table)
+        idColumns.sort((a, b) => {
+          const aLower = a.COLUMN_NAME.toLowerCase();
+          const bLower = b.COLUMN_NAME.toLowerCase();
+          if (aLower === 'ad_id') return -1;
+          if (bLower === 'ad_id') return 1;
+          return 0;
+        });
         
         // Tìm column chứa date
         const dateColumns = columns.filter(c => 
@@ -288,31 +385,63 @@ class ReviveSyncService {
               continue;
             }
             
-            // Thử query với bannerId dạng string và int
-            const bannerIdVariations = [bannerId];
-            if (typeof bannerId === 'string' && !isNaN(parseInt(bannerId))) {
-              bannerIdVariations.push(parseInt(bannerId));
-            } else if (typeof bannerId === 'number') {
-              bannerIdVariations.push(String(bannerId));
+            // Normalize bannerId và thử cả số và string
+            // Revive thường lưu ad_id là INT, nên ưu tiên number
+            const normalized = this.normalizeBannerId(bannerId);
+            if (!normalized) {
+              console.log(`[ReviveSyncService] Invalid bannerId: ${bannerId}, skipping...`);
+              continue;
             }
             
-            for (const bannerIdValue of bannerIdVariations) {
+            const bannerIdVariations = [];
+            
+            // Ưu tiên số nếu có (vì Revive thường dùng INT)
+            if (normalized.asNumber !== null) {
+              bannerIdVariations.push({ value: normalized.asNumber, type: 'number', priority: 1 });
+              // Nếu string khác number (ví dụ "03" vs 3), cũng thử string
+              if (normalized.tryBoth || normalized.asString !== String(normalized.asNumber)) {
+                bannerIdVariations.push({ value: normalized.asString, type: 'string', priority: 2 });
+              }
+            } else {
+              // Nếu không phải số, chỉ thử string
+              bannerIdVariations.push({ value: normalized.asString, type: 'string', priority: 1 });
+            }
+            
+            // Sắp xếp theo priority (number trước)
+            bannerIdVariations.sort((a, b) => a.priority - b.priority);
+            
+            for (const variation of bannerIdVariations) {
+              const bannerIdValue = variation.value;
               try {
                 // Kiểm tra xem có data cho bannerId này không
                 const checkQuery = `SELECT COUNT(*) as count FROM ${tableName} WHERE ${cols.id} = ?`;
                 const [checkRows] = await connection.execute(checkQuery, [bannerIdValue]);
                 
                 if (checkRows[0]?.count > 0) {
-                  console.log(`[ReviveSyncService] ✅ Found ${checkRows[0].count} rows with ${cols.id} = ${bannerIdValue} (type: ${typeof bannerIdValue})`);
+                  console.log(`[ReviveSyncService] ✅ Found ${checkRows[0].count} rows with ${cols.id} = ${bannerIdValue} (type: ${variation.type})`);
                 } else {
-                  console.log(`[ReviveSyncService] ⚠️  No rows found with ${cols.id} = ${bannerIdValue} (type: ${typeof bannerIdValue})`);
+                  console.log(`[ReviveSyncService] ⚠️  No rows found with ${cols.id} = ${bannerIdValue} (type: ${variation.type})`);
                   
-                  // Debug: List một vài giá trị bannerId có trong table
-                  try {
-                    const [sampleRows] = await connection.execute(`SELECT DISTINCT ${cols.id} FROM ${tableName} LIMIT 10`);
-                    console.log(`[ReviveSyncService] Sample ${cols.id} values in table:`, sampleRows.map(r => r[cols.id]));
-                  } catch (sampleErr) {
-                    // Ignore sample query errors
+                  // Debug: List một vài giá trị bannerId có trong table (chỉ lần đầu)
+                  if (variation.priority === 1) {
+                    try {
+                      const [sampleRows] = await connection.execute(`SELECT DISTINCT ${cols.id} FROM ${tableName} ORDER BY ${cols.id} LIMIT 10`);
+                      const sampleValues = sampleRows.map(r => r[cols.id]);
+                      console.log(`[ReviveSyncService] Sample ${cols.id} values in table (first 10):`, sampleValues);
+                      
+                      // Kiểm tra xem bannerId có trong sample không (case-insensitive)
+                      const foundInSample = sampleValues.some(v => {
+                        const vStr = String(v).trim();
+                        const bannerIdStr = String(bannerId).trim();
+                        return vStr === bannerIdStr || String(parseInt(vStr)) === String(parseInt(bannerIdStr));
+                      });
+                      
+                      if (!foundInSample && sampleValues.length > 0) {
+                        console.log(`[ReviveSyncService] ⚠️  BannerId ${bannerId} not found in sample. Possible mismatch in data type or value.`);
+                      }
+                    } catch (sampleErr) {
+                      // Ignore sample query errors
+                    }
                   }
                 }
                 
@@ -348,17 +477,27 @@ class ReviveSyncService {
                   const revenue = parseFloat(row.total_revenue || 0);
                   const ctr = impressions > 0 ? (clicks / impressions * 100) : 0;
                   
-                  console.log(`[ReviveSyncService] ✅ Successfully queried stats from ${tableName} using ${cols.id}=${bannerIdValue}, ${cols.date}: impressions=${impressions}, clicks=${clicks}, revenue=${revenue}`);
+                  // Return stats ngay cả khi = 0 (vì đó vẫn là kết quả hợp lệ - banner chưa có impression/clicks)
+                  // Nhưng chỉ return từ variation đầu tiên (priority 1) để tránh duplicate
+                  // Nếu là intermediate table và có data (impressions > 0 hoặc clicks > 0), return ngay
+                  const hasData = impressions > 0 || clicks > 0;
+                  const isIntermediate = tableName.toLowerCase().includes('intermediate');
                   
-                  return {
-                    impressions,
-                    clicks,
-                    spend: revenue,
-                    ctr: parseFloat(ctr.toFixed(2))
-                  };
+                  if (variation.priority === 1 || (isIntermediate && hasData)) {
+                    console.log(`[ReviveSyncService] ✅ Successfully queried stats from ${tableName} using ${cols.id}=${bannerIdValue} (${variation.type}): impressions=${impressions}, clicks=${clicks}, revenue=${revenue}`);
+                    
+                    return {
+                      impressions,
+                      clicks,
+                      spend: revenue,
+                      ctr: parseFloat(ctr.toFixed(2))
+                    };
+                  }
+                } else {
+                  console.log(`[ReviveSyncService] Query returned 0 rows for ${cols.id}=${bannerIdValue} (${variation.type})`);
                 }
               } catch (queryErr) {
-                console.log(`[ReviveSyncService] Query failed for ${cols.id}=${bannerIdValue}:`, queryErr.message);
+                console.log(`[ReviveSyncService] Query failed for ${cols.id}=${bannerIdValue} (${variation.type}):`, queryErr.message);
                 // Continue to next variation
               }
             }
