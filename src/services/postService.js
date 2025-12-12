@@ -1,4 +1,5 @@
 const Post = require("../models/postModel");
+const Media = require("../models/mediaModel");
 const mongoose = require("mongoose");
 const FeedAlgorithm = require("./feedAlgorithm");
 const { getPool, sql } = require("../db/sqlserver");
@@ -17,6 +18,19 @@ const countCollectionItems = (value) => {
   if (typeof value === "object") return Object.keys(value).length;
   if (typeof value === "number") return value;
   return 0;
+};
+
+// Detect media type from url/file extension (fallback image)
+const inferMediaType = (url, fallback = "image") => {
+  if (!url || typeof url !== "string") return fallback;
+  const lower = url.toLowerCase();
+  if (lower.includes(".mp4") || lower.includes(".webm") || lower.includes(".mov") || lower.includes(".avi") || lower.includes(".mkv") || lower.includes("video")) {
+    return "video";
+  }
+  if (lower.includes(".mp3") || lower.includes(".wav") || lower.includes(".m4a") || lower.includes(".ogg") || lower.includes(".aac") || lower.includes("audio")) {
+    return "audio";
+  }
+  return fallback;
 };
 
 /**
@@ -332,39 +346,27 @@ class PostService {
 
     // 2. Build medias array (clean, no buffer/__v/empty fields)
     const medias = [];
+    const pushMedia = (mediaObjRaw, fallbackId = null) => {
+      if (!mediaObjRaw) return;
+      const mediaObj = mediaObjRaw.toObject ? mediaObjRaw.toObject({ flattenMaps: true }) : mediaObjRaw;
+      const url = mediaObj.url || mediaObj.path || '';
+      if (!url) return;
+      const detectedType = mediaObj.type || inferMediaType(url, 'image');
+      const cleanMedia = {
+        id: String(mediaObj._id || mediaObj.id || fallbackId || ''),
+        url,
+        type: detectedType,
+        caption: mediaObj.caption || '',
+        createdAt: mediaObj.createdAt || mediaObj.uploadDate || null
+      };
+      if (cleanMedia.id && cleanMedia.url) medias.push(cleanMedia);
+    };
+
     if (post.medias && Array.isArray(post.medias) && post.medias.length > 0) {
-      post.medias.forEach(media => {
-        if (!media || !media.url) return; // Skip empty medias
-        
-        const mediaObj = media.toObject ? media.toObject({ flattenMaps: true }) : media;
-        const urlLower = (mediaObj.url || '').toLowerCase();
-        
-        // Detect type from URL extension
-        let detectedType = mediaObj.type;
-        if (urlLower.includes('.mp4') || urlLower.includes('.webm') || urlLower.includes('.mov') || 
-            urlLower.includes('.avi') || urlLower.includes('.mkv') || urlLower.includes('video')) {
-          detectedType = 'video';
-        } else if (urlLower.includes('.mp3') || urlLower.includes('.wav') || urlLower.includes('.m4a') || 
-                   urlLower.includes('.ogg') || urlLower.includes('.aac') || urlLower.includes('audio')) {
-          detectedType = 'audio';
-        } else {
-          detectedType = detectedType || 'image';
-        }
-
-        // Build clean media object (no buffer, __v, empty fields)
-        const cleanMedia = {
-          id: String(mediaObj._id || mediaObj.id || ''),
-          url: mediaObj.url || '',
-          type: detectedType,
-          caption: mediaObj.caption || '',
-          createdAt: mediaObj.createdAt || mediaObj.uploadDate || null
-        };
-
-        // Only add if has valid id and url
-        if (cleanMedia.id && cleanMedia.url) {
-          medias.push(cleanMedia);
-        }
-      });
+      post.medias.forEach(pushMedia);
+    } else if (post.medias && typeof post.medias === 'object') {
+      // Support legacy shape: medias is an object keyed by index
+      Object.entries(post.medias).forEach(([key, mediaObj]) => pushMedia(mediaObj, key));
     }
 
     // 3. Build stats object
@@ -565,6 +567,7 @@ class PostService {
     try {
       // Filter posts: chỉ lấy posts có status = "public" (công khai, chưa trash, chưa xóa)
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
+      // Loại trừ deleted và trashed posts
       const baseFilter = {
         status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active"
         $or: [
@@ -824,6 +827,7 @@ class PostService {
       const viewerEntityAccountId = options?.viewerEntityAccountId || null;
       
       // Lấy post với populate medias và music
+      // Loại trừ deleted và trashed posts
       const query = Post.findOne({ 
         _id: postId, 
         status: { $in: ["public", "private"] }
@@ -2402,7 +2406,7 @@ class PostService {
     }
   }
 
-  // Cập nhật bài viết
+  // Cập nhật bài viết (cho phép sửa nội dung và media captions / thêm media mới)
   async updatePost(postId, updateData, userId, userEntityAccountId = null) {
     try {
       const post = await Post.findById(postId);
@@ -2428,30 +2432,86 @@ class PostService {
         };
       }
 
-      // Chỉ cho phép cập nhật title và content, không cho phép cập nhật images
-      const allowedFields = ['title', 'content'];
-      const filteredUpdateData = {};
-
-      for (const field of allowedFields) {
-        if (updateData[field] !== undefined) {
-          filteredUpdateData[field] = updateData[field];
-        }
-      }
-
-      // Kiểm tra có ít nhất một field được cập nhật
-      if (Object.keys(filteredUpdateData).length === 0) {
+      const hasValidField = ['title', 'content', 'caption', 'medias'].some(
+        (field) => updateData[field] !== undefined
+      );
+      if (!hasValidField) {
         return {
           success: false,
           message: "No valid fields to update"
         };
       }
 
-      // Cập nhật post
-      const updatedPost = await Post.findByIdAndUpdate(
-        postId,
-        filteredUpdateData,
-        { new: true, runValidators: true }
-      );
+      if (updateData.title !== undefined) {
+        post.title = updateData.title;
+      }
+      if (updateData.content !== undefined) {
+        post.content = updateData.content;
+      }
+      if (updateData.caption !== undefined) {
+        post.caption = updateData.caption;
+      }
+
+      // Handle medias update: update captions for existing, add new ones from url, drop removed
+      if (Array.isArray(updateData.medias)) {
+        // Load current medias
+        const existingIds = Array.isArray(post.mediaIds) ? post.mediaIds : [];
+        const existingMedias = existingIds.length
+          ? await Media.find({ _id: { $in: existingIds } })
+          : [];
+        const existingMap = new Map(
+          existingMedias.map((m) => [String(m._id), m])
+        );
+
+        const nextMediaIds = [];
+
+        for (const mediaItem of updateData.medias) {
+          if (!mediaItem) continue;
+          const mediaId = mediaItem.id || mediaItem._id;
+          const caption = mediaItem.caption ?? "";
+          const mediaUrl = mediaItem.url || mediaItem.path;
+          const mediaType = mediaItem.type || inferMediaType(mediaUrl);
+
+          if (mediaId && existingMap.has(String(mediaId))) {
+            const mediaDoc = existingMap.get(String(mediaId));
+            if (caption !== undefined) mediaDoc.caption = caption;
+            if (mediaUrl) mediaDoc.url = mediaUrl;
+            if (mediaType) mediaDoc.type = mediaType;
+            await mediaDoc.save();
+            nextMediaIds.push(mediaDoc._id);
+            continue;
+          }
+
+          // New media: require url to persist
+          if (mediaUrl) {
+            const newMedia = new Media({
+              postId: post._id,
+              accountId: post.accountId,
+              entityAccountId: post.entityAccountId,
+              entityId: post.entityId,
+              entityType: post.entityType,
+              url: mediaUrl,
+              caption,
+              type: mediaType,
+              comments: new Map(),
+              likes: new Map()
+            });
+            await newMedia.save();
+            nextMediaIds.push(newMedia._id);
+          }
+        }
+
+        // Nếu payload không gửi media nào, nghĩa là xóa hết media
+        post.mediaIds = nextMediaIds;
+      }
+
+      await post.save();
+
+      // Populate mediaIds để FE nhận được caption/url mới
+      const updatedPost = await Post.findById(postId)
+        .populate("mediaIds");
+
+      await FeedAlgorithm.updatePostTrendingScore(postId.toString());
 
       return {
         success: true,
@@ -3582,8 +3642,19 @@ class PostService {
       const normalizedEntityAccountId = String(entityAccountId).trim();
       const escapedEntityAccountId = normalizedEntityAccountId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+      // Xác định xem viewer có phải là chủ sở hữu profile không
+      const isOwnProfile = viewerEntityAccountId && 
+        (String(viewerEntityAccountId).trim().toLowerCase() === normalizedEntityAccountId.toLowerCase());
+      
+      // Nếu là own profile: hiển thị public + private
+      // Nếu là other profile: chỉ hiển thị public
+      // Luôn loại trừ deleted và trashed
+      const statusFilter = isOwnProfile 
+        ? { $in: ["public", "private"] } 
+        : "public";
+      
       const baseFilter = {
-        status: "public", // Chỉ lấy post public cho profile
+        status: statusFilter,
         $or: [
           // Match entityAccountId không phân biệt hoa thường (vì trong DB có thể lưu khác case)
           { entityAccountId: { $regex: new RegExp(`^${escapedEntityAccountId}$`, 'i') } },
@@ -3797,6 +3868,162 @@ class PostService {
         success: false,
         message: "Error fetching posts for entity",
         error: error.message
+      };
+    }
+  }
+
+  // Admin: Lấy tất cả posts (kể cả deleted, trashed, private)
+  async getAllPostsForAdmin(page = 1, limit = 10, filters = {}) {
+    try {
+      const { status, search } = filters;
+      const skip = (page - 1) * limit;
+
+      // Build filter - admin có thể xem tất cả status
+      const baseFilter = {
+        $or: [
+          { type: "post" },
+          { type: { $exists: false } } // Backward compatibility
+        ]
+      };
+
+      // Filter theo status nếu có
+      if (status) {
+        baseFilter.status = status;
+      } else {
+        // Nếu không có filter status, lấy tất cả (kể cả deleted, trashed)
+        baseFilter.status = { $in: ["public", "private", "trashed", "deleted", "active"] };
+      }
+
+      // Filter theo search nếu có
+      if (search) {
+        baseFilter.$and = baseFilter.$and || [];
+        baseFilter.$and.push({
+          $or: [
+            { content: { $regex: search, $options: 'i' } },
+            { title: { $regex: search, $options: 'i' } },
+            { caption: { $regex: search, $options: 'i' } },
+            { authorName: { $regex: search, $options: 'i' } },
+            { authorEntityName: { $regex: search, $options: 'i' } }
+          ]
+        });
+      }
+
+      // Query posts
+      const query = Post.find(baseFilter)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+      const posts = await query;
+      const total = await Post.countDocuments(baseFilter);
+      
+      console.log('[PostService] getAllPostsForAdmin query result:', {
+        postsCount: posts.length,
+        total,
+        filter: baseFilter
+      });
+
+      // Convert to plain objects
+      const postsPlain = posts.map(p => {
+        const plain = p;
+        // Convert Maps to objects
+        if (plain.likes instanceof Map) {
+          const likesObj = {};
+          plain.likes.forEach((value, key) => {
+            likesObj[key] = value;
+          });
+          plain.likes = likesObj;
+        }
+        if (plain.comments instanceof Map) {
+          const commentsObj = {};
+          plain.comments.forEach((value, key) => {
+            commentsObj[key] = value instanceof Map ? Object.fromEntries(value) : value;
+          });
+          plain.comments = commentsObj;
+        }
+        return plain;
+      });
+
+      // Enrich với author info
+      await this.enrichPostsWithAuthorInfo(postsPlain);
+      
+      console.log('[PostService] getAllPostsForAdmin after enrich:', {
+        postsCount: postsPlain.length,
+        firstPostAuthor: postsPlain[0]?.authorName || 'N/A'
+      });
+
+      return {
+        success: true,
+        data: postsPlain,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+    } catch (err) {
+      console.error('[PostService] getAllPostsForAdmin error:', err);
+      return {
+        success: false,
+        message: err.message,
+        data: [],
+        pagination: {
+          page: 1,
+          limit: 10,
+          total: 0,
+          totalPages: 0
+        }
+      };
+    }
+  }
+
+  // Admin: Cập nhật post status (giống như trong reportService)
+  async updatePostStatusForAdmin(postId, status) {
+    try {
+      const validStatuses = ["public", "private", "trashed", "deleted"];
+      if (!validStatuses.includes(status)) {
+        return {
+          success: false,
+          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`
+        };
+      }
+
+      // Get original post ID (postId might be GUID or ObjectId)
+      let normalizedPostId = postId;
+      const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(String(postId).trim());
+      
+      if (!isValidObjectId) {
+        // If not valid ObjectId, try to find by other fields or return error
+        return {
+          success: false,
+          message: "Invalid post ID format"
+        };
+      }
+
+      const post = await Post.findById(normalizedPostId);
+      if (!post) {
+        return {
+          success: false,
+          message: "Post not found"
+        };
+      }
+
+      // Change post status (giống như trong reportService)
+      post.status = status;
+      await post.save();
+
+      return {
+        success: true,
+        message: `Post status updated to ${status}`,
+        data: post
+      };
+    } catch (err) {
+      console.error('[PostService] updatePostStatusForAdmin error:', err);
+      return {
+        success: false,
+        message: err.message
       };
     }
   }
