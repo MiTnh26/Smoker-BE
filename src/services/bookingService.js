@@ -1,6 +1,7 @@
 const bookedScheduleModel = require("../models/bookedScheduleModel");
 const DetailSchedule = require("../models/detailSchedule");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccount1Model");
+const { getPool, sql } = require("../db/sqlserver");
 
 class BookingService {
   async createBooking(bookingData) {
@@ -227,39 +228,168 @@ class BookingService {
     return id1.toString().toLowerCase() === id2.toString().toLowerCase();
   }
 
+  /**
+   * Helper function để lấy thông tin receiver (Bar, DJ, Dancer) từ EntityAccountId
+   * @param {string} receiverId - EntityAccountId của receiver
+   * @returns {Promise<object|null>} Thông tin receiver hoặc null nếu không tìm thấy
+   */
+  async _getReceiverInfo(receiverId) {
+    try {
+      if (!receiverId) return null;
+      
+      const pool = await getPool();
+      const request = pool.request();
+      request.input('EntityAccountId', sql.UniqueIdentifier, receiverId);
+      
+      const result = await request.query(`
+        SELECT 
+          EA.EntityAccountId, EA.EntityType, EA.EntityId,
+          -- Name/UserName
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.UserName
+            WHEN EA.EntityType = 'BarPage' THEN BP.BarName
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
+            ELSE NULL
+          END AS name,
+          -- Avatar
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.Avatar
+            WHEN EA.EntityType = 'BarPage' THEN BP.Avatar
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.Avatar
+            ELSE NULL
+          END AS avatar,
+          -- Background
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.Background
+            WHEN EA.EntityType = 'BarPage' THEN BP.Background
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.Background
+            ELSE NULL
+          END AS background,
+          -- Bio/Description
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.Bio
+            WHEN EA.EntityType = 'BarPage' THEN NULL
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.Bio
+            ELSE NULL
+          END AS bio,
+          -- Role
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.Role
+            WHEN EA.EntityType = 'BarPage' THEN 'BAR'
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.Role
+            ELSE NULL
+          END AS role,
+          -- Address
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.Address
+            WHEN EA.EntityType = 'BarPage' THEN BP.Address
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.Address
+            ELSE NULL
+          END AS address,
+          -- Phone
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.Phone
+            WHEN EA.EntityType = 'BarPage' THEN BP.PhoneNumber
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.Phone
+            ELSE NULL
+          END AS phone,
+          -- Gender (BusinessAccount only)
+          CASE 
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.Gender
+            ELSE NULL
+          END AS gender,
+          -- PricePerHours (BusinessAccount only)
+          CASE 
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.PricePerHours
+            ELSE NULL
+          END AS pricePerHours,
+          -- PricePerSession (BusinessAccount only)
+          CASE 
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.PricePerSession
+            ELSE NULL
+          END AS pricePerSession,
+          -- BarPageId for bar profiles
+          CASE 
+            WHEN EA.EntityType = 'BarPage' THEN BP.BarPageId
+            ELSE NULL
+          END AS barPageId,
+          -- BusinessAccountId for business profiles
+          CASE 
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.BussinessAccountId
+            ELSE NULL
+          END AS businessAccountId
+        FROM EntityAccounts EA
+        LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
+        LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
+        LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
+        WHERE EA.EntityAccountId = @EntityAccountId
+      `);
+      
+      if (!result || !result.recordset || result.recordset.length === 0) {
+        return null;
+      }
+      
+      const entityInfo = result.recordset[0];
+      return {
+        entityAccountId: entityInfo.EntityAccountId,
+        entityType: entityInfo.EntityType,
+        entityId: entityInfo.EntityId,
+        name: entityInfo.name,
+        userName: entityInfo.name, // Alias for compatibility
+        avatar: entityInfo.avatar,
+        background: entityInfo.background,
+        bio: entityInfo.bio,
+        role: entityInfo.role,
+        address: entityInfo.address,
+        phone: entityInfo.phone,
+        gender: entityInfo.gender,
+        pricePerHours: entityInfo.pricePerHours,
+        pricePerSession: entityInfo.pricePerSession,
+        barPageId: entityInfo.barPageId,
+        businessAccountId: entityInfo.businessAccountId
+      };
+    } catch (error) {
+      console.error(`[BookingService] Error fetching receiver info for ${receiverId}:`, error);
+      return null;
+    }
+  }
+
   async getBookingsByBooker(bookerId, { limit = 50, offset = 0 } = {}) {
     try {
       const data = await bookedScheduleModel.getBookedSchedulesByBooker(bookerId, { limit, offset });
       
-      // Populate detailSchedule từ MongoDB cho mỗi booking
+      // Populate detailSchedule và receiver info từ MongoDB và SQL Server cho mỗi booking
       const bookingsWithDetails = await Promise.all(
         data.map(async (booking) => {
+          let detailSchedule = null;
+          let receiverInfo = null;
+          
+          // Populate detailSchedule từ MongoDB
           if (booking.MongoDetailId) {
             try {
-              const detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
-              if (detailSchedule) {
+              const detailScheduleDoc = await DetailSchedule.findById(booking.MongoDetailId);
+              if (detailScheduleDoc) {
                 // Convert Mongoose document to plain object để đảm bảo tất cả fields được trả về
-                const detailScheduleObj = detailSchedule.toObject ? detailSchedule.toObject() : detailSchedule;
-                return {
-                  ...booking,
-                  detailSchedule: detailScheduleObj,
-                };
+                detailSchedule = detailScheduleDoc.toObject ? detailScheduleDoc.toObject() : detailScheduleDoc;
               }
-              return {
-                ...booking,
-                detailSchedule: null,
-              };
             } catch (error) {
               console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
-              return {
-                ...booking,
-                detailSchedule: null,
-              };
             }
           }
+          
+          // Populate receiver info từ SQL Server
+          if (booking.ReceiverId) {
+            try {
+              receiverInfo = await this._getReceiverInfo(booking.ReceiverId);
+            } catch (error) {
+              console.error(`Error fetching receiver info for ${booking.ReceiverId}:`, error);
+            }
+          }
+          
           return {
             ...booking,
-            detailSchedule: null,
+            detailSchedule: detailSchedule,
+            receiverInfo: receiverInfo
           };
         })
       );
@@ -277,40 +407,32 @@ class BookingService {
       // Populate detailSchedule từ MongoDB cho mỗi booking
       const bookingsWithDetails = await Promise.all(
         data.map(async (booking) => {
+          let detailSchedule = null;
+          
           if (booking.MongoDetailId) {
             try {
-              const detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
-              if (detailSchedule) {
+              const detailScheduleDoc = await DetailSchedule.findById(booking.MongoDetailId);
+              if (detailScheduleDoc) {
                 // Convert Mongoose document to plain object để đảm bảo Location được trả về
-                const detailScheduleObj = detailSchedule.toObject ? detailSchedule.toObject() : detailSchedule;
+                detailSchedule = detailScheduleDoc.toObject ? detailScheduleDoc.toObject() : detailScheduleDoc;
                 console.log(`[BookingService] Found detailSchedule for ${booking.MongoDetailId}:`, {
-                  Location: detailScheduleObj.Location,
-                  Phone: detailScheduleObj.Phone,
-                  Note: detailScheduleObj.Note,
-                  hasLocation: !!detailScheduleObj.Location,
-                  hasPhone: !!detailScheduleObj.Phone
+                  Location: detailSchedule.Location,
+                  Phone: detailSchedule.Phone,
+                  Note: detailSchedule.Note,
+                  hasLocation: !!detailSchedule.Location,
+                  hasPhone: !!detailSchedule.Phone
                 });
-                return {
-                  ...booking,
-                  detailSchedule: detailScheduleObj,
-                };
               }
-              return {
-                ...booking,
-                detailSchedule: null,
-              };
             } catch (error) {
               console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
-              return {
-                ...booking,
-                detailSchedule: null,
-              };
             }
+          } else {
+            console.log(`[BookingService] No MongoDetailId for booking ${booking.BookedScheduleId}`);
           }
-          console.log(`[BookingService] No MongoDetailId for booking ${booking.BookedScheduleId}`);
+          
           return {
             ...booking,
-            detailSchedule: null,
+            detailSchedule: detailSchedule,
           };
         })
       );
