@@ -567,6 +567,7 @@ class PostService {
     try {
       // Filter posts: chỉ lấy posts có status = "public" (công khai, chưa trash, chưa xóa)
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
+      // Loại trừ deleted và trashed posts
       const baseFilter = {
         status: { $in: ["public", "active"] }, // Backward compatible: accept both "public" and "active"
         $or: [
@@ -826,6 +827,7 @@ class PostService {
       const viewerEntityAccountId = options?.viewerEntityAccountId || null;
       
       // Lấy post với populate medias và music
+      // Loại trừ deleted và trashed posts
       const query = Post.findOne({ 
         _id: postId, 
         status: { $in: ["public", "private"] }
@@ -3640,8 +3642,19 @@ class PostService {
       const normalizedEntityAccountId = String(entityAccountId).trim();
       const escapedEntityAccountId = normalizedEntityAccountId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+      // Xác định xem viewer có phải là chủ sở hữu profile không
+      const isOwnProfile = viewerEntityAccountId && 
+        (String(viewerEntityAccountId).trim().toLowerCase() === normalizedEntityAccountId.toLowerCase());
+      
+      // Nếu là own profile: hiển thị public + private
+      // Nếu là other profile: chỉ hiển thị public
+      // Luôn loại trừ deleted và trashed
+      const statusFilter = isOwnProfile 
+        ? { $in: ["public", "private"] } 
+        : "public";
+      
       const baseFilter = {
-        status: "public", // Chỉ lấy post public cho profile
+        status: statusFilter,
         $or: [
           // Match entityAccountId không phân biệt hoa thường (vì trong DB có thể lưu khác case)
           { entityAccountId: { $regex: new RegExp(`^${escapedEntityAccountId}$`, 'i') } },
@@ -3855,6 +3868,162 @@ class PostService {
         success: false,
         message: "Error fetching posts for entity",
         error: error.message
+      };
+    }
+  }
+
+  // Admin: Lấy tất cả posts (kể cả deleted, trashed, private)
+  async getAllPostsForAdmin(page = 1, limit = 10, filters = {}) {
+    try {
+      const { status, search } = filters;
+      const skip = (page - 1) * limit;
+
+      // Build filter - admin có thể xem tất cả status
+      const baseFilter = {
+        $or: [
+          { type: "post" },
+          { type: { $exists: false } } // Backward compatibility
+        ]
+      };
+
+      // Filter theo status nếu có
+      if (status) {
+        baseFilter.status = status;
+      } else {
+        // Nếu không có filter status, lấy tất cả (kể cả deleted, trashed)
+        baseFilter.status = { $in: ["public", "private", "trashed", "deleted", "active"] };
+      }
+
+      // Filter theo search nếu có
+      if (search) {
+        baseFilter.$and = baseFilter.$and || [];
+        baseFilter.$and.push({
+          $or: [
+            { content: { $regex: search, $options: 'i' } },
+            { title: { $regex: search, $options: 'i' } },
+            { caption: { $regex: search, $options: 'i' } },
+            { authorName: { $regex: search, $options: 'i' } },
+            { authorEntityName: { $regex: search, $options: 'i' } }
+          ]
+        });
+      }
+
+      // Query posts
+      const query = Post.find(baseFilter)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+      const posts = await query;
+      const total = await Post.countDocuments(baseFilter);
+      
+      console.log('[PostService] getAllPostsForAdmin query result:', {
+        postsCount: posts.length,
+        total,
+        filter: baseFilter
+      });
+
+      // Convert to plain objects
+      const postsPlain = posts.map(p => {
+        const plain = p;
+        // Convert Maps to objects
+        if (plain.likes instanceof Map) {
+          const likesObj = {};
+          plain.likes.forEach((value, key) => {
+            likesObj[key] = value;
+          });
+          plain.likes = likesObj;
+        }
+        if (plain.comments instanceof Map) {
+          const commentsObj = {};
+          plain.comments.forEach((value, key) => {
+            commentsObj[key] = value instanceof Map ? Object.fromEntries(value) : value;
+          });
+          plain.comments = commentsObj;
+        }
+        return plain;
+      });
+
+      // Enrich với author info
+      await this.enrichPostsWithAuthorInfo(postsPlain);
+      
+      console.log('[PostService] getAllPostsForAdmin after enrich:', {
+        postsCount: postsPlain.length,
+        firstPostAuthor: postsPlain[0]?.authorName || 'N/A'
+      });
+
+      return {
+        success: true,
+        data: postsPlain,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+    } catch (err) {
+      console.error('[PostService] getAllPostsForAdmin error:', err);
+      return {
+        success: false,
+        message: err.message,
+        data: [],
+        pagination: {
+          page: 1,
+          limit: 10,
+          total: 0,
+          totalPages: 0
+        }
+      };
+    }
+  }
+
+  // Admin: Cập nhật post status (giống như trong reportService)
+  async updatePostStatusForAdmin(postId, status) {
+    try {
+      const validStatuses = ["public", "private", "trashed", "deleted"];
+      if (!validStatuses.includes(status)) {
+        return {
+          success: false,
+          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`
+        };
+      }
+
+      // Get original post ID (postId might be GUID or ObjectId)
+      let normalizedPostId = postId;
+      const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(String(postId).trim());
+      
+      if (!isValidObjectId) {
+        // If not valid ObjectId, try to find by other fields or return error
+        return {
+          success: false,
+          message: "Invalid post ID format"
+        };
+      }
+
+      const post = await Post.findById(normalizedPostId);
+      if (!post) {
+        return {
+          success: false,
+          message: "Post not found"
+        };
+      }
+
+      // Change post status (giống như trong reportService)
+      post.status = status;
+      await post.save();
+
+      return {
+        success: true,
+        message: `Post status updated to ${status}`,
+        data: post
+      };
+    } catch (err) {
+      console.error('[PostService] updatePostStatusForAdmin error:', err);
+      return {
+        success: false,
+        message: err.message
       };
     }
   }

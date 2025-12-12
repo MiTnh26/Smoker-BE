@@ -498,7 +498,7 @@ exports.handleReportAction = async (reportId, action, adminNote, adminAccountId)
 		const normalizedTargetType = TargetType === "post" ? "Post" : TargetType;
 		
 		if (action === "delete_post" && normalizedTargetType === "Post") {
-			// Delete post (admin can delete any post)
+			// Delete post by changing status to "deleted" (admin can delete any post)
 			try {
 				const Post = require("../models/postModel");
 				// Get original post ID (TargetId might be GUID)
@@ -521,7 +521,9 @@ exports.handleReportAction = async (reportId, action, adminNote, adminAccountId)
 				if (!post) {
 					return error("Post not found", 404);
 				}
-				await Post.findByIdAndDelete(postId);
+				// Change post status to "deleted" instead of physically deleting
+				post.status = "deleted";
+				await post.save();
 				actionTaken = "delete_post";
 				newStatus = "Resolve"; // Status theo schema: Pending, Review, Resolve
 			} catch (err) {
