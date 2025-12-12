@@ -245,6 +245,7 @@ class BookingController {
         startTime,
         endTime,
         location,
+        phone,
         note,
         offeredPrice,
         slots // Array of slot IDs: [1, 2, 3]
@@ -268,21 +269,29 @@ class BookingController {
       const DetailSchedule = require("../models/detailSchedule");
       let mongoDetailId = null;
       
-      if (location || note || (slots && Array.isArray(slots) && slots.length > 0)) {
-        try {
-          const detailDoc = await DetailSchedule.create({
-            Location: location || "",
-            Note: note || "",
-            OfferedPrice: offeredPrice || 0,
-            PerformerRole: performerRole,
-            RequesterRole: requesterRole || "Customer",
-            Slots: Array.isArray(slots) ? slots : [],
-          });
-          mongoDetailId = detailDoc._id.toString();
-        } catch (error) {
-          console.error("[BookingController] Error creating detailSchedule:", error);
-          // Continue without detailSchedule if creation fails
-        }
+      // Luôn tạo detailSchedule để lưu thông tin booking (kể cả khi không có location/phone/note)
+      try {
+        const detailDoc = await DetailSchedule.create({
+          Location: location || "",
+          Phone: phone || "",
+          Note: note || "",
+          OfferedPrice: offeredPrice || 0,
+          PerformerRole: performerRole,
+          RequesterRole: requesterRole || "Customer",
+          Slots: Array.isArray(slots) ? slots : [],
+        });
+        mongoDetailId = detailDoc._id.toString();
+        console.log("[BookingController] Created detailSchedule:", {
+          mongoDetailId,
+          hasLocation: !!location,
+          hasPhone: !!phone,
+          phone: phone || "empty",
+          hasNote: !!note,
+          slotsCount: Array.isArray(slots) ? slots.length : 0
+        });
+      } catch (error) {
+        console.error("[BookingController] Error creating detailSchedule:", error);
+        // Continue without detailSchedule if creation fails
       }
 
       // Tạo booking với status "Pending" (chờ xác nhận)
