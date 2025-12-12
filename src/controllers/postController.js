@@ -1849,6 +1849,66 @@ class PostController {
     }
   }
 
+  // Admin: Cập nhật post status
+  async updatePostStatusForAdmin(req, res) {
+    try {
+      const { postId } = req.params;
+      const { status } = req.body;
+
+      if (!status) {
+        return res.status(400).json({
+          success: false,
+          message: "Status is required"
+        });
+      }
+
+      const result = await postService.updatePostStatusForAdmin(postId, status);
+
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (err) {
+      console.error('[PostController] updatePostStatusForAdmin error:', err);
+      res.status(500).json({
+        success: false,
+        message: err.message
+      });
+    }
+  }
+
+  // Admin: Lấy tất cả posts (kể cả deleted, trashed, private)
+  async getAllPostsForAdmin(req, res) {
+    try {
+      console.log('[PostController] getAllPostsForAdmin called with query:', req.query);
+      const { page = 1, limit = 10, status, search } = req.query;
+      
+      const result = await postService.getAllPostsForAdmin(
+        parseInt(page),
+        parseInt(limit),
+        { status, search }
+      );
+
+      console.log('[PostController] getAllPostsForAdmin result:', {
+        success: result.success,
+        dataCount: result.data?.length || 0,
+        total: result.pagination?.total || 0
+      });
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(500).json(result);
+      }
+    } catch (err) {
+      console.error('[PostController] getAllPostsForAdmin error:', err);
+      res.status(500).json({
+        success: false,
+        message: err.message
+      });
+    }
+  }
 
 }
 
