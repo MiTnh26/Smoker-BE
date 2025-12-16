@@ -45,11 +45,12 @@ exports.registerBusiness = async (req, res) => {
 // Step 2: HTTP handler - upload files for existing business
 exports.uploadBusinessFiles = async (req, res) => {
   try {
-    const { entityId, userName, phone, address, bio, gender, pricePerHours, pricePerSession, addressData } = req.body || {};
+    const { entityId, userName, phone, address, bio, gender, pricePerHours, pricePerSession, addressData, avatar: avatarUrl, background: backgroundUrl } = req.body || {};
     if (!entityId) return res.status(400).json({ status: "error", message: "Thiếu entityId" });
 
-    const avatar = req.files?.avatar?.[0]?.path || null;
-    const background = req.files?.background?.[0]?.path || null;
+    // Priority: uploaded file > URL from body > null
+    const avatar = req.files?.avatar?.[0]?.path || (avatarUrl && avatarUrl.trim() ? avatarUrl.trim() : null);
+    const background = req.files?.background?.[0]?.path || (backgroundUrl && backgroundUrl.trim() ? backgroundUrl.trim() : null);
     
     // Xử lý address: nếu có addressData (structured), lưu dưới dạng JSON
     let addressToSave = (address || "").trim();
@@ -271,8 +272,8 @@ exports.updateBusinessByEntityAccountId = async (req, res) => {
     if (!business)
       return res.status(404).json({ status: "error", message: "Không tìm thấy BusinessAccount" });
 
-    // Get data from body (no file upload in PUT request)
-    const { userName, address, phone, bio, gender, pricePerHours, pricePerSession } = req.body || {};
+    // Get data from body (no file upload in PUT request, but can accept URLs)
+    const { userName, address, phone, bio, gender, pricePerHours, pricePerSession, avatar: avatarUrl, background: backgroundUrl } = req.body || {};
     
     // Handle address - can be JSON string or plain string
     let addressToSave = (address || "").trim();
@@ -291,10 +292,14 @@ exports.updateBusinessByEntityAccountId = async (req, res) => {
       }
     }
 
+    // Handle avatar/background: use URL from body if provided, otherwise keep existing
+    const avatar = (avatarUrl && avatarUrl.trim()) ? avatarUrl.trim() : business.Avatar;
+    const background = (backgroundUrl && backgroundUrl.trim()) ? backgroundUrl.trim() : business.Background;
+
     const updated = await updateBusinessAccountFiles(businessAccountId, {
       userName: userName || business.UserName,
-      avatar: business.Avatar, // Keep existing avatar
-      background: business.Background, // Keep existing background
+      avatar,
+      background,
       address: addressToSave || business.Address,
       phone: phone || business.Phone,
       bio: bio || business.Bio,
