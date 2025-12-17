@@ -369,8 +369,8 @@ class BookingService {
             try {
               const detailScheduleDoc = await DetailSchedule.findById(booking.MongoDetailId);
               if (detailScheduleDoc) {
-                // Convert Mongoose document to plain object để đảm bảo tất cả fields được trả về
-                detailSchedule = detailScheduleDoc.toObject ? detailScheduleDoc.toObject() : detailScheduleDoc;
+                // Convert Mongoose document to plain object với flattenMaps để convert Map thành Object
+                detailSchedule = detailScheduleDoc.toObject ? detailScheduleDoc.toObject({ flattenMaps: true }) : detailScheduleDoc;
               }
             } catch (error) {
               console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
@@ -413,8 +413,8 @@ class BookingService {
             try {
               const detailScheduleDoc = await DetailSchedule.findById(booking.MongoDetailId);
               if (detailScheduleDoc) {
-                // Convert Mongoose document to plain object để đảm bảo Location được trả về
-                detailSchedule = detailScheduleDoc.toObject ? detailScheduleDoc.toObject() : detailScheduleDoc;
+                // Convert Mongoose document to plain object với flattenMaps để convert Map thành Object
+                detailSchedule = detailScheduleDoc.toObject ? detailScheduleDoc.toObject({ flattenMaps: true }) : detailScheduleDoc;
                 console.log(`[BookingService] Found detailSchedule for ${booking.MongoDetailId}:`, {
                   Location: detailSchedule.Location,
                   Phone: detailSchedule.Phone,

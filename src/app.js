@@ -116,7 +116,7 @@ app.use((req, res, next) => {
 const { initializeAdmin } = require("./utils/adminSetup");
 initSQLConnection().then(() => {
   initializeAdmin();
-  
+
   // Khởi động background job để sync stats từ Revive Ad Server
   const ReviveSyncJob = require("./jobs/reviveSyncJob");
   
@@ -131,6 +131,27 @@ initSQLConnection().then(() => {
     console.log(`[App] Revive sync job started (interval: ${syncIntervalMinutes} minutes)`);
   } else {
     console.log('[App] Revive sync job skipped (no Revive configuration found)');
+  }
+
+  // Background job: tự động xoá booking bàn (BarTable) chưa thanh toán quá 5 phút
+  try {
+    const { cleanupPendingBookings } = require("./services/bookingTableCleanupService");
+    const cleanupIntervalMinutes = process.env.BOOKING_TABLE_CLEANUP_INTERVAL_MINUTES
+      ? parseInt(process.env.BOOKING_TABLE_CLEANUP_INTERVAL_MINUTES)
+      : 1; // job chạy mỗi 1 phút, nhưng chỉ xử lý các booking đã quá 5 phút
+
+    setInterval(() => {
+      // Sau 5 phút kể từ khi tạo booking mà vẫn Pending ⇒ auto đổi ScheduleStatus thành Rejected
+      cleanupPendingBookings(5).catch((err) => {
+        console.error("[App] BookingTableCleanupService error:", err);
+      });
+    }, cleanupIntervalMinutes * 60 * 1000);
+
+    console.log(
+      `[App] BookingTable cleanup job started (interval: ${cleanupIntervalMinutes} minutes, maxAge: 5 minutes)`
+    );
+  } catch (err) {
+    console.error("[App] Failed to start BookingTable cleanup job:", err);
   }
 }).catch(err => {
   console.error("⚠️  SQL connection failed, skipping admin initialization and Revive sync job");
