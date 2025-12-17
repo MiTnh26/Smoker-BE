@@ -20,6 +20,7 @@ router.get("/receiver/:receiverId", verifyToken, bookingTableController.getByRec
 
 // Tạo payment link cho table booking (cọc)
 router.post("/:id/create-payment", verifyToken, bookingTableController.createPayment);
+router.get("/:id/get-payment-link", verifyToken, bookingTableController.getPaymentLink);
 
 // Đánh dấu đã thanh toán
 router.patch("/:id/mark-paid", verifyToken, bookingTableController.markPaid);
