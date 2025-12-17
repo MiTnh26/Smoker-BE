@@ -416,6 +416,63 @@ async function getBookedSchedulesByRefundStatus(refundStatus, { limit = 50, offs
   return result.recordset;
 }
 
+/**
+ * Lấy các booking (BarTable, DJ, Dancer) ở trạng thái pending quá N phút (chưa thanh toán)
+ * Dùng cho job tự động dọn dẹp booking chưa thanh toán.
+ */
+async function getPendingBookingsOlderThan(minutes = 5) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("Minutes", sql.Int, minutes)
+    .query(`
+      SELECT
+        BookedScheduleId,
+        BookerId,
+        ReceiverId,
+        Type,
+        TotalAmount,
+        PaymentStatus,
+        ScheduleStatus,
+        BookingDate,
+        StartTime,
+        EndTime,
+        MongoDetailId,
+        created_at
+      FROM BookedSchedules
+      WHERE
+        (UPPER(RTRIM(LTRIM(Type))) = 'BARTABLE'
+         OR UPPER(RTRIM(LTRIM(Type))) = 'DJ'
+         OR UPPER(RTRIM(LTRIM(Type))) = 'DANCER')
+        AND UPPER(RTRIM(LTRIM(PaymentStatus))) = 'PENDING'
+        AND UPPER(RTRIM(LTRIM(ScheduleStatus))) = 'PENDING'
+        -- Dùng DATEDIFF SECOND + GETDATE() để tránh lệch múi giờ (created_at dùng giờ local)
+        AND DATEDIFF(SECOND, created_at, GETDATE()) >= (@Minutes * 60);
+    `);
+
+  return result.recordset || [];
+}
+
+/**
+ * Xoá một booking theo BookedScheduleId.
+ */
+async function deleteBookedSchedule(bookedScheduleId) {
+  const pool = await getPool();
+  await pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
+    .query(`
+      -- Xoá các record liên quan trong BookingPayments trước
+      IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'BookingPayments')
+      BEGIN
+        DELETE FROM BookingPayments
+        WHERE BookedScheduleId = @BookedScheduleId;
+      END
+
+      -- Sau đó mới xoá trong BookedSchedules
+      DELETE FROM BookedSchedules
+      WHERE BookedScheduleId = @BookedScheduleId;
+    `);
+}
+
 module.exports = {
   createBookedSchedule,
   getBookedScheduleById,
@@ -424,5 +481,7 @@ module.exports = {
   getBookedSchedulesByRefundStatus,
   updateBookedScheduleStatuses,
   updateBookedScheduleTiming,
-  updateRefundStatus
+  updateRefundStatus,
+  getPendingBookingsOlderThan,
+  deleteBookedSchedule
 };

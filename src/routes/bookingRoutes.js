@@ -21,6 +21,8 @@ router.get("/booker/:bookerId", verifyToken, bookingController.getByBooker);
 router.get("/receiver/:receiverId", verifyToken, bookingController.getByReceiver);
 // Create payment link for booking
 router.post("/:id/create-payment", verifyToken, bookingController.createPayment);
+// Get payment link for booking (reuse if exists)
+router.get("/:id/get-payment-link", verifyToken, bookingController.getPaymentLink);
 // Check and update payment status from PayOS (nếu webhook không được gọi)
 router.post("/:id/check-payment", verifyToken, bookingController.checkAndUpdatePaymentStatus);
 // Complete transaction (DJ/Dancer xác nhận đã giao dịch xong)
