@@ -191,12 +191,43 @@ const { createEntityAccount } = require("../models/entityAccountModel");
   exports.getBarPageByAccountId = async (req, res) => {
     try {
       const { accountId } = req.params;
-      if (!accountId)
+      console.log(`[BarPageController] getBarPageByAccountId called`, {
+        accountId,
+        type: typeof accountId,
+        length: accountId?.length,
+        fullPath: req.originalUrl,
+        method: req.method
+      });
+      
+      if (!accountId || accountId.trim() === '') {
+        console.warn(`[BarPageController] Missing or empty accountId parameter`);
         return res.status(400).json({ status: "error", message: "Thiếu accountId" });
+      }
+
+      // Validate GUID format
+      const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!guidRegex.test(accountId.trim())) {
+        console.warn(`[BarPageController] Invalid GUID format for accountId: ${accountId}`);
+        return res.status(400).json({ 
+          status: "error", 
+          message: "Invalid accountId format. Expected GUID format.",
+          received: accountId
+        });
+      }
   
-      const barPage = await getBarPageByAccountId(accountId);
-      if (!barPage)
-        return res.status(404).json({ status: "error", message: "Không tìm thấy trang bar cho tài khoản này" });
+      console.log(`[BarPageController] Querying database for accountId: ${accountId}`);
+      const barPage = await getBarPageByAccountId(accountId.trim());
+      
+      if (!barPage) {
+        console.warn(`[BarPageController] BarPage not found for accountId: ${accountId}`);
+        return res.status(404).json({ 
+          status: "error", 
+          message: "Không tìm thấy trang bar cho tài khoản này",
+          accountId: accountId
+        });
+      }
+      
+      console.log(`[BarPageController] BarPage found: ${barPage.BarPageId}`);
 
       // Parse address nếu là JSON
       let address = barPage.Address || "";
