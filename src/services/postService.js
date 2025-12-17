@@ -124,52 +124,36 @@ const extractLikeAccountId = (like, key) => {
   return null;
 };
 
+// Chỉ dùng EntityAccountId để xác định likedByCurrentUser.
+// So sánh case-insensitive để không bị lệch giữa dữ liệu cũ (có thể lưu khác hoa/thường) và session hiện tại.
 const isCollectionLikedByViewer = (likes, viewerAccountId, viewerEntityAccountId) => {
-  if (!likes) return false;
-  if (!viewerAccountId && !viewerEntityAccountId) return false;
+  if (!likes || !viewerEntityAccountId) return false;
 
-  // Normalize viewer IDs for comparison: trim + toLowerCase() để so sánh case-insensitive
-  const normalizedViewerEntityAccountId = viewerEntityAccountId ? String(viewerEntityAccountId).trim().toLowerCase() : null;
-  const normalizedViewerAccountId = viewerAccountId ? String(viewerAccountId).trim().toLowerCase() : null;
+  const normalizeForCompare = (value) =>
+    value ? String(value).trim().toUpperCase() : null;
 
-  const checkMatch = (likeValue, key) => {
-    const likeEntity = extractLikeEntityAccountId(likeValue, key);
-    const likeAccount = extractLikeAccountId(likeValue, key);
-    
-    // Normalize like IDs để so sánh (case-insensitive)
-    const normalizedLikeEntity = likeEntity ? String(likeEntity).trim().toLowerCase() : null;
-    const normalizedLikeAccount = likeAccount ? String(likeAccount).trim().toLowerCase() : null;
+  const viewer = normalizeForCompare(viewerEntityAccountId);
+  if (!viewer) return false;
 
-    if (normalizedViewerEntityAccountId && normalizedLikeEntity && normalizedViewerEntityAccountId === normalizedLikeEntity) {
-      return true;
-    }
+  const match = (value, key) => {
+    const keyNorm = normalizeForCompare(key);
+    if (keyNorm && keyNorm === viewer) return true;
 
-    if (!normalizedViewerEntityAccountId && normalizedViewerAccountId && normalizedLikeAccount && normalizedViewerAccountId === normalizedLikeAccount) {
-      return true;
-    }
-
-    if (normalizedViewerEntityAccountId && !normalizedLikeEntity && normalizedViewerAccountId && normalizedLikeAccount && normalizedViewerAccountId === normalizedLikeAccount) {
-      return true;
-    }
-
-    return false;
+    const entity = extractLikeEntityAccountId(value, key);
+    const entityNorm = normalizeForCompare(entity);
+    return !!entityNorm && entityNorm === viewer;
   };
 
-  if (Array.isArray(likes)) {
-    return likes.some((like) => checkMatch(like));
-  }
-
+  if (Array.isArray(likes)) return likes.some((like) => match(like));
   if (likes instanceof Map) {
-    for (const [key, value] of likes.entries()) {
-      if (checkMatch(value, key)) return true;
+    for (const [k, v] of likes.entries()) {
+      if (match(v, k)) return true;
     }
     return false;
   }
-
   if (typeof likes === "object") {
-    return Object.entries(likes).some(([key, value]) => checkMatch(value, key));
+    return Object.entries(likes).some(([k, v]) => match(v, k));
   }
-
   return false;
 };
 
@@ -386,16 +370,20 @@ class PostService {
     const normalizedViewerAccountId = viewer.accountId ? String(viewer.accountId).trim() : null;
     const normalizedViewerEntityAccountId = viewer.entityAccountId ? String(viewer.entityAccountId).trim() : null;
 
+    const isLikedByMe = isCollectionLikedByViewer(
+      post.likes,
+      normalizedViewerAccountId,
+      normalizedViewerEntityAccountId
+    );
+
     const stats = {
       likeCount: likesCount,
       commentCount: commentsCount,
       shareCount: post.shares || post.shareCount || 0,
       viewCount: post.views || post.viewCount || 0,
-      isLikedByMe: isCollectionLikedByViewer(
-        post.likes,
-        normalizedViewerAccountId,
-        normalizedViewerEntityAccountId
-      )
+      // Expose trendingScore to FE for debugging/analytics display
+      trendingScore: typeof post.trendingScore === "number" ? post.trendingScore : 0,
+      isLikedByMe
     };
 
     // 4. Build music object (if exists)
@@ -1662,22 +1650,18 @@ class PostService {
       }
 
       // Tìm like hiện tại (nếu có) - ưu tiên entityAccountId, fallback accountId
-      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
       let existingLikeKey = null;
-      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim().toLowerCase() : null;
+      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim() : null;
       
       for (const [likeId, like] of reply.likes.entries()) {
-        // Convert like to plain object if needed
         const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
         
-        // So sánh bằng entityAccountId nếu có, fallback về accountId
         if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
-          const normalizedLikeEntityAccountId = String(likeObj.entityAccountId).trim().toLowerCase();
-          if (normalizedLikeEntityAccountId === normalizedUserEntityAccountId) {
+          if (String(likeObj.entityAccountId).trim() === normalizedUserEntityAccountId) {
             existingLikeKey = likeId;
             break;
           }
-        } else if (likeObj.accountId && String(likeObj.accountId).toString() === userId.toString()) {
+        } else if (likeObj.accountId && String(likeObj.accountId) === String(userId)) {
           existingLikeKey = likeId;
           break;
         }
@@ -1778,21 +1762,17 @@ class PostService {
       }
 
       // Tìm và xóa like - ưu tiên entityAccountId, fallback accountId
-      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
-      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim().toLowerCase() : null;
+      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim() : null;
       
       for (const [likeId, like] of reply.likes.entries()) {
-        // Convert like to plain object if needed
         const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
         
-        // So sánh bằng entityAccountId nếu có, fallback về accountId
         if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
-          const normalizedLikeEntityAccountId = String(likeObj.entityAccountId).trim().toLowerCase();
-          if (normalizedLikeEntityAccountId === normalizedUserEntityAccountId) {
+          if (String(likeObj.entityAccountId).trim() === normalizedUserEntityAccountId) {
             reply.likes.delete(likeId);
             break;
           }
-        } else if (likeObj.accountId && String(likeObj.accountId).toString() === userId.toString()) {
+        } else if (likeObj.accountId && String(likeObj.accountId) === String(userId)) {
           reply.likes.delete(likeId);
           break;
         }
@@ -1877,7 +1857,7 @@ class PostService {
   }
 
 
-  // Thích post (toggle behavior theo entityAccountId)
+  // Thích post (toggle behavior theo EntityAccountId - tách biệt từng role)
   async likePost(postId, userId, typeRole, userEntityAccountId) {
     try {
       const post = await Post.findById(postId);
@@ -1888,28 +1868,28 @@ class PostService {
         };
       }
 
+      // BẮT BUỘC phải có EntityAccountId để phân biệt like giữa các role
       const normalizedEntityAccountId = normalizeGuid(userEntityAccountId);
-      const normalizedUserId = normalizeGuid(userId);
+      if (!normalizedEntityAccountId) {
+        return {
+          success: false,
+          message: "Missing entityAccountId for like"
+        };
+      }
 
-      // Tìm like hiện tại (nếu có)
+      // Tìm like hiện tại (nếu có) theo EntityAccountId
       let existingLikeKey = null;
-      for (const [likeId, like] of post.likes.entries()) {
-        const likeEntityAccountId = normalizeGuid(like.entityAccountId);
-        const likeAccountId = normalizeGuid(like.accountId);
-
-        const matchByEntity =
-          normalizedEntityAccountId &&
-          likeEntityAccountId &&
-          likeEntityAccountId === normalizedEntityAccountId;
-
-        const matchLegacyAccount =
-          (!normalizedEntityAccountId || !likeEntityAccountId) &&
-          normalizedUserId &&
-          likeAccountId === normalizedUserId;
-
-        if (matchByEntity || matchLegacyAccount) {
-          existingLikeKey = likeId;
-          break;
+      if (post.likes instanceof Map) {
+        if (post.likes.has(normalizedEntityAccountId)) {
+          existingLikeKey = normalizedEntityAccountId;
+        } else {
+          // Fallback: tìm theo field entityAccountId trong value
+          for (const [likeId, like] of post.likes.entries()) {
+            if (normalizeGuid(like.entityAccountId) === normalizedEntityAccountId) {
+              existingLikeKey = likeId;
+              break;
+            }
+          }
         }
       }
 
@@ -1947,17 +1927,23 @@ class PostService {
           }
         }
         
-        const likeId = new mongoose.Types.ObjectId();
+        // Dùng chính EntityAccountId làm key trong Map để mỗi role chỉ có một like
+        const likeId = normalizedEntityAccountId;
         const like = {
           accountId: userId,
-          entityAccountId: userEntityAccountId || null,
+          entityAccountId: normalizedEntityAccountId,
           entityId: userEntityId,
           entityType: userEntityType,
           TypeRole: typeRole || userEntityType || "Account"
         };
 
-        post.likes.set(likeId.toString(), like);
+        post.likes.set(likeId, like);
         await post.save();
+
+        console.log('[PostService] Like saved, keys after:', {
+          postId,
+          allKeys: Array.from(post.likes.keys())
+        });
 
         // Cập nhật trending score sau khi like
         await FeedAlgorithm.updatePostTrendingScore(postId.toString());
@@ -2047,7 +2033,7 @@ class PostService {
     }
   }
 
-  // Bỏ thích post (theo entityAccountId)
+  // Bỏ thích post (theo EntityAccountId - tách biệt từng role)
   async unlikePost(postId, userId, userEntityAccountId) {
     try {
       const post = await Post.findById(postId);
@@ -2059,26 +2045,25 @@ class PostService {
       }
 
       const normalizedEntityAccountId = normalizeGuid(userEntityAccountId);
-      const normalizedUserId = normalizeGuid(userId);
+      if (!normalizedEntityAccountId) {
+        return {
+          success: false,
+          message: "Missing entityAccountId for unlike"
+        };
+      }
 
-      // Tìm và xóa like
-      for (const [likeId, like] of post.likes.entries()) {
-        const likeEntityAccountId = normalizeGuid(like.entityAccountId);
-        const likeAccountId = normalizeGuid(like.accountId);
-
-        const matchByEntity =
-          normalizedEntityAccountId &&
-          likeEntityAccountId &&
-          likeEntityAccountId === normalizedEntityAccountId;
-
-        const matchLegacyAccount =
-          (!normalizedEntityAccountId || !likeEntityAccountId) &&
-          normalizedUserId &&
-          likeAccountId === normalizedUserId;
-
-        if (matchByEntity || matchLegacyAccount) {
-          post.likes.delete(likeId);
-          break;
+      // Tìm và xóa like theo EntityAccountId
+      if (post.likes instanceof Map) {
+        if (post.likes.has(normalizedEntityAccountId)) {
+          post.likes.delete(normalizedEntityAccountId);
+        } else {
+          // Fallback: tìm theo field entityAccountId trong value
+          for (const [likeId, like] of post.likes.entries()) {
+            if (normalizeGuid(like.entityAccountId) === normalizedEntityAccountId) {
+              post.likes.delete(likeId);
+              break;
+            }
+          }
         }
       }
 
@@ -2121,22 +2106,18 @@ class PostService {
       }
 
       // Tìm like hiện tại (nếu có) - ưu tiên entityAccountId, fallback accountId
-      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
       let existingLikeKey = null;
-      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim().toLowerCase() : null;
+      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim() : null;
       
       for (const [likeId, like] of comment.likes.entries()) {
-        // Convert like to plain object if needed
         const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
         
-        // So sánh bằng entityAccountId nếu có, fallback về accountId
         if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
-          const normalizedLikeEntityAccountId = String(likeObj.entityAccountId).trim().toLowerCase();
-          if (normalizedLikeEntityAccountId === normalizedUserEntityAccountId) {
+          if (String(likeObj.entityAccountId).trim() === normalizedUserEntityAccountId) {
             existingLikeKey = likeId;
             break;
           }
-        } else if (likeObj.accountId && String(likeObj.accountId).toString() === userId.toString()) {
+        } else if (likeObj.accountId && String(likeObj.accountId) === String(userId)) {
           existingLikeKey = likeId;
           break;
         }
@@ -2229,21 +2210,17 @@ class PostService {
       }
 
       // Tìm và xóa like - ưu tiên entityAccountId, fallback accountId
-      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
-      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim().toLowerCase() : null;
+      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim() : null;
       
       for (const [likeId, like] of comment.likes.entries()) {
-        // Convert like to plain object if needed
         const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
         
-        // So sánh bằng entityAccountId nếu có, fallback về accountId
         if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
-          const normalizedLikeEntityAccountId = String(likeObj.entityAccountId).trim().toLowerCase();
-          if (normalizedLikeEntityAccountId === normalizedUserEntityAccountId) {
+          if (String(likeObj.entityAccountId).trim() === normalizedUserEntityAccountId) {
             comment.likes.delete(likeId);
             break;
           }
-        } else if (likeObj.accountId && String(likeObj.accountId).toString() === userId.toString()) {
+        } else if (likeObj.accountId && String(likeObj.accountId) === String(userId)) {
           comment.likes.delete(likeId);
           break;
         }
