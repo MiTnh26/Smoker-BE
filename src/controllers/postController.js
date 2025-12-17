@@ -1593,7 +1593,7 @@ class PostController {
   async getPostsByAuthor(req, res) {
     try {
       const { authorId } = req.params;
-      const { limit = 10, cursor = null } = req.query;
+      const { limit = 10, cursor = null, viewerEntityAccountId } = req.query;
 
       if (!authorId) {
         return res.status(400).json({
@@ -1608,10 +1608,10 @@ class PostController {
 
       // Delegate sang PostService để xử lý giống feed (populate medias/music/reposts, enrich author, comments, topComments)
       const viewerAccountId = req.user?.id || null;
-      // Normalize viewerEntityAccountId để đảm bảo so sánh đúng (trim whitespace)
-      const viewerEntityAccountId = req.user?.entityAccountId 
-        ? String(req.user.entityAccountId).trim() 
-        : null;
+      // Ưu tiên viewerEntityAccountId từ query (FE gửi theo activeEntity), fallback JWT
+      const resolvedViewerEntityAccountId = viewerEntityAccountId
+        ? String(viewerEntityAccountId).trim()
+        : (req.user?.entityAccountId ? String(req.user.entityAccountId).trim() : null);
 
       const result = await postService.getPostsByEntityAccountId(entityAccountId, {
         limit: parseInt(limit, 10) || 10,
@@ -1620,7 +1620,7 @@ class PostController {
         includeMusic: true,
         populateReposts: true,
         viewerAccountId,
-        viewerEntityAccountId
+        viewerEntityAccountId: resolvedViewerEntityAccountId
       });
 
       if (!result.success) {

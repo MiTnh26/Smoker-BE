@@ -108,12 +108,16 @@ class FeedService {
     await this._enrichItemsWithAuthorInfo(postResult.data);
     await this._enrichItemsWithAuthorInfo(livestreams);
 
-    // 3. Chuyển đổi posts thành feed items và sort theo timestamp (newest first)
+    // 3. Chuyển đổi posts thành feed items.
+    // LƯU Ý: postResult.data đã được sort theo trendingScore DESC, createdAt DESC
+    // ở tầng PostService, nên ở đây KHÔNG sort lại theo createdAt nữa
+    // để giữ nguyên thứ tự theo trending score.
     const postItems = postResult.data.map(post => ({
       type: 'post',
-      timestamp: new Date(post.createdAt),
+      // Giữ timestamp để FE dùng nếu cần hiển thị, nhưng không dùng để re-sort
+      timestamp: post.createdAt ? new Date(post.createdAt) : null,
       data: this.transformPost(post, currentUser),
-    })).sort((a, b) => b.timestamp - a.timestamp);
+    }));
 
     // 4. Shuffle livestreams và chuyển đổi thành feed items
     const shuffledLivestreams = [...livestreams].sort(() => Math.random() - 0.5);
@@ -164,55 +168,23 @@ class FeedService {
    * @returns {object} - Dữ liệu post đã được xử lý
    */
   transformPost(post, currentUser) {
-    const viewerEntityAccountId = currentUser?.entityAccountId;
-
-    // Read from new DTO schema: author.entityAccountId or legacy format
-    const postEntityAccountId = post.author?.entityAccountId || post.entityAccountId;
+    const viewer = currentUser?.entityAccountId;
+    const postOwner = post.author?.entityAccountId || post.entityAccountId;
     
-    // Logic kiểm tra quyền quản lý (canManage) cho bài post chính
-    // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
-    const canManage = postEntityAccountId && viewerEntityAccountId &&
-                      String(postEntityAccountId).trim().toLowerCase() === String(viewerEntityAccountId).trim().toLowerCase();
+    const canManage = postOwner && viewer && 
+      String(postOwner).trim() === String(viewer).trim();
+    
+    // stats.isLikedByMe đã được tính đúng trong buildPostDTO
+    const isLiked = post.stats?.isLikedByMe || false;
 
-    // Read isLiked from new DTO schema: stats.isLikedByMe (already calculated correctly in buildPostDTO)
-    // Only use fallback if stats.isLikedByMe is not available (shouldn't happen with new DTO)
-    // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
-    const isLiked = post.stats?.isLikedByMe !== undefined ? post.stats.isLikedByMe :
-                   (post.likes && viewerEntityAccountId
-                     ? Object.values(post.likes).some(like => {
-                         const likeEntityId = like?.entityAccountId || like?.EntityAccountId;
-                         return likeEntityId && String(likeEntityId).trim().toLowerCase() === String(viewerEntityAccountId).trim().toLowerCase();
-                       })
-                     : false);
-
-    // Nếu là repost, xử lý thêm cho bài post gốc
     if (post.originalPost) {
-      const originalPostEntityAccountId = post.originalPost.author?.entityAccountId || post.originalPost.entityAccountId;
-      
-      // Read isLiked from new DTO schema for originalPost (already calculated correctly in buildPostDTO)
-      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
-      const isOriginalPostLiked = post.originalPost.stats?.isLikedByMe !== undefined ? post.originalPost.stats.isLikedByMe :
-                                  (post.originalPost.likes && viewerEntityAccountId
-                                    ? Object.values(post.originalPost.likes).some(like => {
-                                        const likeEntityId = like?.entityAccountId || like?.EntityAccountId;
-                                        return likeEntityId && String(likeEntityId).trim().toLowerCase() === String(viewerEntityAccountId).trim().toLowerCase();
-                                      })
-                                    : false);
-      
-      post.originalPost.isLikedByCurrentUser = isOriginalPostLiked;
-
-      // Logic canManage cho bài post gốc
-      // Dùng toLowerCase() khi so sánh để đảm bảo match được (case-insensitive)
-      const canManageOriginal = originalPostEntityAccountId && viewerEntityAccountId &&
-                                String(originalPostEntityAccountId).trim().toLowerCase() === String(viewerEntityAccountId).trim().toLowerCase();
-      post.originalPost.canManage = canManageOriginal;
+      const originalOwner = post.originalPost.author?.entityAccountId || post.originalPost.entityAccountId;
+      post.originalPost.canManage = originalOwner && viewer && 
+        String(originalOwner).trim() === String(viewer).trim();
+      post.originalPost.isLikedByCurrentUser = post.originalPost.stats?.isLikedByMe || false;
     }
 
-    return {
-      ...post,
-      canManage,
-      isLikedByCurrentUser: isLiked,
-    };
+    return { ...post, canManage, isLikedByCurrentUser: isLiked };
   }
 
   /**
