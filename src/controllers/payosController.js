@@ -496,7 +496,10 @@ class PayOSController {
         // 3. Kiểm tra payment status hiện tại trước khi update
         console.log("[PayOS Controller] Current booking payment status:", booking.PaymentStatus);
         
-        // 4. Update booking payment status - cập nhật thành Paid (đã thanh toán cọc)
+        // 4. Update booking payment + schedule status
+        //    - Luôn cập nhật PaymentStatus = 'Paid'
+        //    - Nếu là booking bàn (BarTable) và đang ở trạng thái Pending,
+        //      thì chuyển ScheduleStatus sang 'Confirmed' để khoá bàn.
         console.log("[PayOS Controller] STEP 4: Updating booking payment status to 'Paid'...");
         console.log("[PayOS Controller] Before update:", {
           bookedScheduleId: bookedScheduleId,
@@ -504,9 +507,22 @@ class PayOSController {
           targetPaymentStatus: "Paid"
         });
         
-        const updatedBooking = await bookedScheduleModel.updateBookedScheduleStatuses(bookedScheduleId, {
-          paymentStatus: "Paid" // Đã thanh toán cọc (SQL chỉ có enum Paid)
-        });
+        const statusUpdate = {
+          paymentStatus: "Paid", // Đã thanh toán cọc
+        };
+
+        // Chỉ auto-confirm cho BarTable; DJ/Dancer booking vẫn để Pending
+        if (
+          String(booking.Type || "").toLowerCase() === "bartable" &&
+          String(booking.ScheduleStatus || "").toLowerCase() === "pending"
+        ) {
+          statusUpdate.scheduleStatus = "Confirmed";
+        }
+
+        const updatedBooking = await bookedScheduleModel.updateBookedScheduleStatuses(
+          bookedScheduleId,
+          statusUpdate
+        );
         
         if (!updatedBooking) {
           console.error("[PayOS Controller] ❌ Failed to update booking status - updatedBooking is null");

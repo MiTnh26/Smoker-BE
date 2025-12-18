@@ -1,11 +1,18 @@
 const express = require("express");
 const router = express.Router();
 const postController = require("../controllers/postController");
-const { verifyToken, optionalVerifyToken, requireActiveEntity, checkBannedStatus } = require("../middleware/authMiddleware");
+const { verifyToken, optionalVerifyToken, requireActiveEntity, checkBannedStatus, requireAdmin } = require("../middleware/authMiddleware");
 const { createPostUpload } = require("../middleware/uploadCloudinary");
 
 // Tạo instance upload cho posts
 const uploadPost = createPostUpload();
+
+// Admin routes - phải đặt trước public routes để tránh bị route /:id match
+router.get("/admin/all", verifyToken, requireAdmin, (req, res, next) => {
+  console.log('[PostRoutes] Admin route /admin/all hit');
+  postController.getAllPostsForAdmin(req, res).catch(next);
+});
+router.patch("/admin/:postId/status", verifyToken, requireAdmin, postController.updatePostStatusForAdmin);
 
 // Routes không cần authentication (public routes)
 router.get("/", postController.getAllPosts);

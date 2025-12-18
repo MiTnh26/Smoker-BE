@@ -58,10 +58,12 @@ const { createEntityAccount } = require("../models/entityAccountModel");
       const barPage = await getBarPageById(barPageId);
       if (!barPage)
         return res.status(404).json({ status: "error", message: "Không tìm thấy BarPage" });
-  
-      const avatar = req.files?.avatar?.[0]?.path || barPage.Avatar;
-      const background = req.files?.background?.[0]?.path || barPage.Background;
-      const { barName, address, phoneNumber, email, addressData } = req.body || {};
+
+      const { barName, address, phoneNumber, email, addressData, avatar: avatarUrl, background: backgroundUrl } = req.body || {};
+      
+      // Priority: uploaded file > URL from body > existing value from database
+      const avatar = req.files?.avatar?.[0]?.path || (avatarUrl && avatarUrl.trim() ? avatarUrl.trim() : barPage.Avatar);
+      const background = req.files?.background?.[0]?.path || (backgroundUrl && backgroundUrl.trim() ? backgroundUrl.trim() : barPage.Background);
 
       // Xử lý address: nếu có addressData (structured), lưu dưới dạng JSON
       let addressToSave = (address || "").trim();
@@ -189,12 +191,43 @@ const { createEntityAccount } = require("../models/entityAccountModel");
   exports.getBarPageByAccountId = async (req, res) => {
     try {
       const { accountId } = req.params;
-      if (!accountId)
+      console.log(`[BarPageController] getBarPageByAccountId called`, {
+        accountId,
+        type: typeof accountId,
+        length: accountId?.length,
+        fullPath: req.originalUrl,
+        method: req.method
+      });
+      
+      if (!accountId || accountId.trim() === '') {
+        console.warn(`[BarPageController] Missing or empty accountId parameter`);
         return res.status(400).json({ status: "error", message: "Thiếu accountId" });
+      }
+
+      // Validate GUID format
+      const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!guidRegex.test(accountId.trim())) {
+        console.warn(`[BarPageController] Invalid GUID format for accountId: ${accountId}`);
+        return res.status(400).json({ 
+          status: "error", 
+          message: "Invalid accountId format. Expected GUID format.",
+          received: accountId
+        });
+      }
   
-      const barPage = await getBarPageByAccountId(accountId);
-      if (!barPage)
-        return res.status(404).json({ status: "error", message: "Không tìm thấy trang bar cho tài khoản này" });
+      console.log(`[BarPageController] Querying database for accountId: ${accountId}`);
+      const barPage = await getBarPageByAccountId(accountId.trim());
+      
+      if (!barPage) {
+        console.warn(`[BarPageController] BarPage not found for accountId: ${accountId}`);
+        return res.status(404).json({ 
+          status: "error", 
+          message: "Không tìm thấy trang bar cho tài khoản này",
+          accountId: accountId
+        });
+      }
+      
+      console.log(`[BarPageController] BarPage found: ${barPage.BarPageId}`);
 
       // Parse address nếu là JSON
       let address = barPage.Address || "";
@@ -335,8 +368,8 @@ const { createEntityAccount } = require("../models/entityAccountModel");
       if (!barPage)
         return res.status(404).json({ status: "error", message: "Không tìm thấy BarPage" });
 
-      // Get data from body (no file upload in PUT request)
-      const { BarName, barName, address, phoneNumber, email, bio } = req.body || {};
+      // Get data from body (no file upload in PUT request, but can accept URLs)
+      const { BarName, barName, address, phoneNumber, email, bio, avatar: avatarUrl, background: backgroundUrl } = req.body || {};
       const nameToUpdate = BarName || barName;
       
       // Handle address - can be JSON string or plain string
@@ -356,10 +389,14 @@ const { createEntityAccount } = require("../models/entityAccountModel");
         }
       }
 
+      // Handle avatar/background: use URL from body if provided, otherwise keep existing
+      const avatar = (avatarUrl && avatarUrl.trim()) ? avatarUrl.trim() : barPage.Avatar;
+      const background = (backgroundUrl && backgroundUrl.trim()) ? backgroundUrl.trim() : barPage.Background;
+
       const updated = await updateBarPage(barPageId, {
         barName: nameToUpdate,
-        avatar: barPage.Avatar, // Keep existing avatar
-        background: barPage.Background, // Keep existing background
+        avatar,
+        background,
         address: addressToSave || barPage.Address,
         phoneNumber: phoneNumber || barPage.PhoneNumber,
         email: email || barPage.Email,

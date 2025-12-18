@@ -1361,7 +1361,7 @@ class PostController {
   async updatePost(req, res) {
     try {
       const { id } = req.params;
-      const { title, content } = req.body;
+      const { title, content, caption, medias, images, videos } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -1371,17 +1371,42 @@ class PostController {
         });
       }
 
+      // Chuẩn hóa medias từ nhiều nguồn (array trực tiếp hoặc images/videos object)
+      let normalizedMedias = Array.isArray(medias) ? medias.filter(Boolean) : [];
+      if ((!normalizedMedias || normalizedMedias.length === 0) && (images || videos)) {
+        const allMedias = { ...(images || {}), ...(videos || {}) };
+        normalizedMedias = Object.keys(allMedias).map((key) => {
+          const item = allMedias[key];
+          const isVideo = videos && Object.prototype.hasOwnProperty.call(videos, key);
+          const url = item?.url || item?.path || (typeof item === "string" ? item : null);
+          return {
+            id: item?.id || item?._id,
+            url,
+            caption: item?.caption || "",
+            type: item?.type || (isVideo ? "video" : "image")
+          };
+        }).filter((m) => m && m.url);
+      }
+
       // Kiểm tra có ít nhất một field được cập nhật
-      if (!title && !content) {
+      const hasField =
+        title !== undefined ||
+        content !== undefined ||
+        caption !== undefined ||
+        (normalizedMedias && normalizedMedias.length > 0);
+
+      if (!hasField) {
         return res.status(400).json({
           success: false,
-          message: "At least one field (title or content) is required"
+          message: "At least one field (title, content, caption or medias) is required"
         });
       }
 
       const updateData = {};
       if (title !== undefined) updateData.title = title;
       if (content !== undefined) updateData.content = content;
+      if (caption !== undefined) updateData.caption = caption;
+      if (normalizedMedias && normalizedMedias.length >= 0) updateData.medias = normalizedMedias;
 
       // Lấy entityAccountId từ request hoặc từ accountId
       const entityAccountId = req.body.entityAccountId || req.user?.entityAccountId;
@@ -1568,7 +1593,7 @@ class PostController {
   async getPostsByAuthor(req, res) {
     try {
       const { authorId } = req.params;
-      const { limit = 10, cursor = null } = req.query;
+      const { limit = 10, cursor = null, viewerEntityAccountId } = req.query;
 
       if (!authorId) {
         return res.status(400).json({
@@ -1583,10 +1608,10 @@ class PostController {
 
       // Delegate sang PostService để xử lý giống feed (populate medias/music/reposts, enrich author, comments, topComments)
       const viewerAccountId = req.user?.id || null;
-      // Normalize viewerEntityAccountId để đảm bảo so sánh đúng (trim whitespace)
-      const viewerEntityAccountId = req.user?.entityAccountId 
-        ? String(req.user.entityAccountId).trim() 
-        : null;
+      // Ưu tiên viewerEntityAccountId từ query (FE gửi theo activeEntity), fallback JWT
+      const resolvedViewerEntityAccountId = viewerEntityAccountId
+        ? String(viewerEntityAccountId).trim()
+        : (req.user?.entityAccountId ? String(req.user.entityAccountId).trim() : null);
 
       const result = await postService.getPostsByEntityAccountId(entityAccountId, {
         limit: parseInt(limit, 10) || 10,
@@ -1595,7 +1620,7 @@ class PostController {
         includeMusic: true,
         populateReposts: true,
         viewerAccountId,
-        viewerEntityAccountId
+        viewerEntityAccountId: resolvedViewerEntityAccountId
       });
 
       if (!result.success) {
@@ -1711,7 +1736,15 @@ class PostController {
       }
 
       const { page = 1, limit = 10 } = req.query;
-      const result = await postService.getTrashedPosts(entityAccountId, parseInt(page), parseInt(limit));
+      const result = await postService.getTrashedPosts(
+        entityAccountId,
+        parseInt(page),
+        parseInt(limit),
+        {
+          accountId: req.user?.id || null,
+          entityAccountId: req.user?.entityAccountId || null
+        }
+      );
 
       if (result.success) {
         res.status(200).json(result);
@@ -1816,6 +1849,66 @@ class PostController {
     }
   }
 
+  // Admin: Cập nhật post status
+  async updatePostStatusForAdmin(req, res) {
+    try {
+      const { postId } = req.params;
+      const { status } = req.body;
+
+      if (!status) {
+        return res.status(400).json({
+          success: false,
+          message: "Status is required"
+        });
+      }
+
+      const result = await postService.updatePostStatusForAdmin(postId, status);
+
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (err) {
+      console.error('[PostController] updatePostStatusForAdmin error:', err);
+      res.status(500).json({
+        success: false,
+        message: err.message
+      });
+    }
+  }
+
+  // Admin: Lấy tất cả posts (kể cả deleted, trashed, private)
+  async getAllPostsForAdmin(req, res) {
+    try {
+      console.log('[PostController] getAllPostsForAdmin called with query:', req.query);
+      const { page = 1, limit = 10, status, search } = req.query;
+      
+      const result = await postService.getAllPostsForAdmin(
+        parseInt(page),
+        parseInt(limit),
+        { status, search }
+      );
+
+      console.log('[PostController] getAllPostsForAdmin result:', {
+        success: result.success,
+        dataCount: result.data?.length || 0,
+        total: result.pagination?.total || 0
+      });
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(500).json(result);
+      }
+    } catch (err) {
+      console.error('[PostController] getAllPostsForAdmin error:', err);
+      res.status(500).json({
+        success: false,
+        message: err.message
+      });
+    }
+  }
 
 }
 

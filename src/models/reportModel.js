@@ -20,10 +20,75 @@ class ReportModel {
 		return result.recordset[0];
 	}
 
-	static async getAllReports() {
+	static async getReports(filters = {}, pagination = {}) {
+		const {
+			status,
+			targetType,
+			reporterId,
+			search,
+			page = 1,
+			limit = 20,
+		} = filters;
+
+		const offset = (page - 1) * limit;
 		const pool = await getPool();
-		const result = await pool.request().query("SELECT * FROM Reports ORDER BY CreatedAt DESC");
-		return result.recordset;
+		const request = pool.request();
+
+		let where = "1=1";
+
+		if (status) {
+			where += " AND Status = @status";
+			request.input("status", sql.NVarChar(50), status);
+		}
+
+		if (targetType) {
+			where += " AND TargetType = @targetType";
+			request.input("targetType", sql.NVarChar(50), targetType);
+		}
+
+		if (reporterId) {
+			where += " AND ReporterId = @reporterId";
+			request.input("reporterId", sql.UniqueIdentifier, reporterId);
+		}
+
+		if (search) {
+			where += " AND (Reason LIKE @search OR Description LIKE @search)";
+			request.input("search", sql.NVarChar, `%${search}%`);
+		}
+
+		const query = `
+			SELECT *
+			FROM Reports
+			WHERE ${where}
+			ORDER BY CreatedAt DESC
+			OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;
+		`;
+
+		request.input("offset", sql.Int, offset);
+		request.input("limit", sql.Int, limit);
+
+		const result = await request.query(query);
+
+		// Count total
+		const countReq = pool.request();
+		if (status) countReq.input("status", sql.NVarChar(50), status);
+		if (targetType) countReq.input("targetType", sql.NVarChar(50), targetType);
+		if (reporterId) countReq.input("reporterId", sql.UniqueIdentifier, reporterId);
+		if (search) countReq.input("search", sql.NVarChar, `%${search}%`);
+
+		const countQuery = `SELECT COUNT(*) as total FROM Reports WHERE ${where};`;
+		const countRes = await countReq.query(countQuery);
+		const total = countRes.recordset[0]?.total || 0;
+
+		return { items: result.recordset, total };
+	}
+
+	static async getReportById(reportId) {
+		const pool = await getPool();
+		const result = await pool.request()
+			.input("reportId", sql.UniqueIdentifier, reportId)
+			.query("SELECT * FROM Reports WHERE ReportId = @reportId");
+		return result.recordset?.[0] || null;
 	}
 
 	static async getReportsByTarget(targetType, targetId) {

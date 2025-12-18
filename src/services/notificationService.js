@@ -522,13 +522,16 @@ class NotificationService {
       }
 
       // Xác định link dựa trên entityType của sender
+      // ProfilePage expects EntityAccountId, not EntityId (AccountId/BarPageId/etc)
       let link = '/profile';
       if (senderEntityType === 'BarPage' && senderEntityId) {
         link = `/bar/${senderEntityId}`;
       } else if (senderEntityType === 'BusinessAccount' && senderEntityId) {
         link = `/business/${senderEntityId}`;
-      } else if (senderEntityId) {
-        link = `/profile/${senderEntityId}`;
+      } else if (normalizedSenderEntityAccountId) {
+        // For Account type and other types, use EntityAccountId for /profile/ route
+        // ProfilePage expects EntityAccountId, not AccountId (senderEntityId)
+        link = `/profile/${normalizedSenderEntityAccountId}`;
       }
 
       const notification = new Notification({
