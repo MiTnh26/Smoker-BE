@@ -15,7 +15,9 @@ class BookingTableService {
     startTime,
     endTime,
     paymentStatus = "Pending", // "Pending" hoặc "Paid"
-    scheduleStatus = "Confirmed", // "Confirmed" (không cần bar xác nhận)
+    // Ban đầu luôn là "Pending". Chỉ khi thanh toán thành công (Paid)
+    // thì mới được auto-confirmed trong PayOS webhook.
+    scheduleStatus = "Pending",
   }) {
     if (!bookerAccountId || !receiverEntityId) {
       return { success: false, message: "Thiếu bookerAccountId hoặc receiverEntityId" };
@@ -141,10 +143,13 @@ class BookingTableService {
       data.map(async (booking) => {
         if (booking.MongoDetailId) {
           try {
-            const detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
+            const detailScheduleDoc = await DetailSchedule.findById(booking.MongoDetailId);
+            const detailSchedule = detailScheduleDoc 
+              ? (detailScheduleDoc.toObject ? detailScheduleDoc.toObject({ flattenMaps: true }) : detailScheduleDoc)
+              : null;
             return {
               ...booking,
-              detailSchedule: detailSchedule || null,
+              detailSchedule: detailSchedule,
             };
           } catch (error) {
             console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
@@ -187,10 +192,13 @@ class BookingTableService {
       data.map(async (booking) => {
         if (booking.MongoDetailId) {
           try {
-            const detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
+            const detailScheduleDoc = await DetailSchedule.findById(booking.MongoDetailId);
+            const detailSchedule = detailScheduleDoc 
+              ? (detailScheduleDoc.toObject ? detailScheduleDoc.toObject({ flattenMaps: true }) : detailScheduleDoc)
+              : null;
             return {
               ...booking,
-              detailSchedule: detailSchedule || null,
+              detailSchedule: detailSchedule,
             };
           } catch (error) {
             console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);

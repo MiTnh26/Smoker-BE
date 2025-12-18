@@ -245,8 +245,10 @@ class BookingController {
         startTime,
         endTime,
         location,
+        phone,
         note,
-        offeredPrice
+        offeredPrice,
+        slots // Array of slot IDs: [1, 2, 3]
       } = req.body;
 
       if (!requesterEntityAccountId || !performerEntityAccountId) {
@@ -263,24 +265,33 @@ class BookingController {
         });
       }
 
-      // Tạo detailSchedule trong MongoDB cho Location và Note
+      // Tạo detailSchedule trong MongoDB cho Location, Note và Slots
       const DetailSchedule = require("../models/detailSchedule");
       let mongoDetailId = null;
       
-      if (location || note) {
-        try {
-          const detailDoc = await DetailSchedule.create({
-            Location: location || "",
-            Note: note || "",
-            OfferedPrice: offeredPrice || 0,
-            PerformerRole: performerRole,
-            RequesterRole: requesterRole || "Customer",
-          });
-          mongoDetailId = detailDoc._id.toString();
-        } catch (error) {
-          console.error("[BookingController] Error creating detailSchedule:", error);
-          // Continue without detailSchedule if creation fails
-        }
+      // Luôn tạo detailSchedule để lưu thông tin booking (kể cả khi không có location/phone/note)
+      try {
+        const detailDoc = await DetailSchedule.create({
+          Location: location || "",
+          Phone: phone || "",
+          Note: note || "",
+          OfferedPrice: offeredPrice || 0,
+          PerformerRole: performerRole,
+          RequesterRole: requesterRole || "Customer",
+          Slots: Array.isArray(slots) ? slots : [],
+        });
+        mongoDetailId = detailDoc._id.toString();
+        console.log("[BookingController] Created detailSchedule:", {
+          mongoDetailId,
+          hasLocation: !!location,
+          hasPhone: !!phone,
+          phone: phone || "empty",
+          hasNote: !!note,
+          slotsCount: Array.isArray(slots) ? slots.length : 0
+        });
+      } catch (error) {
+        console.error("[BookingController] Error creating detailSchedule:", error);
+        // Continue without detailSchedule if creation fails
       }
 
       // Tạo booking với status "Pending" (chờ xác nhận)
@@ -466,6 +477,155 @@ class BookingController {
       return res.status(500).json({
         success: false,
         message: "Error creating payment link",
+        error: error.message
+      });
+    }
+  }
+
+  // GET /api/booking/:id/get-payment-link - Lấy payment link từ bookingId (tái sử dụng nếu có)
+  async getPaymentLink(req, res) {
+    try {
+      const { id } = req.params; // BookedScheduleId
+      const payosService = require("../services/payosService");
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+      const { getPool, sql } = require("../db/sqlserver");
+
+      // Lấy booking
+      const booking = await bookedScheduleModel.getBookedScheduleById(id);
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: "Booking not found"
+        });
+      }
+
+      // Kiểm tra nếu đã thanh toán cọc
+      if (booking.PaymentStatus === "Paid") {
+        return res.status(400).json({
+          success: false,
+          message: "Booking deposit already paid"
+        });
+      }
+
+      const pool = await getPool();
+      
+      // Kiểm tra xem có orderCode trong BookingPayments không
+      let existingOrderCode = null;
+      try {
+        const orderCodeResult = await pool.request()
+          .input("BookedScheduleId", sql.UniqueIdentifier, id)
+          .query(`
+            SELECT TOP 1 OrderCode 
+            FROM BookingPayments 
+            WHERE BookedScheduleId = @BookedScheduleId
+            ORDER BY CreatedAt DESC
+          `);
+        
+        if (orderCodeResult.recordset.length > 0) {
+          existingOrderCode = orderCodeResult.recordset[0].OrderCode;
+          console.log("[BookingController] Found existing orderCode:", existingOrderCode);
+          
+          // Thử lấy paymentUrl từ PayOS
+          try {
+            const paymentInfo = await payosService.getPaymentInfo(existingOrderCode);
+            if (paymentInfo.success && paymentInfo.data) {
+              const paymentData = paymentInfo.data;
+              const status = paymentData.status || paymentData.Status;
+              
+              // Nếu payment link còn hợp lệ (chưa thanh toán), trả về paymentUrl
+              if (status !== "PAID" && status !== "paid" && paymentData.checkoutUrl) {
+                console.log("[BookingController] Reusing existing payment link");
+                return res.status(200).json({
+                  success: true,
+                  data: {
+                    paymentUrl: paymentData.checkoutUrl || paymentData.paymentUrl,
+                    orderCode: existingOrderCode,
+                    bookingId: id
+                  },
+                  message: "Payment link retrieved successfully"
+                });
+              }
+            }
+          } catch (payosError) {
+            console.log("[BookingController] Cannot reuse payment link, creating new one:", payosError.message);
+          }
+        }
+      } catch (dbError) {
+        console.error("[BookingController] Error checking existing orderCode:", dbError);
+      }
+
+      // Nếu không có orderCode hoặc payment link đã hết hạn, tạo mới
+      const deposit = 50000; // DJ/Dancer: tiền cọc cố định 50k
+
+      // Tạo orderCode mới
+      const orderCode = Date.now();
+
+      // Tạo PayOS payment link
+      const frontendUrl = process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:3000';
+      const returnUrl = `${frontendUrl}/payment-return?type=booking&bookingId=${id}&orderCode=${orderCode}`;
+      const cancelUrl = `${frontendUrl}/customer/newsfeed`;
+
+      const description = `Coc booking ${booking.Type || 'Performer'}`.substring(0, 25);
+
+      const paymentData = {
+        amount: parseInt(deposit),
+        orderCode: orderCode,
+        description: description,
+        returnUrl: returnUrl,
+        cancelUrl: cancelUrl
+      };
+
+      const payosResult = await payosService.createPayment(paymentData);
+      const actualOrderCode = payosResult.orderCode || orderCode;
+
+      // Lưu orderCode mới vào database
+      try {
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'BookingPayments')
+          BEGIN
+            CREATE TABLE BookingPayments (
+              Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+              BookedScheduleId UNIQUEIDENTIFIER NOT NULL,
+              OrderCode BIGINT NOT NULL UNIQUE,
+              CreatedAt DATETIME DEFAULT GETDATE(),
+              FOREIGN KEY (BookedScheduleId) REFERENCES BookedSchedules(BookedScheduleId)
+            );
+            CREATE INDEX IX_BookingPayments_OrderCode ON BookingPayments(OrderCode);
+          END
+        `);
+        
+        // Xóa orderCode cũ nếu có, rồi insert mới
+        await pool.request()
+          .input("BookedScheduleId", sql.UniqueIdentifier, id)
+          .query(`
+            DELETE FROM BookingPayments WHERE BookedScheduleId = @BookedScheduleId
+          `);
+        
+        await pool.request()
+          .input("BookedScheduleId", sql.UniqueIdentifier, id)
+          .input("OrderCode", sql.BigInt, actualOrderCode)
+          .query(`
+            INSERT INTO BookingPayments (BookedScheduleId, OrderCode)
+            VALUES (@BookedScheduleId, @OrderCode)
+          `);
+      } catch (dbError) {
+        console.error("[BookingController] Error saving orderCode:", dbError);
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          paymentUrl: payosResult.paymentUrl,
+          orderCode: actualOrderCode,
+          bookingId: id
+        },
+        message: "Payment link created successfully"
+      });
+    } catch (error) {
+      console.error("[BookingController] getPaymentLink error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error getting payment link",
         error: error.message
       });
     }

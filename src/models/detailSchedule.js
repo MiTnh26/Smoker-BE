@@ -26,6 +26,11 @@ const detailScheduleSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    // Số điện thoại cho DJ/Dancer booking
+    Phone: {
+      type: String,
+      default: "",
+    },
     // Giá đề xuất cho DJ/Dancer booking
     OfferedPrice: {
       type: Number,
@@ -40,6 +45,11 @@ const detailScheduleSchema = new mongoose.Schema(
     RequesterRole: {
       type: String,
       default: "",
+    },
+    // Slots đã chọn cho DJ/Dancer booking (array of numbers: [1, 2, 3])
+    Slots: {
+      type: [Number],
+      default: [],
     },
   },
   {

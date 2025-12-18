@@ -4,6 +4,71 @@ const { getPool, sql } = require("../db/sqlserver");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 
 class MediaDetailService {
+  async fetchAuthorInfo(entityAccountId) {
+    if (!entityAccountId) return null;
+    try {
+      const pool = await getPool();
+      const request = pool.request();
+      request.input("EntityAccountId", sql.UniqueIdentifier, entityAccountId);
+      const result = await request.query(`
+        SELECT 
+          EA.EntityAccountId,
+          EA.EntityType,
+          EA.EntityId,
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.UserName
+            WHEN EA.EntityType = 'BarPage' THEN BP.BarName
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
+            ELSE NULL
+          END AS UserName,
+          CASE 
+            WHEN EA.EntityType = 'Account' THEN A.Avatar
+            WHEN EA.EntityType = 'BarPage' THEN BP.Avatar
+            WHEN EA.EntityType = 'BusinessAccount' THEN BA.Avatar
+            ELSE NULL
+          END AS Avatar
+        FROM EntityAccounts EA
+        LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
+        LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
+        LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
+        WHERE EA.EntityAccountId = @EntityAccountId
+      `);
+      const row = result?.recordset?.[0];
+      if (!row) return null;
+      return {
+        authorName: row.UserName || "Người dùng",
+        authorAvatar: row.Avatar || null,
+        authorEntityAccountId: String(row.EntityAccountId).trim(),
+        authorEntityId: row.EntityId ? String(row.EntityId).trim() : null,
+        authorEntityType: row.EntityType || null,
+      };
+    } catch (error) {
+      console.warn("[MediaDetailService] Failed to fetch author info:", error.message);
+      return null;
+    }
+  }
+
+  async enrichAuthor(mediaData) {
+    if (!mediaData) return;
+    let entityAccountId = mediaData.entityAccountId || mediaData.authorEntityAccountId;
+    if (!entityAccountId && mediaData.accountId) {
+      try {
+        entityAccountId = await getEntityAccountIdByAccountId(mediaData.accountId);
+      } catch (err) {
+        console.warn("[MediaDetailService] Cannot resolve EntityAccountId from accountId:", err.message);
+      }
+    }
+    if (!entityAccountId) return;
+    const info = await this.fetchAuthorInfo(entityAccountId);
+    if (info) {
+      mediaData.authorName = mediaData.authorName || info.authorName;
+      mediaData.authorAvatar = mediaData.authorAvatar || info.authorAvatar;
+      mediaData.authorEntityAccountId = mediaData.authorEntityAccountId || info.authorEntityAccountId;
+      mediaData.authorEntityId = mediaData.authorEntityId || info.authorEntityId;
+      mediaData.authorEntityType = mediaData.authorEntityType || info.authorEntityType;
+    }
+  }
+
   /**
    * Lấy chi tiết media với đầy đủ thông tin (comments với author info)
    * Khác với mediaController.getMediaById - enrich comments với author info
@@ -71,6 +136,9 @@ class MediaDetailService {
         // Enrich comments with author info from SQL Server
         await this.enrichCommentsWithAuthorInfo(mediaData.comments);
       }
+
+      // Enrich media author info
+      await this.enrichAuthor(mediaData);
 
       return {
         success: true,
@@ -156,6 +224,9 @@ class MediaDetailService {
         // Enrich comments with author info from SQL Server
         await this.enrichCommentsWithAuthorInfo(mediaData.comments);
       }
+
+      // Enrich media author info
+      await this.enrichAuthor(mediaData);
 
       return {
         success: true,

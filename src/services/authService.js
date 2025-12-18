@@ -33,7 +33,24 @@ function buildUserResponse(user) {
 
 
 
-// Register bình thường
+// Pre-check register: validate input & check email tồn tại nhưng KHÔNG tạo tài khoản
+async function precheckRegisterService(email, password, confirmPassword) {
+  if (!isValidEmail(email)) throw new Error("Email phải là Gmail hợp lệ");
+  if (!isValidPassword(password)) throw new Error("Mật khẩu không hợp lệ");
+  if (password !== confirmPassword) throw new Error("Xác nhận mật khẩu không khớp");
+
+  const existing = await accountModel.findAccountByEmail(email);
+  if (existing) {
+    const err = new Error("Email đã tồn tại");
+    err.code = 409;
+    throw err;
+  }
+
+  // Không tạo tài khoản ở đây, chỉ báo OK để FE hiển thị popup 18+
+  return true;
+}
+
+// Register bình thường (thực sự tạo tài khoản, gọi sau khi user xác nhận 18+)
 async function registerService(email, password, confirmPassword) {
   if (!isValidEmail(email)) throw new Error("Email phải là Gmail hợp lệ");
   if (!isValidPassword(password)) throw new Error("Mật khẩu không hợp lệ");
@@ -293,6 +310,7 @@ async function resetPasswordService(email, newPassword, confirmPassword) {
   return true;
 }
 module.exports = {
+  precheckRegisterService,
   registerService,
   googleRegisterService,
   loginService,
