@@ -49,5 +49,6 @@ router.get("/getall", EventController.getAll);
 router.get("/search", EventController.search);
 router.get("/bars-with-events", EventController.getBarsWithNewEvents);
 router.get("/feed", EventController.getEventsWithBarRating);
+router.get("/ongoing-upcoming", EventController.getOngoingAndUpcomingEvents);
 
 module.exports = router;
