@@ -259,6 +259,18 @@ async function getEventsWithBarRating(req, res) {
   }
 }
 
+// GET /api/events/ongoing-upcoming?hours=168&skip=0&take=20
+// Lấy events đang và sắp diễn ra, sắp xếp theo average rating của bar (giảm dần)
+async function getOngoingAndUpcomingEvents(req, res) {
+  try {
+    const result = await EventService.getOngoingAndUpcomingEvents(req.query);
+    res.status(result.statusCode || 200).json(result);
+  } catch (e) {
+    console.error("getOngoingAndUpcomingEvents error:", e);
+    res.status(500).json(error("Lỗi máy chủ"));
+  }
+}
+
 module.exports = {
   getByBar,
   toggleStatus,
@@ -270,4 +282,5 @@ module.exports = {
   search,
   getBarsWithNewEvents,
   getEventsWithBarRating,
+  getOngoingAndUpcomingEvents,
 };
