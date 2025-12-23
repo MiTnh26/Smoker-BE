@@ -5,6 +5,16 @@ const { barPageController } = require("../controllers");
 const { createCloudinaryUpload } = require("../middleware/uploadCloudinary");
 const { verifyToken, requireActiveEntity } = require("../middleware/authMiddleware");
 
+// Debug middleware để log tất cả requests
+router.use((req, res, next) => {
+  console.log(`[BarPageRoutes] ${req.method} ${req.path}`, {
+    originalUrl: req.originalUrl,
+    params: req.params,
+    query: req.query
+  });
+  next();
+});
+
 // 1) Tạo mới trang Bar (có thể có hoặc không upload file)
 router.post("/register", verifyToken, barPageController.registerBarPage);
 
@@ -12,7 +22,11 @@ router.post("/register", verifyToken, barPageController.registerBarPage);
 router.get("/", barPageController.getFeaturedBars);
 
 // 2) Lấy danh sách hoặc thông tin chi tiết
-router.get("/account/:accountId", barPageController.getBarPageByAccountId);
+// QUAN TRỌNG: Route này PHẢI được đặt TRƯỚC route /:barPageId để tránh conflict
+router.get("/account/:accountId", (req, res, next) => {
+  console.log(`[BarPageRoutes] Matched /account/:accountId route with accountId: ${req.params.accountId}`);
+  next();
+}, barPageController.getBarPageByAccountId);
 
 // IMPORTANT: Place specific routes before parameterized routes to avoid conflicts
 // For example, if there's a /dashboard route, it should be here before /:barPageId

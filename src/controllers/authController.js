@@ -16,6 +16,18 @@ async function register(req, res) {
   }
 }
 
+// Pre-check đăng ký: chỉ validate + check email tồn tại, KHÔNG tạo tài khoản
+async function precheckRegister(req, res) {
+  try {
+    const { email, password, confirmPassword } = req.body;
+    await authService.precheckRegisterService(email, password, confirmPassword);
+    return res.json({ message: "OK" });
+  } catch (err) {
+    const status = err.code === 409 ? 409 : 400;
+    return res.status(status).json({ message: err.message || "Đăng ký thất bại" });
+  }
+}
+
 async function googleRegister(req, res) {
   try {
     const { email } = req.body || {};
@@ -168,6 +180,7 @@ async function resetPassword(req, res) {
 
 
 module.exports = {
+  precheckRegister,
   register,
   googleRegister,
   login,
