@@ -96,7 +96,13 @@ class ReviveSyncService {
             }
           }
         } catch (dbError) {
-          console.warn(`[ReviveSyncService] DB query failed, trying alternative method:`, dbError.message);
+          // Log chi tiết hơn về lỗi kết nối
+          if (dbError.code === 'ECONNREFUSED') {
+            console.warn(`[ReviveSyncService] DB connection refused. Check if MySQL server is running at ${this.reviveDbConfig.host}:${this.reviveDbConfig.port}`);
+            console.warn(`[ReviveSyncService] DB query failed, trying alternative method`);
+          } else {
+            console.warn(`[ReviveSyncService] DB query failed, trying alternative method:`, dbError.message);
+          }
         }
       }
       
@@ -209,6 +215,12 @@ class ReviveSyncService {
    */
   async getBannerStatsFromDB(bannerId, startDate = null, endDate = null) {
     if (!this.reviveDbConfig) {
+      return null;
+    }
+
+    // Kiểm tra cấu hình đầy đủ trước khi kết nối
+    if (!this.reviveDbConfig.host || !this.reviveDbConfig.user || !this.reviveDbConfig.password) {
+      console.warn(`[ReviveSyncService] Revive DB config incomplete. Missing: ${!this.reviveDbConfig.host ? 'host' : ''} ${!this.reviveDbConfig.user ? 'user' : ''} ${!this.reviveDbConfig.password ? 'password' : ''}`);
       return null;
     }
 

@@ -212,6 +212,47 @@ async update(eventId, payload) {
         }
       }))
     });
+  },
+
+  async getOngoingAndUpcomingEvents(reqQuery) {
+    const hoursFromNow = Number.parseInt(reqQuery.hours || "168", 10); // Mặc định 7 ngày
+    const skip = Math.max(Number.parseInt(reqQuery.skip ?? "0", 10), 0);
+    const take = Math.min(Math.max(Number.parseInt(reqQuery.take ?? "20", 10), 1), 100);
+
+    const [items, total] = await Promise.all([
+      EventFeedModel.getOngoingAndUpcomingEvents({ hoursFromNow, skip, take }),
+      EventFeedModel.getOngoingAndUpcomingEventsCount({ hoursFromNow })
+    ]);
+
+    return success("Lấy danh sách events đang và sắp diễn ra thành công", {
+      total,
+      items: items.map(event => ({
+        eventId: String(event.EventId),
+        barPageId: String(event.BarPageId),
+        eventName: event.EventName,
+        description: event.Description,
+        picture: event.Picture,
+        startTime: event.StartTime,
+        endTime: event.EndTime,
+        status: event.Status,
+        eventStatus: event.EventStatus, // 'ongoing' hoặc 'upcoming'
+        createdAt: event.CreatedAt,
+        updatedAt: event.UpdatedAt,
+        bar: {
+          barPageId: String(event.BarPageId),
+          barName: event.BarName,
+          avatar: event.BarAvatar,
+          background: event.BarBackground,
+          address: event.BarAddress,
+          phoneNumber: event.BarPhone,
+          email: event.BarEmail,
+          role: event.BarRole,
+          entityAccountId: event.EntityAccountId ? String(event.EntityAccountId) : null,
+          reviewCount: event.BarReviewCount || 0,
+          averageRating: event.BarAverageRating != null ? Number(event.BarAverageRating.toFixed(1)) : null
+        }
+      }))
+    });
   }
 };
 
