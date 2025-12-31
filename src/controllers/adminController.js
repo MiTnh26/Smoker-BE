@@ -104,6 +104,16 @@ async function updateUserStatus(req, res) {
 
 async function updateUserRole(req, res) {
   try {
+    // Kiểm tra xem user hiện tại có phải là Manager (từ bảng Managers) không
+    // Manager không được phép đổi role
+    const userType = req.user?.type; // "manager" hoặc undefined
+    if (userType === "manager") {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Manager không được phép đổi role của người dùng" 
+      });
+    }
+
     const { id } = req.params;
     const { role } = req.body || {};
     if (!role) return res.status(400).json({ success: false, message: "role is required" });
