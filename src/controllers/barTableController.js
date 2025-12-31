@@ -10,18 +10,30 @@ const { getTableClassificationById } = require("../models/tableClassificationMod
 exports.getBarTables = async (req, res) => {
   try {
     const { barPageId } = req.params;
-    if (!barPageId)
+    if (!barPageId) {
       return res.status(400).json({ status: "error", message: "Thiếu barPageId" });
+    }
+
+    // Validate GUID format
+    const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!guidRegex.test(barPageId)) {
+      return res.status(400).json({ status: "error", message: "barPageId không hợp lệ" });
+    }
 
     // Lấy tất cả bàn kèm thông tin loại bàn
     const tables = await getBarTablesByBarId(barPageId);
     console.log("getBarTablesByBarId result:", tables); 
 
     // Không cần map thêm nữa vì đã có TableTypeName & Color
-    return res.status(200).json({ status: "success", data: tables });
+    return res.status(200).json({ status: "success", data: tables || [] });
   } catch (err) {
     console.error("getBarTables error:", err);
-    return res.status(500).json({ status: "error", message: err.message || "Lỗi máy chủ" });
+    console.error("Error stack:", err.stack);
+    return res.status(500).json({ 
+      status: "error", 
+      message: err.message || "Lỗi máy chủ",
+      details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 };
 
@@ -58,13 +70,13 @@ exports.getBarTable = async (req, res) => {
 // Tạo bàn mới
 exports.createBarTable = async (req, res) => {
   try {
-    const { barId, tableApplyId = null, tableName, depositPrice = 0, status = "Active", tableClassificationId } = req.body;
+    const { barId, tableName, status = "Active", tableClassificationId } = req.body;
 
     if (!barId || !tableName || !tableClassificationId)
       return res.status(400).json({ status: "error", message: "Thiếu dữ liệu bắt buộc" });
 
-    const newTable = await createBarTable({ barId, tableApplyId, tableName, depositPrice, status, tableClassificationId });
-    console.log("Created new table:", newTable); //
+    const newTable = await createBarTable({ barId, tableName, status, tableClassificationId });
+    console.log("Created new table:", newTable);
     return res.status(201).json({ status: "success", data: newTable });
   } catch (err) {
     console.error("createBarTable error:", err);
@@ -93,7 +105,6 @@ exports.createMultipleBarTables = async (req, res) => {
         barId: barPageId,
         tableName,
         tableClassificationId,
-        depositPrice: 0,
         status: "Active"
       });
       results.push(newTable);
@@ -111,12 +122,12 @@ exports.createMultipleBarTables = async (req, res) => {
 exports.updateBarTable = async (req, res) => {
   try {
     const { barTableId } = req.params;
-    const { tableName, depositPrice, status, tableClassificationId, tableApplyId } = req.body;
+    const { tableName, status, tableClassificationId } = req.body;
 
     if (!barTableId)
       return res.status(400).json({ status: "error", message: "Thiếu barTableId" });
 
-    const updated = await updateBarTable(barTableId, { tableName, depositPrice, status, tableClassificationId, tableApplyId });
+    const updated = await updateBarTable(barTableId, { tableName, status, tableClassificationId });
     return res.status(200).json({ status: "success", data: updated });
   } catch (err) {
     console.error("updateBarTable error:", err);
