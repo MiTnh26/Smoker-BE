@@ -8,6 +8,7 @@ const readline = require("readline");
 require("dotenv").config();
 const { getPool } = require("../db/sqlserver");
 const { adminExists, createAdmin } = require("../utils/adminSetup");
+const { managerExists } = require("../models/managerModel");
 
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -35,9 +36,9 @@ async function ensureConnection() {
     process.exit(1);
   }
 
-  const exists = await adminExists(email);
+  const exists = await managerExists(email);
   if (exists) {
-    console.log("ℹ️ Admin already exists for:", email);
+    console.log("ℹ️ Manager already exists for:", email);
     process.exit(0);
   }
 

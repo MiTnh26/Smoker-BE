@@ -1,16 +1,11 @@
-const bcrypt = require("bcryptjs");
-const { getPool, sql } = require("../db/sqlserver");
+const { getManagerByEmail, createManager, managerExists } = require("../models/managerModel");
 
 /**
  * Check if admin exists with given email
  */
 async function adminExists(email) {
   try {
-    const pool = await getPool();
-    const res = await pool.request()
-      .input("Email", sql.NVarChar(100), email)
-      .query("SELECT TOP 1 AccountId FROM Accounts WHERE Email = @Email AND Role = 'Admin'");
-    return res.recordset.length > 0;
+    return await managerExists(email);
   } catch (error) {
     console.error("❌ Error checking admin existence:", error.message);
     return false;
@@ -18,43 +13,28 @@ async function adminExists(email) {
 }
 
 /**
- * Create an admin account
+ * Create an admin account (tạo vào bảng Managers)
  */
-async function createAdmin({ email, password, userName = "Admin" }) {
+async function createAdmin({ email, password, userName = "Admin", phone = null }) {
   try {
-    const pool = await getPool();
-
     // Check duplicate email
-    const dup = await pool.request()
-      .input("Email", sql.NVarChar(100), email)
-      .query("SELECT TOP 1 AccountId, Role FROM Accounts WHERE Email = @Email");
-    
-    if (dup.recordset.length) {
-      const existingRole = dup.recordset[0].Role;
-      if (String(existingRole).toLowerCase() === "admin") {
-        console.log("ℹ️  Admin already exists with this email. Nothing to do.");
-        return null;
-      }
+    const exists = await managerExists(email);
+    if (exists) {
+      console.log("ℹ️  Manager already exists with this email. Nothing to do.");
+      return null;
     }
 
-    const hashed = await bcrypt.hash(password, 10);
-    const insert = await pool.request()
-      .input("Email", sql.NVarChar(100), email)
-      .input("Password", sql.NVarChar(100), hashed)
-      .input("Role", sql.NVarChar(50), "Admin")
-      .input("UserName", sql.NVarChar(100), userName)
-      .input("Status", sql.NVarChar(20), "active")
-      .query(`
-        INSERT INTO Accounts (Email, Password, Role, UserName, Status)
-        OUTPUT inserted.AccountId, inserted.Email, inserted.UserName, inserted.Role
-        VALUES (@Email, @Password, @Role, @UserName, @Status)
-      `);
+    const created = await createManager({
+      email,
+      password,
+      role: "Admin", // Có thể là "Admin" hoặc "Accountant"
+      phone
+    });
 
-    const created = insert.recordset[0];
-    console.log("✅ Admin created:", created.Email, "| role:", created.Role);
+    console.log("✅ Manager created:", created.Email, "| role:", created.Role);
     return created;
   } catch (error) {
-    console.error("❌ Error creating admin:", error.message);
+    console.error("❌ Error creating manager:", error.message);
     throw error;
   }
 }
