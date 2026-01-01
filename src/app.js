@@ -38,6 +38,10 @@ const {
   reviveMaintenanceRoutes,
 } = require("./routes");
 
+const walletRoutes = require("./routes/walletRoutes");
+const adminWalletRoutes = require("./routes/adminWalletRoutes");
+const managerAuthRoutes = require("./routes/managerAuthRoutes");
+
 
 const userReviewRoutes = require('./routes/userReviewRoutes');
 const barReviewRoutes = require('./routes/barReviewRoutes');
@@ -166,6 +170,7 @@ app.use("/api/bar", barPageRoutes);
 app.use("/api/table-classification", tableClassificationRoutes);
 app.use("/api/bar-table", barTableRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/manager-auth", managerAuthRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/business", businessRoutes);
 app.use("/api/events", eventRoutes);
@@ -195,6 +200,8 @@ app.use("/api/event-advertisements", require("./routes/eventAdvertisementRoutes"
 app.use("/api/feed", feedRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/revive/maintenance", reviveMaintenanceRoutes);
+app.use("/api/wallet", walletRoutes);
+app.use("/api/admin", adminWalletRoutes);
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);

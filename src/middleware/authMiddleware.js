@@ -33,9 +33,16 @@ function optionalVerifyToken(req, res, next) {
 
 function requireAdmin(req, res, next) {
   if (!req.user) return res.status(401).json({ status: "error", message: "Unauthenticated" });
+  
+  // Cho phép Manager hoặc Admin (từ Accounts với Role = 'Admin')
+  const userType = req.user.type; // "manager" hoặc undefined (user)
   const role = String(req.user.role || "").toLowerCase();
-  if (role !== "admin") return res.status(403).json({ status: "error", message: "Admin only" });
-  next();
+  
+  if (userType === "manager" || role === "admin") {
+    return next();
+  }
+  
+  return res.status(403).json({ status: "error", message: "Admin/Manager only" });
 }
 
 async function requireActiveEntity(req, res, next) {

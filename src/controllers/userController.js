@@ -24,6 +24,7 @@ async function me(req, res) {
             provinceId: parsed.provinceId || null,
             districtId: parsed.districtId || null,
             wardId: parsed.wardId || null,
+            detail: parsed.detail || null,
             fullAddress: parsed.fullAddress || ""
           };
           address = parsed.fullAddress || parsed.detail || address;
@@ -263,6 +264,7 @@ async function updateProfile(req, res) {
             provinceId: parsed.provinceId || null,
             districtId: parsed.districtId || null,
             wardId: parsed.wardId || null,
+            detail: parsed.detail || null,
             fullAddress: parsed.fullAddress || ""
           };
           parsedAddress = parsed.fullAddress || parsed.detail || parsedAddress;

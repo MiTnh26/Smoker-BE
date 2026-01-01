@@ -12,11 +12,8 @@ router.post("/", bankInfoController.createBankInfo);
 // 📖 Lấy BankInfo theo ID
 router.get("/:bankInfoId", bankInfoController.getBankInfoById);
 
-// 📖 Lấy BankInfo theo AccountId
+// 📖 Lấy BankInfo theo AccountId (backward compatibility - convert AccountId → EntityAccountId)
 router.get("/account/:accountId", bankInfoController.getBankInfoByAccountId);
-
-// 📖 Lấy BankInfo theo BarPageId
-router.get("/bar/:barPageId", bankInfoController.getBankInfoByBarPageId);
 
 // ✏️ Cập nhật BankInfo
 router.put("/:bankInfoId", bankInfoController.updateBankInfo);
