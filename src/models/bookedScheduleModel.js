@@ -13,7 +13,10 @@ async function createBookedSchedule({
   bookerId,
   receiverId,
   type,
+  originalPrice = 0,
   totalAmount = 0,
+  discountPercentages = 0,
+  voucherId = null,
   paymentStatus = "Pending",
   scheduleStatus = "Upcoming",
   bookingDate = null,
@@ -26,7 +29,10 @@ async function createBookedSchedule({
     .input("BookerId", sql.UniqueIdentifier, bookerId)
     .input("ReceiverId", sql.UniqueIdentifier, receiverId)
     .input("Type", sql.NVarChar(100), type)
+    .input("OriginalPrice", sql.Int, originalPrice || 0)
     .input("TotalAmount", sql.Int, totalAmount || 0)
+    .input("DiscountPercentages", sql.Int, discountPercentages || 0)
+    .input("VoucherId", sql.UniqueIdentifier, voucherId || null)
     .input("PaymentStatus", sql.NVarChar(20), paymentStatus)
     .input("ScheduleStatus", sql.NVarChar(20), scheduleStatus)
     .input("BookingDate", sql.DateTime, toDateOrNull(bookingDate))
@@ -38,7 +44,10 @@ async function createBookedSchedule({
         BookerId,
         ReceiverId,
         Type,
+        OriginalPrice,
         TotalAmount,
+        DiscountPercentages,
+        VoucherId,
         PaymentStatus,
         ScheduleStatus,
         BookingDate,
@@ -51,19 +60,27 @@ async function createBookedSchedule({
         inserted.BookerId,
         inserted.ReceiverId,
         inserted.Type,
+        inserted.OriginalPrice,
         inserted.TotalAmount,
+        inserted.DiscountPercentages,
+        inserted.VoucherId,
         inserted.PaymentStatus,
         inserted.ScheduleStatus,
         inserted.BookingDate,
         inserted.StartTime,
         inserted.EndTime,
         inserted.MongoDetailId,
+        inserted.ReviewStatus,
+        inserted.RefundStatus,
         inserted.created_at
       VALUES (
         @BookerId,
         @ReceiverId,
         @Type,
+        @OriginalPrice,
         @TotalAmount,
+        @DiscountPercentages,
+        @VoucherId,
         @PaymentStatus,
         @ScheduleStatus,
         @BookingDate,
@@ -82,22 +99,38 @@ async function getBookedScheduleById(bookedScheduleId) {
     .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
     .query(`
       SELECT
-        BookedScheduleId,
-        BookerId,
-        ReceiverId,
-        Type,
-        TotalAmount,
-        PaymentStatus,
-        ScheduleStatus,
-        BookingDate,
-        StartTime,
-        EndTime,
-        MongoDetailId,
-        ReviewStatus,
-        RefundStatus,
-        created_at
-      FROM BookedSchedules
-      WHERE BookedScheduleId = @BookedScheduleId;
+        bs.*,
+        v.VoucherName,
+        v.VoucherCode,
+        v.DiscountPercentage,
+        CASE
+          WHEN bs.Type = 'business' THEN ba.UserName
+          ELSE a.UserName
+        END AS BookerName,
+        CASE
+          WHEN bs.Type = 'business' THEN ba.Avatar
+          ELSE a.Avatar
+        END AS BookerAvatar,
+        CASE
+          WHEN bs.Type = 'business' THEN ba2.UserName
+          ELSE a2.UserName
+        END AS ReceiverName,
+        CASE
+          WHEN bs.Type = 'business' THEN ba2.Avatar
+          ELSE a2.Avatar
+        END AS ReceiverAvatar,
+        bp.BarName,
+        bp.Address AS BarAddress
+      FROM BookedSchedules bs
+      LEFT JOIN Vouchers v ON bs.VoucherId = v.VoucherId
+      LEFT JOIN EntityAccounts ea ON bs.BookerId = ea.EntityAccountId
+      LEFT JOIN Accounts a ON ea.AccountId = a.AccountId
+      LEFT JOIN BussinessAccounts ba ON bs.BookerId = ba.BussinessAccountId
+      LEFT JOIN EntityAccounts ea2 ON bs.ReceiverId = ea2.EntityAccountId
+      LEFT JOIN Accounts a2 ON ea2.AccountId = a2.AccountId
+      LEFT JOIN BussinessAccounts ba2 ON bs.ReceiverId = ba2.BussinessAccountId
+      LEFT JOIN BarPages bp ON bs.ReceiverId = bp.BarPageId
+      WHERE bs.BookedScheduleId = @BookedScheduleId;
     `);
 
   return result.recordset[0] || null;
@@ -111,23 +144,28 @@ async function getBookedSchedulesByBooker(bookerId, { limit = 50, offset = 0 } =
     .input("Offset", sql.Int, offset)
     .query(`
       SELECT
-        BookedScheduleId,
-        BookerId,
-        ReceiverId,
-        Type,
-        TotalAmount,
-        PaymentStatus,
-        ScheduleStatus,
-        BookingDate,
-        StartTime,
-        EndTime,
-        MongoDetailId,
-        ReviewStatus,
-        RefundStatus,
-        created_at
-      FROM BookedSchedules
-      WHERE BookerId = @BookerId
-      ORDER BY created_at DESC
+        bs.*,
+        v.VoucherName,
+        v.VoucherCode,
+        v.DiscountPercentage,
+        CASE
+          WHEN bs.Type = 'business' THEN ba.UserName
+          ELSE a.UserName
+        END AS ReceiverName,
+        CASE
+          WHEN bs.Type = 'business' THEN ba.Avatar
+          ELSE a.Avatar
+        END AS ReceiverAvatar,
+        bp.BarName,
+        bp.Address AS BarAddress
+      FROM BookedSchedules bs
+      LEFT JOIN Vouchers v ON bs.VoucherId = v.VoucherId
+      LEFT JOIN EntityAccounts ea ON bs.ReceiverId = ea.EntityAccountId
+      LEFT JOIN Accounts a ON ea.AccountId = a.AccountId
+      LEFT JOIN BussinessAccounts ba ON bs.ReceiverId = ba.BussinessAccountId
+      LEFT JOIN BarPages bp ON bs.ReceiverId = bp.BarPageId
+      WHERE bs.BookerId = @BookerId
+      ORDER BY bs.created_at DESC
       OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY;
     `);
 
@@ -158,23 +196,25 @@ async function getBookedSchedulesByReceiver(receiverId, { limit = 50, offset = 0
 
   const result = await request.query(`
       SELECT
-        BookedScheduleId,
-        BookerId,
-        ReceiverId,
-        Type,
-        TotalAmount,
-        PaymentStatus,
-        ScheduleStatus,
-        BookingDate,
-        StartTime,
-        EndTime,
-        MongoDetailId,
-        ReviewStatus,
-        RefundStatus,
-        created_at
-      FROM BookedSchedules
-      ${whereClause}
-      ORDER BY created_at DESC
+        bs.*,
+        v.VoucherName,
+        v.VoucherCode,
+        v.DiscountPercentage,
+        CASE
+          WHEN bs.Type = 'business' THEN ba.UserName
+          ELSE a.UserName
+        END AS BookerName,
+        CASE
+          WHEN bs.Type = 'business' THEN ba.Avatar
+          ELSE a.Avatar
+        END AS BookerAvatar
+      FROM BookedSchedules bs
+      LEFT JOIN Vouchers v ON bs.VoucherId = v.VoucherId
+      LEFT JOIN EntityAccounts ea ON bs.BookerId = ea.EntityAccountId
+      LEFT JOIN Accounts a ON ea.AccountId = a.AccountId
+      LEFT JOIN BussinessAccounts ba ON bs.BookerId = ba.BussinessAccountId
+      ${whereClause.replace('ReceiverId = @ReceiverId', 'bs.ReceiverId = @ReceiverId')}
+      ORDER BY bs.BookingDate DESC
       OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY;
     `);
 
@@ -473,6 +513,166 @@ async function deleteBookedSchedule(bookedScheduleId) {
     `);
 }
 
+/**
+ * Áp dụng voucher cho booking và tính toán giá cuối cùng
+ */
+async function applyVoucherToBooking(bookedScheduleId, voucherCode) {
+  const pool = await getPool();
+
+  // Kiểm tra voucher hợp lệ
+  const voucher = await pool.request()
+    .input("VoucherCode", sql.NVarChar(50), voucherCode)
+    .query(`
+      SELECT * FROM Vouchers
+      WHERE VoucherCode = @VoucherCode
+        AND Status = 'ACTIVE'
+        AND GETDATE() BETWEEN StartDate AND EndDate
+        AND UsedCount < MaxUsage
+    `);
+
+  if (voucher.recordset.length === 0) {
+    throw new Error("Voucher không hợp lệ hoặc đã hết hạn");
+  }
+
+  const voucherData = voucher.recordset[0];
+
+  // Lấy thông tin booking hiện tại
+  const booking = await getBookedScheduleById(bookedScheduleId);
+  if (!booking) {
+    throw new Error("Booking không tồn tại");
+  }
+
+  if (booking.VoucherId) {
+    throw new Error("Booking đã có voucher áp dụng");
+  }
+
+  // Kiểm tra giá trị combo tối thiểu
+  if (booking.OriginalPrice < voucherData.MinComboValue) {
+    throw new Error(`Giá trị combo tối thiểu để áp dụng voucher là ${voucherData.MinComboValue}`);
+  }
+
+  // Tính toán giá mới
+  const discountAmount = Math.floor(booking.OriginalPrice * voucherData.DiscountPercentage / 100);
+  const newTotalAmount = booking.OriginalPrice - discountAmount;
+
+  // Cập nhật booking với voucher
+  await pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
+    .input("VoucherId", sql.UniqueIdentifier, voucherData.VoucherId)
+    .input("DiscountPercentages", sql.Int, voucherData.DiscountPercentage)
+    .input("TotalAmount", sql.Int, newTotalAmount)
+    .query(`
+      UPDATE BookedSchedules
+      SET VoucherId = @VoucherId,
+          DiscountPercentages = @DiscountPercentages,
+          TotalAmount = @TotalAmount,
+          updated_at = GETDATE()
+      WHERE BookedScheduleId = @BookedScheduleId
+    `);
+
+  // Tăng UsedCount của voucher
+  await pool.request()
+    .input("VoucherId", sql.UniqueIdentifier, voucherData.VoucherId)
+    .query(`
+      UPDATE Vouchers
+      SET UsedCount = UsedCount + 1
+      WHERE VoucherId = @VoucherId
+    `);
+
+  return await getBookedScheduleById(bookedScheduleId);
+}
+
+/**
+ * Hủy áp dụng voucher từ booking
+ */
+async function removeVoucherFromBooking(bookedScheduleId) {
+  const pool = await getPool();
+
+  // Lấy thông tin booking hiện tại
+  const booking = await getBookedScheduleById(bookedScheduleId);
+  if (!booking) {
+    throw new Error("Booking không tồn tại");
+  }
+
+  if (!booking.VoucherId) {
+    throw new Error("Booking chưa có voucher áp dụng");
+  }
+
+  // Khôi phục giá gốc
+  const originalPrice = booking.OriginalPrice || booking.TotalAmount;
+
+  // Cập nhật booking - xóa voucher
+  await pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
+    .query(`
+      UPDATE BookedSchedules
+      SET VoucherId = NULL,
+          DiscountPercentages = 0,
+          TotalAmount = OriginalPrice,
+          updated_at = GETDATE()
+      WHERE BookedScheduleId = @BookedScheduleId
+    `);
+
+  // Giảm UsedCount của voucher
+  await pool.request()
+    .input("VoucherId", sql.UniqueIdentifier, booking.VoucherId)
+    .query(`
+      UPDATE Vouchers
+      SET UsedCount = CASE WHEN UsedCount > 0 THEN UsedCount - 1 ELSE 0 END
+      WHERE VoucherId = @VoucherId
+    `);
+
+  return await getBookedScheduleById(bookedScheduleId);
+}
+
+/**
+ * Lấy thống kê bookings theo khoảng thời gian
+ */
+async function getBookingStats({ startDate, endDate, barPageId } = {}) {
+  const pool = await getPool();
+  const request = pool.request();
+
+  let whereClause = "1=1";
+
+  if (startDate) {
+    request.input("StartDate", sql.DateTime, new Date(startDate));
+    whereClause += " AND bs.created_at >= @StartDate";
+  }
+
+  if (endDate) {
+    request.input("EndDate", sql.DateTime, new Date(endDate));
+    whereClause += " AND bs.created_at <= @EndDate";
+  }
+
+  if (barPageId) {
+    request.input("BarPageId", sql.UniqueIdentifier, barPageId);
+    whereClause += " AND bs.ReceiverId = @BarPageId";
+  }
+
+  const result = await request.query(`
+    SELECT
+      COUNT(*) as totalBookings,
+      SUM(bs.TotalAmount) as totalRevenue,
+      SUM(bs.OriginalPrice) as totalOriginalRevenue,
+      SUM(bs.OriginalPrice - bs.TotalAmount) as totalDiscountAmount,
+      COUNT(CASE WHEN bs.VoucherId IS NOT NULL THEN 1 END) as bookingsWithVoucher,
+      AVG(bs.TotalAmount) as averageBookingValue,
+      COUNT(DISTINCT bs.BookerId) as uniqueCustomers
+    FROM BookedSchedules bs
+    WHERE ${whereClause} AND bs.PaymentStatus = 'paid'
+  `);
+
+  return result.recordset[0] || {
+    totalBookings: 0,
+    totalRevenue: 0,
+    totalOriginalRevenue: 0,
+    totalDiscountAmount: 0,
+    bookingsWithVoucher: 0,
+    averageBookingValue: 0,
+    uniqueCustomers: 0
+  };
+}
+
 module.exports = {
   createBookedSchedule,
   getBookedScheduleById,
@@ -483,5 +683,8 @@ module.exports = {
   updateBookedScheduleTiming,
   updateRefundStatus,
   getPendingBookingsOlderThan,
-  deleteBookedSchedule
+  deleteBookedSchedule,
+  applyVoucherToBooking,
+  removeVoucherFromBooking,
+  getBookingStats
 };
