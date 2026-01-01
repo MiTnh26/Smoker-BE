@@ -54,8 +54,8 @@ async function createAccount({
     .input("Address", sql.NVarChar(sql.MAX), address || null)
     .input("Bio", sql.NVarChar(500), bio || null)
     .input("Gender", sql.NVarChar(20), gender || null)
-    .input("Avatar", sql.NVarChar(255), avatar || null)
-    .input("Background", sql.NVarChar(255), background || null)
+    .input("Avatar", sql.NVarChar(1000), avatar || null)
+    .input("Background", sql.NVarChar(1000), background || null)
     .input("Status", sql.NVarChar(20), status)
     .query(`
       INSERT INTO Accounts (
@@ -91,8 +91,8 @@ async function updateAccountInfo(accountId, updates) {
   const result = await pool.request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
     .input("UserName", sql.NVarChar(100), userName || null)
-    .input("Avatar", sql.NVarChar(255), avatar || null)
-    .input("Background", sql.NVarChar(255), background || null)
+    .input("Avatar", sql.NVarChar(1000), avatar || null)
+    .input("Background", sql.NVarChar(1000), background || null)
     .input("Bio", sql.NVarChar(500), bio || null)
     .input("Address", sql.NVarChar(sql.MAX), address || null)
     .input("Phone", sql.NVarChar(20), phone || null)
