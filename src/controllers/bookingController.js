@@ -706,6 +706,18 @@ class BookingController {
           transferContent: `Thanh toán toàn bộ booking ${booking.Type || 'Performer'}`,
           transferAmount: totalAmount // Toàn bộ số tiền, không trừ cọc
         });
+
+        // Xử lý tiền vào ví của receiver
+        const walletService = require("../services/walletService");
+        const walletResult = await walletService.processBookingIncome(
+          id,
+          booking.ReceiverId, // EntityAccountId của receiver
+          totalAmount
+        );
+        if (!walletResult.success) {
+          console.error("[BookingController] Failed to process booking income to wallet:", walletResult.error);
+          // Không throw error để không ảnh hưởng đến flow chính, chỉ log
+        }
       }
 
       return res.status(200).json({
@@ -768,6 +780,18 @@ class BookingController {
               transferContent: `Tự động thanh toán toàn bộ booking ${bookingDetail.Type || 'Performer'} (sau 7 ngày)`,
               transferAmount: totalAmount // Toàn bộ số tiền, không trừ cọc
             });
+
+            // Xử lý tiền vào ví của receiver
+            const walletService = require("../services/walletService");
+            const walletResult = await walletService.processBookingIncome(
+              booking.BookedScheduleId,
+              bookingDetail.ReceiverId, // EntityAccountId của receiver
+              totalAmount
+            );
+            if (!walletResult.success) {
+              console.error("[BookingController] Failed to process booking income to wallet:", walletResult.error);
+              // Không throw error để không ảnh hưởng đến flow chính, chỉ log
+            }
           }
 
           completedCount++;

@@ -1,28 +1,24 @@
 const { getPool, sql } = require("../db/sqlserver");
+const { normalizeToEntityAccountId } = require("./entityAccountModel");
 
-// ➕ Tạo BankInfo mới
-async function createBankInfo({ bankName, accountNumber, accountId = null, barPageId = null }) {
+// ➕ Tạo BankInfo mới (nhận entityAccountId)
+async function createBankInfo({ bankName, accountNumber, accountHolderName, entityAccountId }) {
   const pool = await getPool();
   
-  // Validate: phải có accountId hoặc barPageId
-  if (!accountId && !barPageId) {
-    throw new Error("Phải có accountId hoặc barPageId");
-  }
-  
-  // Validate: không được có cả hai
-  if (accountId && barPageId) {
-    throw new Error("Chỉ được có accountId hoặc barPageId, không được có cả hai");
+  // Validate: phải có entityAccountId
+  if (!entityAccountId) {
+    throw new Error("Phải có entityAccountId");
   }
 
   const result = await pool.request()
     .input("BankName", sql.NVarChar(100), bankName)
     .input("AccountNumber", sql.NVarChar(50), accountNumber)
-    .input("AccountId", sql.UniqueIdentifier, accountId)
-    .input("BarPageId", sql.UniqueIdentifier, barPageId)
+    .input("AccountHolderName", sql.NVarChar(150), accountHolderName)
+    .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
     .query(`
-      INSERT INTO BankInfo (BankInfoId, BankName, AccountNumber, AccountId, BarPageId)
+      INSERT INTO BankInfo (BankInfoId, BankName, AccountNumber, AccountHolderName, EntityAccountId)
       OUTPUT INSERTED.*
-      VALUES (NEWID(), @BankName, @AccountNumber, @AccountId, @BarPageId)
+      VALUES (NEWID(), @BankName, @AccountNumber, @AccountHolderName, @EntityAccountId)
     `);
   
   return result.recordset[0] || null;
@@ -34,143 +30,61 @@ async function getBankInfoById(bankInfoId) {
   const result = await pool.request()
     .input("BankInfoId", sql.UniqueIdentifier, bankInfoId)
     .query(`
-      SELECT BankInfoId, BankName, AccountNumber, AccountId, BarPageId
+      SELECT BankInfoId, BankName, AccountNumber, AccountHolderName, EntityAccountId
       FROM BankInfo
       WHERE BankInfoId = @BankInfoId
     `);
   return result.recordset[0] || null;
 }
 
-// 📖 Lấy BankInfo theo AccountId
-async function getBankInfoByAccountId(accountId) {
+// 📖 Lấy BankInfo theo EntityAccountId
+async function getBankInfoByEntityAccountId(entityAccountId) {
   const pool = await getPool();
-  // Đảm bảo AccountId không null và có giá trị hợp lệ
-  if (!accountId) {
-    console.log("⚠️ getBankInfoByAccountId: accountId is null or undefined");
+  if (!entityAccountId) {
+    console.log("⚠️ getBankInfoByEntityAccountId: entityAccountId is null or undefined");
     return null;
   }
   
-  // Validate UUID format
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const accountIdStr = accountId.toString().trim();
-  if (!uuidRegex.test(accountIdStr)) {
-    console.log("⚠️ getBankInfoByAccountId: Invalid UUID format:", accountIdStr);
+  const entityAccountIdStr = entityAccountId.toString().trim();
+  if (!uuidRegex.test(entityAccountIdStr)) {
+    console.log("⚠️ getBankInfoByEntityAccountId: Invalid UUID format:", entityAccountIdStr);
     return null;
   }
   
-  console.log("🔍 getBankInfoByAccountId - Querying for AccountId:", accountIdStr);
+  console.log("🔍 getBankInfoByEntityAccountId - Querying for EntityAccountId:", entityAccountIdStr);
   
-  // Query với điều kiện chặt chẽ: sử dụng CAST để đảm bảo so sánh chính xác
-  // SQL Server UniqueIdentifier có thể có vấn đề với case sensitivity trong một số trường hợp
   const result = await pool.request()
-    .input("AccountId", sql.UniqueIdentifier, accountIdStr)
+    .input("EntityAccountId", sql.UniqueIdentifier, entityAccountIdStr)
     .query(`
-      SELECT BankInfoId, BankName, AccountNumber, AccountId, BarPageId
+      SELECT BankInfoId, BankName, AccountNumber, AccountHolderName, EntityAccountId
       FROM BankInfo
-      WHERE AccountId = @AccountId
-        AND AccountId IS NOT NULL
-        AND LOWER(CAST(AccountId AS VARCHAR(36))) = LOWER(CAST(@AccountId AS VARCHAR(36)))
+      WHERE EntityAccountId = @EntityAccountId
     `);
   
-  const found = result.recordset[0] || null;
-  if (found) {
-    // Triple check: đảm bảo AccountId thực sự match và không phải NULL
-    const foundAccountId = found.AccountId ? found.AccountId.toString().toLowerCase().trim() : null;
-    const searchAccountId = accountIdStr.toLowerCase().trim();
-    
-    if (!foundAccountId) {
-      console.warn("⚠️ getBankInfoByAccountId - Found record with NULL AccountId, returning null");
-      return null; // Record có NULL AccountId, không hợp lệ
-    }
-    
-    if (foundAccountId !== searchAccountId) {
-      console.warn("⚠️ getBankInfoByAccountId - AccountId mismatch! Found:", foundAccountId, "Searching:", searchAccountId);
-      return null; // Return null nếu không match
-    }
-    console.log("✅ getBankInfoByAccountId - AccountId verified match:", foundAccountId);
-  }
-  console.log("🔍 getBankInfoByAccountId - Result:", found ? "Found" : "Not found", found ? { BankInfoId: found.BankInfoId, AccountId: found.AccountId } : "");
-  return found;
-}
-
-// 📖 Lấy BankInfo theo BarPageId
-async function getBankInfoByBarPageId(barPageId) {
-  const pool = await getPool();
-  // Đảm bảo BarPageId không null và có giá trị hợp lệ
-  if (!barPageId) {
-    console.log("⚠️ getBankInfoByBarPageId: barPageId is null or undefined");
-    return null;
-  }
-  
-  // Validate UUID format
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const barPageIdStr = barPageId.toString().trim();
-  if (!uuidRegex.test(barPageIdStr)) {
-    console.log("⚠️ getBankInfoByBarPageId: Invalid UUID format:", barPageIdStr);
-    return null;
-  }
-  
-  console.log("🔍 getBankInfoByBarPageId - Querying for BarPageId:", barPageIdStr);
-  const result = await pool.request()
-    .input("BarPageId", sql.UniqueIdentifier, barPageIdStr)
-    .query(`
-      SELECT BankInfoId, BankName, AccountNumber, AccountId, BarPageId
-      FROM BankInfo
-      WHERE BarPageId = @BarPageId
-        AND BarPageId IS NOT NULL
-    `);
-  
-  const found = result.recordset[0] || null;
-  if (found) {
-    // Double check: đảm bảo BarPageId thực sự match và không phải NULL
-    const foundBarPageId = found.BarPageId ? found.BarPageId.toString().toLowerCase().trim() : null;
-    const searchBarPageId = barPageIdStr.toLowerCase().trim();
-    
-    if (!foundBarPageId) {
-      console.warn("⚠️ getBankInfoByBarPageId - Found record with NULL BarPageId, returning null");
-      return null; // Record có NULL BarPageId, không hợp lệ
-    }
-    
-    if (foundBarPageId !== searchBarPageId) {
-      console.warn("⚠️ getBankInfoByBarPageId - BarPageId mismatch! Found:", foundBarPageId, "Searching:", searchBarPageId);
-      return null; // Return null nếu không match
-    }
-    console.log("✅ getBankInfoByBarPageId - BarPageId verified match:", foundBarPageId);
-  }
-  console.log("🔍 getBankInfoByBarPageId - Result:", found ? "Found" : "Not found", found ? { BankInfoId: found.BankInfoId, BarPageId: found.BarPageId } : "");
-  return found;
-}
-
-// 🗑️ Xóa các record có AccountId và BarPageId đều NULL (orphan records)
-// Hoặc có AccountId = NULL hoặc BarPageId = NULL (có thể gây unique constraint violation)
-async function deleteNullRecords() {
-  const pool = await getPool();
-  const result = await pool.request()
-    .query(`
-      DELETE FROM BankInfo
-      WHERE (AccountId IS NULL AND BarPageId IS NULL)
-         OR (AccountId IS NULL)
-         OR (BarPageId IS NULL)
-    `);
-  const deletedCount = result.rowsAffected[0] || 0;
-  console.log(`🗑️ Deleted ${deletedCount} NULL records from BankInfo`);
-  return deletedCount;
-}
-
-// 📖 Lấy BankInfo có AccountId và BarPageId đều NULL (orphan records)
-async function getBankInfoByNullIds() {
-  const pool = await getPool();
-  const result = await pool.request()
-    .query(`
-      SELECT TOP 1 BankInfoId, BankName, AccountNumber, AccountId, BarPageId
-      FROM BankInfo
-      WHERE AccountId IS NULL AND BarPageId IS NULL
-    `);
   return result.recordset[0] || null;
 }
 
+// 📖 Lấy BankInfo theo AccountId (backward compatibility - convert AccountId → EntityAccountId)
+async function getBankInfoByAccountId(accountId) {
+  if (!accountId) {
+    return null;
+  }
+  
+  // Convert AccountId → EntityAccountId
+  const entityAccountId = await normalizeToEntityAccountId(accountId);
+  if (!entityAccountId) {
+    console.log("⚠️ getBankInfoByAccountId: Could not convert AccountId to EntityAccountId");
+    return null;
+  }
+  
+  return await getBankInfoByEntityAccountId(entityAccountId);
+}
+
+
+
 // ✏️ Cập nhật BankInfo
-async function updateBankInfo(bankInfoId, { bankName, accountNumber }) {
+async function updateBankInfo(bankInfoId, { bankName, accountNumber, accountHolderName }) {
   const pool = await getPool();
   
   const updates = [];
@@ -185,6 +99,11 @@ async function updateBankInfo(bankInfoId, { bankName, accountNumber }) {
   if (accountNumber !== undefined) {
     updates.push("AccountNumber = @AccountNumber");
     request.input("AccountNumber", sql.NVarChar, accountNumber);
+  }
+
+  if (accountHolderName !== undefined) {
+    updates.push("AccountHolderName = @AccountHolderName");
+    request.input("AccountHolderName", sql.NVarChar, accountHolderName);
   }
 
   if (updates.length === 0) {
@@ -216,11 +135,9 @@ async function deleteBankInfo(bankInfoId) {
 module.exports = {
   createBankInfo,
   getBankInfoById,
-  getBankInfoByAccountId,
-  getBankInfoByBarPageId,
+  getBankInfoByEntityAccountId,
+  getBankInfoByAccountId, // Backward compatibility
   updateBankInfo,
   deleteBankInfo,
-  deleteNullRecords,
-  getBankInfoByNullIds,
 };
 
