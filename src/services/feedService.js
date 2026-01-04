@@ -194,8 +194,13 @@ class FeedService {
    * @returns {object} - Dữ liệu livestream đã được xử lý
    */
   transformLivestream(stream, currentUser) {
-    // Hiện tại chỉ trả về dữ liệu gốc, có thể mở rộng sau
-    return stream;
+    // Map authorName/authorAvatar to broadcasterName/broadcasterAvatar for frontend
+    const transformed = {
+      ...stream,
+      broadcasterName: stream.authorName || stream.broadcasterName || null,
+      broadcasterAvatar: stream.authorAvatar || stream.broadcasterAvatar || null,
+    };
+    return transformed;
   }
 }
 

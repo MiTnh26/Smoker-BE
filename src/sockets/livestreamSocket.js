@@ -78,12 +78,25 @@ function emitViewerCount(io, room) {
   io.to(room).emit("viewer-count-updated", { count: viewerCount });
 }
 
+// Batch notification tracking per room
+const batchNotificationQueues = new Map(); // room -> { count: number, timer: NodeJS.Timeout }
+
+function emitBatchJoinNotification(io, room, channelName, count) {
+  if (count > 0) {
+    io.to(room).emit("batch-users-joined", { 
+      channelName,
+      count,
+      message: `${count} người đã tham gia`
+    });
+  }
+}
+
 function registerLivestreamSocket(socket, io) {
   // Lưu thông tin user cho mỗi socket để track
   socket.data = socket.data || {};
   
-  socket.on("join-livestream", (payload = {}) => {
-    const { channelName, userId, isBroadcaster } = payload;
+  socket.on("join-livestream", async (payload = {}) => {
+    const { channelName, userId, isBroadcaster, entityAccountId } = payload;
     if (!channelName) {
       return;
     }
@@ -91,21 +104,88 @@ function registerLivestreamSocket(socket, io) {
     socket.data.channelName = channelName;
     socket.data.userId = userId;
     socket.data.isBroadcaster = isBroadcaster || false;
+    socket.data.entityAccountId = entityAccountId;
     
     socket.join(room);
     console.log(`[LivestreamSocket] User ${userId} joined room ${room} (broadcaster: ${isBroadcaster || false})`);
-    io.to(room).emit("user-joined", { userId });
+    
+    // Lấy thông tin user để gửi notification (cho cả broadcaster và viewer)
+    let userInfo = null;
+    if (entityAccountId) {
+      userInfo = await getEntityInfoByEntityAccountId(entityAccountId);
+    }
+    
+    // Nếu không phải broadcaster, gửi notification và xử lý batch
+    // (Broadcaster cũng sẽ nhận được notifications này để thấy ai đã tham gia)
+    if (!isBroadcaster) {
+      // Gửi notification cho user join (hiển thị trong chat)
+      // Gửi cho tất cả mọi người trong room (bao gồm cả broadcaster)
+      io.to(room).emit("user-joined", { 
+        channelName,
+        userId,
+        userName: userInfo?.userName || "Người dùng",
+        userAvatar: userInfo?.userAvatar || null,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Batch notification: đếm số người join trong 3 giây
+      if (!batchNotificationQueues.has(room)) {
+        batchNotificationQueues.set(room, { count: 0, timer: null });
+      }
+      
+      const queue = batchNotificationQueues.get(room);
+      queue.count++;
+      
+      // Clear timer cũ nếu có
+      if (queue.timer) {
+        clearTimeout(queue.timer);
+      }
+      
+      // Nếu đã đủ 10 người, gửi ngay
+      if (queue.count >= 10) {
+        emitBatchJoinNotification(io, room, channelName, queue.count);
+        queue.count = 0;
+      } else {
+        // Đợi 3 giây, nếu có người join thì gửi batch
+        queue.timer = setTimeout(() => {
+          if (queue.count > 0) {
+            emitBatchJoinNotification(io, room, channelName, queue.count);
+            queue.count = 0;
+          }
+          batchNotificationQueues.delete(room);
+        }, 3000);
+      }
+    }
+    
     emitViewerCount(io, room);
   });
 
-  socket.on("leave-livestream", (payload = {}) => {
+  socket.on("leave-livestream", async (payload = {}) => {
     const { channelName, userId } = payload;
     if (!channelName) {
       return;
     }
     const room = buildRoomName(channelName);
     socket.leave(room);
-    io.to(room).emit("user-left", { userId });
+    
+    // Lấy thông tin user để gửi notification (nếu có)
+    let userInfo = null;
+    if (socket.data?.entityAccountId) {
+      userInfo = await getEntityInfoByEntityAccountId(socket.data.entityAccountId);
+    }
+    
+    // Nếu không phải broadcaster, gửi notification user left
+    // (Broadcaster cũng sẽ nhận được notifications này)
+    if (!socket.data?.isBroadcaster) {
+      io.to(room).emit("user-left", { 
+        channelName,
+        userId,
+        userName: userInfo?.userName || "Người dùng",
+        userAvatar: userInfo?.userAvatar || null,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
     emitViewerCount(io, room);
   });
 
@@ -137,13 +217,31 @@ function registerLivestreamSocket(socket, io) {
     });
   });
 
-  socket.on("disconnecting", () => {
+  socket.on("disconnecting", async () => {
     // Khi socket disconnect, tự động leave tất cả livestream rooms
     for (const room of socket.rooms) {
       if (room.startsWith(ROOM_PREFIX)) {
         console.log(`[LivestreamSocket] Socket ${socket.id} disconnecting from room ${room}`);
         socket.leave(room);
-        io.to(room).emit("user-left", { userId: socket.id });
+        
+        // Lấy thông tin user để gửi notification (nếu có)
+        let userInfo = null;
+        if (socket.data?.entityAccountId) {
+          userInfo = await getEntityInfoByEntityAccountId(socket.data.entityAccountId);
+        }
+        
+        // Nếu không phải broadcaster, gửi notification user left
+        if (!socket.data?.isBroadcaster) {
+          const channelName = socket.data?.channelName || room.replace(ROOM_PREFIX, '');
+          io.to(room).emit("user-left", { 
+            channelName,
+            userId: socket.data?.userId || socket.id,
+            userName: userInfo?.userName || "Người dùng",
+            userAvatar: userInfo?.userAvatar || null,
+            timestamp: new Date().toISOString()
+          });
+        }
+        
         emitViewerCount(io, room);
       }
     }
