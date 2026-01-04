@@ -1361,7 +1361,7 @@ class PostController {
   async updatePost(req, res) {
     try {
       const { id } = req.params;
-      const { title, content, caption, medias, images, videos } = req.body;
+      const { title, content, caption, medias, images, videos, status } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -1388,17 +1388,18 @@ class PostController {
         }).filter((m) => m && m.url);
       }
 
-      // Kiểm tra có ít nhất một field được cập nhật
+      // Kiểm tra có ít nhất một field được cập nhật (bao gồm status)
       const hasField =
         title !== undefined ||
         content !== undefined ||
         caption !== undefined ||
+        status !== undefined ||
         (normalizedMedias && normalizedMedias.length > 0);
 
       if (!hasField) {
         return res.status(400).json({
           success: false,
-          message: "At least one field (title, content, caption or medias) is required"
+          message: "At least one field (title, content, caption, status or medias) is required"
         });
       }
 
@@ -1406,6 +1407,7 @@ class PostController {
       if (title !== undefined) updateData.title = title;
       if (content !== undefined) updateData.content = content;
       if (caption !== undefined) updateData.caption = caption;
+      if (status !== undefined) updateData.status = status;
       if (normalizedMedias && normalizedMedias.length >= 0) updateData.medias = normalizedMedias;
 
       // Lấy entityAccountId từ request hoặc từ accountId

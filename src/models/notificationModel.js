@@ -5,7 +5,7 @@ const notificationSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ["Confirm", "Messages", "Like", "Comment", "Follow"],
+      enum: ["Confirm", "Messages", "Like", "Comment", "Follow", "Wallet"],
       required: true,
     },
     sender: {
@@ -14,7 +14,8 @@ const notificationSchema = new mongoose.Schema(
     },
     senderEntityAccountId: {
       type: String, // EntityAccountId của người gửi
-      required: true,
+      required: false, // Cho phép null cho system notifications (như Wallet)
+      default: null,
       index: true,
     },
     senderEntityId: {
