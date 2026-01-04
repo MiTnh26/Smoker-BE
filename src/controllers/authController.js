@@ -64,22 +64,39 @@ async function googleOAuthLogin(req, res) {
     if (!idToken)
       return res.status(400).json({ message: "Thiếu Google ID token" });
 
-    // ✅ Xác thực token Google và lấy email
+    // ✅ Xác thực token Google và lấy thông tin
     const ticket = await client.verifyIdToken({
       idToken,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
     const payload = ticket.getPayload();
     const email = payload.email;
+    const name = payload.name || null;
+    const picture = payload.picture || null;
+    // Lấy số điện thoại nếu có trong payload (thường không có, cần gọi People API)
+    // Để lấy số điện thoại từ People API, cần access token và scope phù hợp
+    let phone = payload.phone_number || null;
+    
+    // Nếu có access token và muốn lấy số điện thoại từ People API, có thể gọi ở đây
+    // const { accessToken } = req.body;
+    // if (accessToken && !phone) {
+    //   phone = await getPhoneFromPeopleAPI(accessToken);
+    // }
 
-    // ✅ Gọi service login qua Google (phải có tài khoản mới được login)
-    const result = await authService.googleLoginService({ email });
+    // ✅ Gọi service login/register qua Google (tự động đăng ký nếu chưa có)
+    const result = await authService.googleLoginService({ 
+      email, 
+      userName: name, 
+      avatar: picture,
+      phone: phone
+    });
 
     return res.json({
-      message: "Đăng nhập Google thành công",
+      message: result.isNewUser ? "Đăng ký Google thành công" : "Đăng nhập Google thành công",
       token: result.token,
       needProfile: !result.profileComplete,
       user: result.user,
+      isNewUser: result.isNewUser || false,
     });
   } catch (err) {
     console.error("Google OAuth error:", err);

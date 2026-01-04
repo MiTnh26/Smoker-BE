@@ -134,3 +134,87 @@ exports.getLivestreamsByHost = async (req, res) => {
   }
 };
 
+// POST /api/livestream/schedule - Create scheduled livestream
+exports.createScheduledLivestream = async (req, res) => {
+  try {
+    const { title, description, scheduledStartTime, settings, entityAccountId, entityId, entityType } = req.body;
+    const hostAccountId = req.user?.id;
+
+    const { livestream, agora } = await livestreamService.createScheduledLivestream({
+      title,
+      description,
+      scheduledStartTime,
+      settings,
+      hostAccountId,
+      entityAccountId,
+      entityId,
+      entityType,
+    });
+
+    return res
+      .status(201)
+      .json(success("Scheduled livestream created successfully", { livestream, agora }));
+  } catch (err) {
+    console.error("createScheduledLivestream error:", err);
+    const status = err.status || 500;
+    return res.status(status).json(error(err.message || "Failed to create scheduled livestream", status));
+  }
+};
+
+// GET /api/livestream/scheduled - Get scheduled livestreams
+exports.getScheduledLivestreams = async (req, res) => {
+  try {
+    const hostAccountId = req.user?.id || null;
+    const streams = await livestreamService.getScheduledLivestreams(hostAccountId);
+    return res.json(success("Scheduled livestreams retrieved successfully", streams));
+  } catch (err) {
+    console.error("getScheduledLivestreams error:", err);
+    return res.status(500).json(error(err.message || "Failed to get scheduled livestreams"));
+  }
+};
+
+// DELETE /api/livestream/scheduled/:id - Cancel scheduled livestream
+exports.cancelScheduledLivestream = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hostAccountId = req.user.id;
+    const cancelled = await livestreamService.cancelScheduledLivestream(id, hostAccountId);
+    return res.json(success("Scheduled livestream cancelled successfully", cancelled));
+  } catch (err) {
+    console.error("cancelScheduledLivestream error:", err);
+    const status = err.status || 500;
+    return res.status(status).json(error(err.message || "Failed to cancel scheduled livestream", status));
+  }
+};
+
+// POST /api/livestream/scheduled/:id/activate - Activate scheduled livestream (internal/cron)
+exports.activateScheduledLivestream = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { livestream, agora } = await livestreamService.activateScheduledLivestream(id);
+    
+    // Emit socket event để thông báo livestream đã bắt đầu
+    try {
+      const { getIO } = require("../utils/socket");
+      const io = getIO();
+      if (io && livestream?.agoraChannelName) {
+        const room = `livestream:${livestream.agoraChannelName}`;
+        io.to(room).emit("livestream-started", {
+          livestreamId: livestream.livestreamId,
+          channelName: livestream.agoraChannelName,
+          message: "Livestream đã bắt đầu",
+        });
+        console.log(`[LivestreamController] Emitted livestream-started event to room ${room}`);
+      }
+    } catch (socketErr) {
+      console.warn("[LivestreamController] Could not emit livestream-started event:", socketErr.message);
+    }
+    
+    return res.json(success("Scheduled livestream activated successfully", { livestream, agora }));
+  } catch (err) {
+    console.error("activateScheduledLivestream error:", err);
+    const status = err.status || 500;
+    return res.status(status).json(error(err.message || "Failed to activate scheduled livestream", status));
+  }
+};
+

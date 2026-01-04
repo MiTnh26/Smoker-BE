@@ -41,8 +41,33 @@ const LivestreamSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["live", "ended"],
+      enum: ["live", "ended", "scheduled"],
       default: "live",
+    },
+    scheduledStartTime: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    scheduledSettings: {
+      type: {
+        privacy: { type: String, default: "public" },
+        shareToStory: { type: Boolean, default: false },
+        pinnedComment: { type: String, default: null },
+        background: { type: String, default: null },
+        webcamPosition: {
+          type: {
+            x: { type: Number, default: 0 },
+            y: { type: Number, default: 0 },
+            width: { type: Number, default: 20 },
+            height: { type: Number, default: 20 },
+          },
+          default: null,
+        },
+        screenShareEnabled: { type: Boolean, default: false },
+        screenShareType: { type: String, enum: ["fullscreen", "window"], default: "fullscreen" },
+      },
+      default: null,
     },
     startTime: {
       type: Date,
@@ -80,6 +105,7 @@ const LivestreamSchema = new mongoose.Schema(
 
 // Create indexes
 LivestreamSchema.index({ status: 1, startTime: -1 });
+LivestreamSchema.index({ status: 1, scheduledStartTime: 1 }); // Index for scheduled livestreams
 LivestreamSchema.index({ hostAccountId: 1 });
 LivestreamSchema.index({ livestreamId: 1 });
 LivestreamSchema.index({ hostEntityAccountId: 1 }); // Index cho hostEntityAccountId
