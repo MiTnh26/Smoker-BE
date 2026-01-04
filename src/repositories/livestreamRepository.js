@@ -43,6 +43,54 @@ async function incrementView(livestreamId) {
   );
 }
 
+async function createScheduled(data) {
+  return await Livestream.create({
+    ...data,
+    status: "scheduled",
+  });
+}
+
+async function findScheduled(limit = 50) {
+  return await Livestream.find({ status: "scheduled" })
+    .sort({ scheduledStartTime: 1 })
+    .limit(limit)
+    .lean();
+}
+
+async function findScheduledByHost(hostAccountId, limit = 20) {
+  return await Livestream.find({
+    hostAccountId,
+    status: "scheduled",
+  })
+    .sort({ scheduledStartTime: 1 })
+    .limit(limit)
+    .lean();
+}
+
+async function findScheduledReadyToActivate(now) {
+  return await Livestream.find({
+    status: "scheduled",
+    scheduledStartTime: { $lte: now },
+  })
+    .sort({ scheduledStartTime: 1 })
+    .lean();
+}
+
+async function activateScheduled(livestreamId, agoraCredentials) {
+  return await Livestream.findOneAndUpdate(
+    { livestreamId, status: "scheduled" },
+    {
+      $set: {
+        status: "live",
+        startTime: new Date(),
+        agoraChannelName: agoraCredentials.channelName,
+        agoraUid: agoraCredentials.uid,
+      },
+    },
+    { new: true }
+  );
+}
+
 module.exports = {
   create,
   findById,
@@ -51,5 +99,10 @@ module.exports = {
   findByHost,
   updateStatus,
   incrementView,
+  createScheduled,
+  findScheduled,
+  findScheduledByHost,
+  findScheduledReadyToActivate,
+  activateScheduled,
 };
 

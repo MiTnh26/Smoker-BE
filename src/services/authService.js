@@ -135,16 +135,57 @@ async function loginService(email, password) {
   const profileComplete = accountModel.hasProfileComplete(user);
   return { token, user: buildUserResponse(user), profileComplete };
 }
-async function googleLoginService({ email }) {
+async function googleLoginService({ email, userName = null, avatar = null, phone = null }) {
   if (!email) throw new Error("Thiếu email");
   if (!isValidEmail(email))
     throw new Error("Email không hợp lệ");
 
-  const user = await accountModel.findAccountByEmail(email);
+  let user = await accountModel.findAccountByEmail(email);
+  let isNewUser = false;
+
+  // ✅ Nếu chưa có tài khoản, tự động đăng ký
   if (!user) {
-    const err = new Error("Tài khoản chưa tồn tại. Vui lòng đăng ký trước.");
-    err.code = 404;
-    throw err;
+    const randomPass = generateRandomPassword(10);
+    const hashed = await bcrypt.hash(randomPass, 10);
+    
+    // ✅ Tạo account mới với thông tin từ Google (bao gồm số điện thoại nếu có)
+    const created = await accountModel.createAccount({
+      email,
+      hashedPassword: hashed,
+      userName: userName || null,
+      avatar: avatar || null,
+      phone: phone || null,
+      role: "customer",
+      status: "active",
+    });
+    
+    if (created?.AccountId) {
+      await createEntityAccount("Account", created.AccountId, created.AccountId);
+    }
+
+    user = created;
+    isNewUser = true;
+
+    // ✅ Gửi mã về email để đăng nhập thủ công
+    try {
+      await sendMail({
+        to: email,
+        subject: "Tài khoản Smoker - Xác thực Gmail",
+        html: `<p>Bạn đã đăng ký thành công bằng Google.</p>
+               <p>Mật khẩu tạm thời của bạn: <b>${randomPass}</b></p>
+               <p>Vui lòng dùng mật khẩu này để đăng nhập thủ công nếu cần.</p>`,
+      });
+    } catch (e) {
+      console.error("Mail send failed:", e);
+      // Không throw error, vì đăng ký đã thành công
+    }
+  } else {
+    // ✅ Nếu đã có tài khoản nhưng chưa có số điện thoại, cập nhật nếu Google cung cấp
+    if (phone && !user.Phone) {
+      await accountModel.updateAccountInfo(user.AccountId, { phone });
+      // Cập nhật lại user object để trả về thông tin mới nhất
+      user = await accountModel.findAccountByEmail(email);
+    }
   }
 
   await accountModel.updateLastLogin(user.AccountId);
@@ -155,7 +196,12 @@ async function googleLoginService({ email }) {
     role: user.Role,
   });
   const profileComplete = accountModel.hasProfileComplete(user);
-  return { token, user: buildUserResponse(user), profileComplete };
+  return { 
+    token, 
+    user: buildUserResponse(user), 
+    profileComplete,
+    isNewUser 
+  };
 }
 
 
