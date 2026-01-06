@@ -11,13 +11,12 @@ async function getCombosByBarId(barId) {
       SELECT
         c.*,
         bp.BarName,
-        tc.TableTypeName AS TableType,
-        tc.Color AS TableColor
+        bp.Address AS BarAddress,
+        bp.PhoneNumber AS BarPhone
       FROM Combos c
       LEFT JOIN BarPages bp ON c.BarId = bp.BarPageId
-      LEFT JOIN TableClassifications tc ON c.TableApplyId = tc.TableClassificationId
       WHERE c.BarId = @BarId
-      ORDER BY c.ComboName
+      ORDER BY c.ComboName ASC
     `);
   return result.recordset;
 }
@@ -34,15 +33,35 @@ async function getComboById(comboId) {
         c.*,
         bp.BarName,
         bp.Address AS BarAddress,
-        bp.PhoneNumber AS BarPhone,
-        tc.TableTypeName AS TableType,
-        tc.Color AS TableColor
+        bp.PhoneNumber AS BarPhone
       FROM Combos c
       LEFT JOIN BarPages bp ON c.BarId = bp.BarPageId
-      LEFT JOIN TableClassifications tc ON c.TableApplyId = tc.TableClassificationId
       WHERE c.ComboId = @ComboId
     `);
   return result.recordset[0] || null;
+}
+
+/**
+ * Lấy combos theo khoảng giá
+ */
+async function getCombosByPriceRange(barId, minPrice, maxPrice) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("BarId", sql.UniqueIdentifier, barId)
+    .input("MinPrice", sql.Int, minPrice || 0)
+    .input("MaxPrice", sql.Int, maxPrice || 999999999)
+    .query(`
+      SELECT
+        c.*,
+        bp.BarName,
+        bp.Address AS BarAddress,
+        bp.PhoneNumber AS BarPhone
+      FROM Combos c
+      LEFT JOIN BarPages bp ON c.BarId = bp.BarPageId
+      WHERE c.BarId = @BarId AND c.Price BETWEEN @MinPrice AND @MaxPrice
+      ORDER BY c.ComboName ASC
+    `);
+  return result.recordset;
 }
 
 /**
@@ -51,21 +70,22 @@ async function getComboById(comboId) {
 async function createCombo({
   comboName,
   barId,
-  tableApplyId = null,
   price = 0,
   description = null
 }) {
   const pool = await getPool();
+  const comboId = require('crypto').randomUUID(); // Generate new UUID
+
   const result = await pool.request()
+    .input("ComboId", sql.UniqueIdentifier, comboId)
     .input("ComboName", sql.NVarChar(250), comboName)
     .input("BarId", sql.UniqueIdentifier, barId)
-    .input("TableApplyId", sql.UniqueIdentifier, tableApplyId)
     .input("Price", sql.Int, price)
     .input("Description", sql.NVarChar(500), description)
     .query(`
-      INSERT INTO Combos (ComboName, BarId, TableApplyId, Price, Description)
+      INSERT INTO Combos (ComboId, ComboName, BarId, Price, Description)
       OUTPUT inserted.*
-      VALUES (@ComboName, @BarId, @TableApplyId, @Price, @Description)
+      VALUES (@ComboId, @ComboName, @BarId, @Price, @Description)
     `);
   return result.recordset[0];
 }
@@ -79,16 +99,14 @@ async function updateCombo(comboId, updates) {
     .input("ComboId", sql.UniqueIdentifier, comboId);
 
   let updateFields = [];
-  let params = [];
 
-  const fields = ['comboName', 'tableApplyId', 'price', 'description'];
+  const fields = ['comboName', 'price', 'description'];
 
   fields.forEach(field => {
     if (updates[field] !== undefined) {
       const sqlField = field.charAt(0).toUpperCase() + field.slice(1);
       const sqlType = field === 'comboName' ? sql.NVarChar(250) :
                      field === 'description' ? sql.NVarChar(500) :
-                     field === 'tableApplyId' ? sql.UniqueIdentifier :
                      sql.Int;
       request.input(sqlField, sqlType, updates[field]);
       updateFields.push(`${sqlField} = @${sqlField}`);
@@ -109,7 +127,7 @@ async function updateCombo(comboId, updates) {
 }
 
 /**
- * Lấy combos có sẵn theo BarId (không có VoucherApplyId)
+ * Lấy combos có sẵn theo BarId (active status)
  */
 async function getAvailableCombosByBarId(barId) {
   const pool = await getPool();
@@ -119,30 +137,28 @@ async function getAvailableCombosByBarId(barId) {
       SELECT
         c.*,
         bp.BarName,
-        tc.TableTypeName AS TableType,
-        tc.Color AS TableColor
+        bp.Address AS BarAddress
       FROM Combos c
       LEFT JOIN BarPages bp ON c.BarId = bp.BarPageId
-      LEFT JOIN TableClassifications tc ON c.TableApplyId = tc.TableClassificationId
-      WHERE c.BarId = @BarId AND c.VoucherApplyId IS NULL
+      WHERE c.BarId = @BarId
       ORDER BY c.Price ASC, c.ComboName ASC
     `);
   return result.recordset;
 }
 
 /**
- * Tìm combos theo khoảng giá
+ * Tìm combos theo khoảng giá chi tiêu tối thiểu
  */
-async function getCombosByPriceRange(minPrice = 0, maxPrice = null, barId = null) {
+async function getCombosByMinSpendRange(minAmount = 0, maxAmount = null, barId = null) {
   const pool = await getPool();
   const request = pool.request()
-    .input("MinPrice", sql.Int, minPrice);
+    .input("MinAmount", sql.Int, minAmount);
 
-  let whereClause = "c.Price >= @MinPrice";
+  let whereClause = "c.Price >= @MinAmount";
 
-  if (maxPrice !== null) {
-    request.input("MaxPrice", sql.Int, maxPrice);
-    whereClause += " AND c.Price <= @MaxPrice";
+  if (maxAmount !== null) {
+    request.input("MaxAmount", sql.Int, maxAmount);
+    whereClause += " AND c.Price <= @MaxAmount";
   }
 
   if (barId) {
@@ -154,10 +170,9 @@ async function getCombosByPriceRange(minPrice = 0, maxPrice = null, barId = null
     SELECT
       c.*,
       bp.BarName,
-      tc.TableTypeName AS TableType
+      bp.Address AS BarAddress
     FROM Combos c
     LEFT JOIN BarPages bp ON c.BarId = bp.BarPageId
-    LEFT JOIN TableClassifications tc ON c.TableApplyId = tc.TableClassificationId
     WHERE ${whereClause}
     ORDER BY c.Price ASC, c.ComboName ASC
   `);
@@ -166,7 +181,7 @@ async function getCombosByPriceRange(minPrice = 0, maxPrice = null, barId = null
 }
 
 /**
- * Xóa combo
+ * Xóa combo (hard delete)
  */
 async function deleteCombo(comboId) {
   const pool = await getPool();
@@ -187,13 +202,39 @@ async function countCombosByBarId(barId) {
   return result.recordset[0]?.total || 0;
 }
 
+/**
+ * Lấy combo phổ biến nhất (có nhiều booking nhất)
+ */
+async function getPopularCombos(limit = 10) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("Limit", sql.Int, limit)
+    .query(`
+      SELECT TOP (@Limit)
+        c.*,
+        bp.BarName,
+        bp.Address AS BarAddress,
+        COUNT(bs.BookedScheduleId) as BookingCount
+      FROM Combos c
+      LEFT JOIN BarPages bp ON c.BarId = bp.BarPageId
+      LEFT JOIN BookedSchedules bs ON c.ComboId = bs.ComboId
+      GROUP BY c.ComboId, c.ComboName, c.BarId, c.Price,
+               c.Description,
+               bp.BarName, bp.Address
+      ORDER BY COUNT(bs.BookedScheduleId) DESC, c.Price ASC
+    `);
+  return result.recordset;
+}
+
 module.exports = {
   getCombosByBarId,
   getComboById,
   createCombo,
   updateCombo,
-  getAvailableCombosByBarId,
   getCombosByPriceRange,
   deleteCombo,
-  countCombosByBarId
+  countCombosByBarId,
+  getPopularCombos,
+  getAvailableCombosByBarId,
+  getCombosByMinSpendRange
 };

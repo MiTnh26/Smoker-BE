@@ -326,6 +326,41 @@ async function updateBookedScheduleStatuses(bookedScheduleId, { paymentStatus, s
   return updatedRecord;
 }
 
+// Cập nhật amounts cho BarTable booking (TotalAmount + DiscountPercentages)
+async function updateBookingAmounts(bookedScheduleId, { totalAmount, discountPercentages } = {}) {
+  if (totalAmount === undefined && discountPercentages === undefined) {
+    throw new Error("At least one of totalAmount or discountPercentages must be provided");
+  }
+
+  const pool = await getPool();
+  const request = pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId);
+
+  const setClauses = [];
+
+  if (totalAmount !== undefined) {
+    request.input("TotalAmount", sql.Int, parseInt(totalAmount));
+    setClauses.push("TotalAmount = @TotalAmount");
+  }
+
+  if (discountPercentages !== undefined) {
+    request.input("DiscountPercentages", sql.Int, parseInt(discountPercentages));
+    setClauses.push("DiscountPercentages = @DiscountPercentages");
+  }
+
+  const setClause = setClauses.join(", ");
+
+  const result = await request.query(`
+    UPDATE BookedSchedules
+    SET ${setClause}
+    WHERE BookedScheduleId = @BookedScheduleId;
+
+    SELECT TOP 1 * FROM BookedSchedules WHERE BookedScheduleId = @BookedScheduleId;
+  `);
+
+  return result.recordset[0] || null;
+}
+
 async function updateRefundStatus(bookedScheduleId, refundStatus) {
   const pool = await getPool();
   
@@ -673,6 +708,272 @@ async function getBookingStats({ startDate, endDate, barPageId } = {}) {
   };
 }
 
+/**
+ * Tính toán amounts cho booking với combo và voucher
+ */
+function calculateBookingAmounts(originalComboPrice, discountPercentage = 0) {
+  // Tính discount amount
+  const discountAmount = Math.floor(originalComboPrice * discountPercentage / 100);
+
+  // Số tiền thực tế thanh toán (sau khi áp dụng voucher)
+  const finalPaymentAmount = originalComboPrice - discountAmount;
+
+  // Hoa hồng hệ thống 15% (tính trên giá combo gốc)
+  const commissionAmount = Math.floor(originalComboPrice * 0.15);
+
+  // Số tiền bar nhận được (giá combo gốc - hoa hồng hệ thống)
+  const barReceiveAmount = originalComboPrice - commissionAmount;
+
+  return {
+    originalPrice: originalComboPrice,
+    discountPercentages: discountPercentage,
+    discountAmount,
+    finalPaymentAmount,
+    commissionAmount,
+    barReceiveAmount
+  };
+}
+
+/**
+ * Tạo booking mới với combo và voucher
+ */
+async function createBookedScheduleWithCombo({
+  bookerId,
+  receiverId,
+  voucherId = null,
+  type = "BarTable",
+  originalComboPrice,
+  discountPercentages = 0,
+  finalPaymentAmount,
+  // commissionAmount, barReceiveAmount: DB hiện tại không có cột tương ứng, sẽ compute khi cần
+  bookingDate,
+  startTime,
+  endTime,
+  mongoDetailId = null
+}) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("BookerId", sql.UniqueIdentifier, bookerId)
+    .input("ReceiverId", sql.UniqueIdentifier, receiverId)
+    .input("VoucherId", sql.UniqueIdentifier, voucherId || null)
+    .input("Type", sql.NVarChar(100), type)
+    .input("OriginalPrice", sql.Int, originalComboPrice)
+    .input("TotalAmount", sql.Int, finalPaymentAmount)
+    .input("DiscountPercentages", sql.Int, discountPercentages)
+    .input("PaymentStatus", sql.NVarChar(20), "Pending")
+    .input("ScheduleStatus", sql.NVarChar(20), "Pending")
+    .input("BookingDate", sql.DateTime, toDateOrNull(bookingDate))
+    .input("StartTime", sql.DateTime, toDateOrNull(startTime))
+    .input("EndTime", sql.DateTime, toDateOrNull(endTime))
+    .input("MongoDetailId", sql.NVarChar(50), mongoDetailId || null)
+    .query(`
+      INSERT INTO BookedSchedules (
+        BookerId,
+        ReceiverId,
+        VoucherId,
+        Type,
+        OriginalPrice,
+        TotalAmount,
+        DiscountPercentages,
+        PaymentStatus,
+        ScheduleStatus,
+        BookingDate,
+        StartTime,
+        EndTime,
+        MongoDetailId
+      )
+      OUTPUT
+        inserted.BookedScheduleId,
+        inserted.BookerId,
+        inserted.ReceiverId,
+        inserted.VoucherId,
+        inserted.Type,
+        inserted.OriginalPrice,
+        inserted.TotalAmount,
+        inserted.DiscountPercentages,
+        inserted.PaymentStatus,
+        inserted.ScheduleStatus,
+        inserted.BookingDate,
+        inserted.StartTime,
+        inserted.EndTime,
+        inserted.MongoDetailId,
+        inserted.ReviewStatus,
+        inserted.RefundStatus,
+        inserted.created_at
+      VALUES (
+        @BookerId,
+        @ReceiverId,
+        @VoucherId,
+        @Type,
+        @OriginalPrice,
+        @TotalAmount,
+        @DiscountPercentages,
+        @PaymentStatus,
+        @ScheduleStatus,
+        @BookingDate,
+        @StartTime,
+        @EndTime,
+        @MongoDetailId
+      );
+    `);
+
+  return result.recordset[0];
+}
+
+/**
+ * Cập nhật QR code cho booking
+ */
+async function updateBookingQRCode(bookedScheduleId, qrCode) {
+  const pool = await getPool();
+  // BookedSchedules table không có cột QRCode trong DB hiện tại.
+  // QRCode được lưu ở MongoDB (DetailSchedule) nên hàm này giữ lại để backward compatibility.
+  const result = await pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
+    .query(`
+      SELECT TOP 1 * FROM BookedSchedules WHERE BookedScheduleId = @BookedScheduleId
+    `);
+  return result.recordset[0] || null;
+}
+
+/**
+ * Cập nhật thời gian confirm của bar
+ */
+async function updateBookingConfirmation(bookedScheduleId, confirmedAt = new Date()) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
+    .query(`
+      UPDATE BookedSchedules
+      SET ScheduleStatus = 'Confirmed',
+          updated_at = GETDATE()
+      OUTPUT inserted.*
+      WHERE BookedScheduleId = @BookedScheduleId
+    `);
+  return result.recordset[0] || null;
+}
+
+/**
+ * Lấy booking với thông tin combo và voucher
+ */
+async function getBookedScheduleWithDetails(bookedScheduleId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("BookedScheduleId", sql.UniqueIdentifier, bookedScheduleId)
+    .query(`
+      SELECT
+        bs.*,
+        -- Thông tin voucher
+        v.VoucherName,
+        v.VoucherCode,
+        v.DiscountPercentage AS VoucherDiscountPercentage,
+        -- Thông tin bar
+        bp.BarName,
+        bp.Address AS BarAddress,
+        -- Thông tin người đặt
+        CASE
+          WHEN bs.Type = 'business' THEN ba.UserName
+          ELSE a.UserName
+        END AS BookerName,
+        CASE
+          WHEN bs.Type = 'business' THEN ba.Avatar
+          ELSE a.Avatar
+        END AS BookerAvatar,
+        NULL AS BookerPhone
+      FROM BookedSchedules bs
+      LEFT JOIN Vouchers v ON bs.VoucherId = v.VoucherId
+      LEFT JOIN BarPages bp ON bs.ReceiverId = bp.BarPageId
+      LEFT JOIN EntityAccounts ea ON bs.BookerId = ea.EntityAccountId
+      LEFT JOIN Accounts a ON ea.AccountId = a.AccountId
+      LEFT JOIN BussinessAccounts ba ON bs.BookerId = ba.BussinessAccountId
+      WHERE bs.BookedScheduleId = @BookedScheduleId
+    `);
+  return result.recordset[0] || null;
+}
+
+/**
+ * Lấy thống kê booking với combo/voucher
+ */
+async function getBookingStatsWithRevenue({ startDate, endDate, barPageId } = {}) {
+  const pool = await getPool();
+  const request = pool.request();
+
+  let whereClause = "1=1";
+
+  if (startDate) {
+    request.input("StartDate", sql.DateTime, new Date(startDate));
+    whereClause += " AND bs.created_at >= @StartDate";
+  }
+
+  if (endDate) {
+    request.input("EndDate", sql.DateTime, new Date(endDate));
+    whereClause += " AND bs.created_at <= @EndDate";
+  }
+
+  if (barPageId) {
+    request.input("BarPageId", sql.UniqueIdentifier, barPageId);
+    whereClause += " AND bs.ReceiverId = @BarPageId";
+  }
+
+  const result = await request.query(`
+    SELECT
+      COUNT(*) as totalBookings,
+      SUM(bs.TotalAmount) as totalRevenue, -- Doanh thu thực tế từ khách
+      SUM(bs.OriginalPrice) as totalOriginalRevenue, -- Tổng giá combo gốc
+      SUM(bs.OriginalPrice - bs.TotalAmount) as totalDiscountAmount, -- Tổng tiền giảm giá
+      SUM(CAST(bs.OriginalPrice * 0.15 AS INT)) as totalCommissionAmount, -- Tổng hoa hồng hệ thống (15% giá gốc)
+      SUM(bs.OriginalPrice - CAST(bs.OriginalPrice * 0.15 AS INT)) as totalBarReceiveAmount, -- Tổng tiền bar nhận
+      COUNT(CASE WHEN bs.VoucherId IS NOT NULL THEN 1 END) as bookingsWithVoucher,
+      COUNT(CASE WHEN bs.ScheduleStatus = 'Confirmed' THEN 1 END) as confirmedBookings,
+      AVG(bs.TotalAmount) as averageBookingValue,
+      COUNT(DISTINCT bs.BookerId) as uniqueCustomers
+    FROM BookedSchedules bs
+    WHERE ${whereClause} AND bs.PaymentStatus = 'Paid'
+  `);
+
+  return result.recordset[0] || {
+    totalBookings: 0,
+    totalRevenue: 0,
+    totalOriginalRevenue: 0,
+    totalDiscountAmount: 0,
+    totalCommissionAmount: 0,
+    totalBarReceiveAmount: 0,
+    bookingsWithVoucher: 0,
+    confirmedBookings: 0,
+    averageBookingValue: 0,
+    uniqueCustomers: 0
+  };
+}
+
+/**
+ * Lấy bookings chưa được bar confirm (có QR code nhưng chưa scan)
+ */
+async function getUnconfirmedBookings(barPageId, { limit = 50, offset = 0 } = {}) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("BarPageId", sql.UniqueIdentifier, barPageId)
+    .input("Limit", sql.Int, limit)
+    .input("Offset", sql.Int, offset)
+    .query(`
+      SELECT
+        bs.*,
+        CASE
+          WHEN bs.Type = 'business' THEN ba.UserName
+          ELSE a.UserName
+        END AS BookerName,
+        NULL AS BookerPhone
+      FROM BookedSchedules bs
+      LEFT JOIN EntityAccounts ea ON bs.BookerId = ea.EntityAccountId
+      LEFT JOIN Accounts a ON ea.AccountId = a.AccountId
+      LEFT JOIN BussinessAccounts ba ON bs.BookerId = ba.BussinessAccountId
+      WHERE bs.ReceiverId = @BarPageId
+        AND (bs.ScheduleStatus IS NULL OR bs.ScheduleStatus <> 'Confirmed')
+        AND bs.PaymentStatus = 'Paid'
+      ORDER BY bs.created_at DESC
+      OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY
+    `);
+  return result.recordset;
+}
+
 module.exports = {
   createBookedSchedule,
   getBookedScheduleById,
@@ -680,11 +981,20 @@ module.exports = {
   getBookedSchedulesByReceiver,
   getBookedSchedulesByRefundStatus,
   updateBookedScheduleStatuses,
+  updateBookingAmounts,
   updateBookedScheduleTiming,
   updateRefundStatus,
   getPendingBookingsOlderThan,
   deleteBookedSchedule,
   applyVoucherToBooking,
   removeVoucherFromBooking,
-  getBookingStats
+  getBookingStats,
+  // New functions for combo/voucher system
+  calculateBookingAmounts,
+  createBookedScheduleWithCombo,
+  updateBookingQRCode,
+  updateBookingConfirmation,
+  getBookedScheduleWithDetails,
+  getBookingStatsWithRevenue,
+  getUnconfirmedBookings
 };
