@@ -1884,10 +1884,10 @@ class PostService {
           existingLikeKey = normalizedEntityAccountId;
         } else {
           // Fallback: tìm theo field entityAccountId trong value
-          for (const [likeId, like] of post.likes.entries()) {
+      for (const [likeId, like] of post.likes.entries()) {
             if (normalizeGuid(like.entityAccountId) === normalizedEntityAccountId) {
-              existingLikeKey = likeId;
-              break;
+          existingLikeKey = likeId;
+          break;
             }
           }
         }
@@ -2058,10 +2058,10 @@ class PostService {
           post.likes.delete(normalizedEntityAccountId);
         } else {
           // Fallback: tìm theo field entityAccountId trong value
-          for (const [likeId, like] of post.likes.entries()) {
+      for (const [likeId, like] of post.likes.entries()) {
             if (normalizeGuid(like.entityAccountId) === normalizedEntityAccountId) {
-              post.likes.delete(likeId);
-              break;
+          post.likes.delete(likeId);
+          break;
             }
           }
         }
@@ -2962,7 +2962,7 @@ class PostService {
 
       // Cập nhật trending score sau khi tăng views
       try {
-        await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+      await FeedAlgorithm.updatePostTrendingScore(postId.toString());
       } catch (trendingError) {
         // Log nhưng không fail request
         console.warn(`[PostService] Failed to update trending score for post ${postId}:`, trendingError.message);

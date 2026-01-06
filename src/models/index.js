@@ -23,9 +23,10 @@ const reportModel = require("./reportModel");
 const tableClassificationModel = require("./tableClassificationModel");
 const userAdvertisementModel = require("./userAdvertisementModel");
 const userReviewModel = require("./userReviewModel");
+// Note: voucherModel is still used by adminVoucherController
 const voucherModel = require("./voucherModel");
-const tableApplyModel = require("./tableApplyModel");
-const voucherApplyModel = require("./voucherApplyModel");
+// Removed: tableApplyModel - not used after removing tableApplyId from combos
+// Removed: voucherApplyModel - bar voucher apply management removed
 
 module.exports = {
   accountModel,
@@ -54,6 +55,5 @@ module.exports = {
   userAdvertisementModel,
   userReviewModel,
   voucherModel,
-  tableApplyModel,
-  voucherApplyModel
+  // Removed: tableApplyModel, voucherApplyModel - bar voucher management removed
 };

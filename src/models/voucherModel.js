@@ -3,7 +3,7 @@ const { getPool, sql } = require("../db/sqlserver");
 /**
  * Lấy tất cả vouchers với filter
  */
-async function getAllVouchers({ status, createdBy, limit = 50, offset = 0 } = {}) {
+async function getAllVouchers({ status, limit = 50, offset = 0 } = {}) {
   const pool = await getPool();
   const request = pool.request()
     .input("Limit", sql.Int, limit)
@@ -16,22 +16,14 @@ async function getAllVouchers({ status, createdBy, limit = 50, offset = 0 } = {}
     whereConditions.push("v.Status = @Status");
   }
 
-  if (createdBy) {
-    request.input("CreatedBy", sql.UniqueIdentifier, createdBy);
-    whereConditions.push("v.CreatedBy = @CreatedBy");
-  }
-
   const whereClause = whereConditions.length > 0
     ? `WHERE ${whereConditions.join(" AND ")}`
     : "";
 
   const result = await request.query(`
     SELECT
-      v.*,
-      m.Email AS CreatorEmail,
-      m.UserName AS CreatorUserName
+      v.*
     FROM Vouchers v
-    LEFT JOIN Managers m ON v.CreatedBy = m.ManagerId
     ${whereClause}
     ORDER BY v.CreatedAt DESC
     OFFSET @Offset ROWS
@@ -49,12 +41,8 @@ async function getVoucherById(voucherId) {
   const result = await pool.request()
     .input("VoucherId", sql.UniqueIdentifier, voucherId)
     .query(`
-      SELECT
-        v.*,
-        m.Email AS CreatorEmail,
-        m.UserName AS CreatorUserName
+      SELECT v.*
       FROM Vouchers v
-      LEFT JOIN Managers m ON v.CreatedBy = m.ManagerId
       WHERE v.VoucherId = @VoucherId
     `);
   return result.recordset[0] || null;
@@ -68,12 +56,8 @@ async function getVoucherByCode(voucherCode) {
   const result = await pool.request()
     .input("VoucherCode", sql.NVarChar(50), voucherCode)
     .query(`
-      SELECT
-        v.*,
-        m.Email AS CreatorEmail,
-        m.UserName AS CreatorUserName
+      SELECT v.*
       FROM Vouchers v
-      LEFT JOIN Managers m ON v.CreatedBy = m.ManagerId
       WHERE v.VoucherCode = @VoucherCode
     `);
   return result.recordset[0] || null;
@@ -82,6 +66,7 @@ async function getVoucherByCode(voucherCode) {
 /**
  * Tạo voucher mới
  */
+// Tạo voucher mới
 async function createVoucher({
   startDate,
   endDate,
@@ -90,27 +75,48 @@ async function createVoucher({
   voucherCode,
   status = "ACTIVE",
   maxUsage,
-  minComboValue,
-  createdBy
+  minComboValue
 }) {
-  const pool = await getPool();
-  const result = await pool.request()
-    .input("StartDate", sql.Date, startDate)
-    .input("EndDate", sql.Date, endDate)
-    .input("DiscountPercentage", sql.Int, discountPercentage)
-    .input("VoucherName", sql.NVarChar(50), voucherName)
-    .input("VoucherCode", sql.NVarChar(50), voucherCode)
-    .input("Status", sql.NVarChar(50), status)
-    .input("MaxUsage", sql.Int, maxUsage)
-    .input("MinComboValue", sql.Decimal(18, 2), minComboValue)
-    .input("CreatedBy", sql.UniqueIdentifier, createdBy)
-    .query(`
-      INSERT INTO Vouchers
-        (StartDate, EndDate, DiscountPercentage, VoucherName, VoucherCode, Status, MaxUsage, MinComboValue, CreatedBy)
-      OUTPUT inserted.*
-      VALUES (@StartDate, @EndDate, @DiscountPercentage, @VoucherName, @VoucherCode, @Status, @MaxUsage, @MinComboValue, @CreatedBy)
-    `);
-  return result.recordset[0];
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'voucherModel.js:69',message:'createVoucher called',data:{voucherName,voucherCode,discountPercentage,maxUsage,minComboValue},sessionId:'debug-session',runId:'run1',hypothesisId:'MODEL',timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+
+  try {
+    const pool = await getPool();
+    const voucherId = require('crypto').randomUUID(); // Generate new UUID
+
+    const result = await pool.request()
+      .input("VoucherId", sql.UniqueIdentifier, voucherId)
+      .input("StartDate", sql.Date, startDate)
+      .input("EndDate", sql.Date, endDate)
+      .input("DiscountPercentage", sql.Int, discountPercentage)
+      .input("VoucherName", sql.NVarChar(50), voucherName)
+      .input("VoucherCode", sql.NVarChar(50), voucherCode)
+      .input("Status", sql.NVarChar(50), status)
+      .input("MaxUsage", sql.Int, maxUsage)
+      .input("MinComboValue", sql.Decimal(18, 2), minComboValue)
+      .query(`
+        INSERT INTO Vouchers
+          (VoucherId, StartDate, EndDate, DiscountPercentage, VoucherName, VoucherCode, Status, MaxUsage, MinComboValue)
+        OUTPUT inserted.*
+        VALUES (@VoucherId, @StartDate, @EndDate, @DiscountPercentage, @VoucherName, @VoucherCode, @Status, @MaxUsage, @MinComboValue)
+      `);
+
+    if (!result.recordset || result.recordset.length === 0) {
+      throw new Error('Insert succeeded but no record returned');
+    }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'voucherModel.js:95',message:'createVoucher success',data:{voucherId:result.recordset[0].VoucherId},sessionId:'debug-session',runId:'run1',hypothesisId:'MODEL',timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+
+    return result.recordset[0];
+  } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'voucherModel.js:100',message:'createVoucher error',data:{error:error.message},sessionId:'debug-session',runId:'run1',hypothesisId:'MODEL',timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    throw error;
+  }
 }
 
 /**
@@ -132,7 +138,26 @@ async function updateVoucher(voucherId, updates) {
   fields.forEach(field => {
     if (updates[field] !== undefined) {
       const sqlField = field.charAt(0).toUpperCase() + field.slice(1);
-      request.input(sqlField, sql.NVarChar(50), updates[field]);
+
+      // Define correct SQL types for each field
+      let sqlType;
+      switch (field) {
+        case 'discountPercentage':
+        case 'maxUsage':
+          sqlType = sql.Int;
+          break;
+        case 'minComboValue':
+          sqlType = sql.Decimal(18, 2);
+          break;
+        case 'startDate':
+        case 'endDate':
+          sqlType = sql.Date;
+          break;
+        default:
+          sqlType = sql.NVarChar(50);
+      }
+
+      request.input(sqlField, sqlType, updates[field]);
       updateFields.push(`${sqlField} = @${sqlField}`);
     }
   });
@@ -187,6 +212,22 @@ async function validateVoucher(voucherCode, comboValue) {
 }
 
 /**
+ * Tăng số lần sử dụng voucher
+ */
+async function incrementUsedCount(voucherId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("VoucherId", sql.UniqueIdentifier, voucherId)
+    .query(`
+      UPDATE Vouchers
+      SET UsedCount = UsedCount + 1
+      OUTPUT inserted.*
+      WHERE VoucherId = @VoucherId
+    `);
+  return result.recordset[0] || null;
+}
+
+/**
  * Xóa voucher
  */
 async function deleteVoucher(voucherId) {
@@ -198,9 +239,22 @@ async function deleteVoucher(voucherId) {
 }
 
 /**
+ * Lấy danh sách voucher active
+ */
+async function getActiveVouchers() {
+  const pool = await getPool();
+  const result = await pool.request().query(`
+    SELECT * FROM Vouchers
+    WHERE Status = 'ACTIVE'
+    ORDER BY VoucherCode ASC
+  `);
+  return result.recordset;
+}
+
+/**
  * Đếm tổng số vouchers
  */
-async function countVouchers({ status, createdBy } = {}) {
+async function countVouchers({ status } = {}) {
   const pool = await getPool();
   const request = pool.request();
 
@@ -209,11 +263,6 @@ async function countVouchers({ status, createdBy } = {}) {
   if (status) {
     request.input("Status", sql.NVarChar(50), status);
     whereConditions.push("Status = @Status");
-  }
-
-  if (createdBy) {
-    request.input("CreatedBy", sql.UniqueIdentifier, createdBy);
-    whereConditions.push("CreatedBy = @CreatedBy");
   }
 
   const whereClause = whereConditions.length > 0
@@ -238,5 +287,6 @@ module.exports = {
   incrementUsedCount,
   validateVoucher,
   deleteVoucher,
-  countVouchers
+  countVouchers,
+  getActiveVouchers
 };

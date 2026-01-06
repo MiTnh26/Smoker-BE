@@ -15,8 +15,7 @@ const {
   postRoutes,
   storyRoutes,
   comboRoutes,
-  voucherRoutes,
-  voucherApplyRoutes,
+  // Removed: voucherRoutes, voucherApplyRoutes - bars no longer manage vouchers
   songRoutes,
   musicRoutes,
   messageRoutes,
@@ -40,6 +39,8 @@ const {
 
 const walletRoutes = require("./routes/walletRoutes");
 const adminWalletRoutes = require("./routes/adminWalletRoutes");
+const adminVoucherRoutes = require("./routes/adminVoucherRoutes");
+const adminComboRoutes = require("./routes/adminComboRoutes");
 const managerAuthRoutes = require("./routes/managerAuthRoutes");
 
 
@@ -163,8 +164,7 @@ initSQLConnection().then(() => {
 
 // Routes
 
-app.use("/api/voucher-apply", voucherApplyRoutes);
-app.use("/api/voucher", voucherRoutes);
+// Removed: /api/voucher and /api/voucher-apply routes - bars no longer manage vouchers
 app.use("/api/combo", comboRoutes);
 app.use("/api/bar", barPageRoutes);
 app.use("/api/table-classification", tableClassificationRoutes);
@@ -202,6 +202,8 @@ app.use("/api/profile", profileRoutes);
 app.use("/api/revive/maintenance", reviveMaintenanceRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/admin", adminWalletRoutes);
+app.use("/api/admin/vouchers", adminVoucherRoutes);
+app.use("/api/admin/combos", adminComboRoutes);
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);
