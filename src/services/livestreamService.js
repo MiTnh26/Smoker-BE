@@ -120,8 +120,120 @@ async function endLivestream(livestreamId, hostAccountId) {
   return updatedLivestream || livestream;
 }
 
+async function createScheduledLivestream(payload) {
+  const {
+    title,
+    description = "",
+    scheduledStartTime,
+    settings = {},
+    hostAccountId,
+    entityAccountId,
+    entityId,
+    entityType,
+  } = payload;
+
+  if (!title) {
+    throw new Error("Title is required");
+  }
+  if (!hostAccountId) {
+    throw new Error("Authentication required. Please login again.");
+  }
+  if (!scheduledStartTime) {
+    throw new Error("Scheduled start time is required");
+  }
+
+  const scheduledTime = new Date(scheduledStartTime);
+  if (scheduledTime <= new Date()) {
+    throw new Error("Scheduled start time must be in the future");
+  }
+
+  const { hostEntityAccountId, hostEntityId, hostEntityType } = await resolveHostEntity({
+    hostAccountId,
+    entityAccountId,
+    entityId,
+    entityType,
+  });
+
+  if (!hostEntityAccountId) {
+    throw new Error("Could not determine EntityAccountId for livestream");
+  }
+
+  // Generate agora credentials now (will be used when activated)
+  const agoraCredentials = agoraService.getChannelCredentials(hostAccountId);
+
+  const livestream = await livestreamRepository.createScheduled({
+    hostAccountId,
+    hostEntityAccountId,
+    hostEntityId,
+    hostEntityType,
+    title,
+    description,
+    scheduledStartTime: scheduledTime,
+    scheduledSettings: settings,
+    agoraChannelName: agoraCredentials.channelName,
+    agoraUid: agoraCredentials.uid,
+  });
+
+  return { livestream, agora: agoraCredentials };
+}
+
+async function getScheduledLivestreams(hostAccountId = null) {
+  if (hostAccountId) {
+    return await livestreamRepository.findScheduledByHost(hostAccountId);
+  }
+  return await livestreamRepository.findScheduled();
+}
+
+async function activateScheduledLivestream(livestreamId) {
+  const livestream = await livestreamRepository.findById(livestreamId);
+  if (!livestream) {
+    throw new Error("Scheduled livestream not found");
+  }
+  if (livestream.status !== "scheduled") {
+    throw new Error("Livestream is not scheduled");
+  }
+
+  // Ensure no parallel livestream
+  await ensureNoParallelLivestream(livestream.hostAccountId, livestream.hostEntityAccountId);
+
+  // Generate new agora credentials for activation
+  const agoraCredentials = agoraService.getChannelCredentials(livestream.hostAccountId);
+
+  const activated = await livestreamRepository.activateScheduled(livestreamId, agoraCredentials);
+
+  return { livestream: activated, agora: agoraCredentials };
+}
+
+async function cancelScheduledLivestream(livestreamId, hostAccountId) {
+  const livestream = await livestreamRepository.findById(livestreamId);
+  if (!livestream) {
+    throw new Error("Scheduled livestream not found");
+  }
+  if (livestream.hostAccountId !== hostAccountId) {
+    const err = new Error("You do not have permission to cancel this scheduled livestream");
+    err.status = 403;
+    throw err;
+  }
+  if (livestream.status !== "scheduled") {
+    const err = new Error("Only scheduled livestreams can be cancelled");
+    err.status = 400;
+    throw err;
+  }
+
+  const cancelled = await livestreamRepository.updateStatus(livestreamId, {
+    status: "ended",
+    endTime: new Date(),
+  });
+
+  return cancelled || livestream;
+}
+
 module.exports = {
   startLivestream,
   endLivestream,
+  createScheduledLivestream,
+  getScheduledLivestreams,
+  activateScheduledLivestream,
+  cancelScheduledLivestream,
 };
 

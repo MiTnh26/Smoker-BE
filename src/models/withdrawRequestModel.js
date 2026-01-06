@@ -31,7 +31,7 @@ async function getWithdrawRequestById(withdrawRequestId) {
     .query(`
       SELECT 
         wr.WithdrawRequestId, wr.WalletId, wr.Amount, wr.BankInfoId,
-        wr.Status, wr.RequestedAt, wr.ReviewedAt, wr.ReviewedBy, wr.Note,
+        wr.Status, wr.RequestedAt, wr.ReviewedAt, wr.ReviewedBy, wr.Note, wr.TransferProofImage,
         bi.BankName, bi.AccountNumber, bi.AccountHolderName
       FROM WithdrawRequests wr
       LEFT JOIN BankInfo bi ON wr.BankInfoId = bi.BankInfoId
@@ -77,7 +77,7 @@ async function getAllWithdrawRequests({ limit = 50, status = null } = {}) {
   let query = `
     SELECT TOP (@Limit)
       wr.WithdrawRequestId, wr.WalletId, wr.Amount, wr.Status,
-      wr.RequestedAt, wr.ReviewedAt, wr.Note,
+      wr.RequestedAt, wr.ReviewedAt, wr.Note, wr.TransferProofImage,
       bi.BankName, bi.AccountNumber, bi.AccountHolderName,
       ea.EntityType, ea.EntityId
     FROM WithdrawRequests wr
@@ -104,7 +104,7 @@ async function getAllWithdrawRequests({ limit = 50, status = null } = {}) {
 /**
  * Duyệt yêu cầu rút tiền
  */
-async function approveWithdrawRequest(withdrawRequestId, reviewedBy, note = null, transaction = null) {
+async function approveWithdrawRequest(withdrawRequestId, reviewedBy, note = null, transferProofImage = null, transaction = null) {
   const pool = transaction || await getPool();
   const request = transaction ? transaction.request() : pool.request();
   
@@ -112,12 +112,14 @@ async function approveWithdrawRequest(withdrawRequestId, reviewedBy, note = null
     .input("WithdrawRequestId", sql.UniqueIdentifier, withdrawRequestId)
     .input("ReviewedBy", sql.UniqueIdentifier, reviewedBy)
     .input("Note", sql.NVarChar(500), note)
+    .input("TransferProofImage", sql.NVarChar(500), transferProofImage)
     .query(`
       UPDATE WithdrawRequests
       SET Status = 'approved',
           ReviewedAt = GETDATE(),
           ReviewedBy = @ReviewedBy,
-          Note = @Note
+          Note = @Note,
+          TransferProofImage = @TransferProofImage
       OUTPUT inserted.*
       WHERE WithdrawRequestId = @WithdrawRequestId
         AND Status = 'pending'
