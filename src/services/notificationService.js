@@ -582,6 +582,168 @@ class NotificationService {
     }
   }
 
+  /**
+   * Tạo notification cho từ chối yêu cầu rút tiền
+   */
+  async createWithdrawRejectionNotification({
+    receiverEntityAccountId,
+    amount,
+    note
+  }) {
+    try {
+      if (!receiverEntityAccountId) {
+        console.warn('[NotificationService] Missing receiverEntityAccountId for withdraw rejection notification');
+        return;
+      }
+
+      // Normalize GUID to lowercase for consistency
+      const normalizedReceiverEntityAccountId = String(receiverEntityAccountId).trim().toLowerCase();
+
+      // Format số tiền
+      const formattedAmount = Number(amount).toLocaleString('vi-VN');
+
+      // Tạo content
+      const content = `Yêu cầu rút tiền ${formattedAmount} đ đã bị từ chối. Lý do: ${note || 'Không có lý do cụ thể'}`;
+
+      console.log('[NotificationService] Creating withdraw rejection notification:', {
+        receiverEntityAccountId: normalizedReceiverEntityAccountId,
+        amount: formattedAmount,
+        note: note
+      });
+
+      const notification = new Notification({
+        type: "Wallet",
+        sender: null,
+        senderEntityAccountId: null, // System notification, không có sender
+        senderEntityId: null,
+        senderEntityType: null,
+        receiver: null,
+        receiverEntityAccountId: normalizedReceiverEntityAccountId,
+        receiverEntityId: null,
+        receiverEntityType: null,
+        content: content,
+        link: "/wallet", // Link đến trang ví
+        status: "Unread"
+      });
+
+      await notification.save();
+      console.log('[NotificationService] Withdraw rejection notification created successfully:', {
+        id: notification._id,
+        type: notification.type,
+        receiverEntityAccountId: notification.receiverEntityAccountId,
+        content: notification.content
+      });
+
+      // Emit socket event for real-time notification update
+      try {
+        const io = getIO();
+        const notificationPayload = {
+          notificationId: notification._id.toString(),
+          type: notification.type,
+          senderEntityAccountId: notification.senderEntityAccountId,
+          receiverEntityAccountId: notification.receiverEntityAccountId,
+          content: notification.content,
+          link: notification.link,
+          status: notification.status,
+          createdAt: notification.createdAt,
+          isAnonymous: false
+        };
+        
+        const receiverRoom = String(normalizedReceiverEntityAccountId).trim().toLowerCase();
+        io.to(receiverRoom).emit('new_notification', notificationPayload);
+        console.log('[NotificationService] Emitted new_notification to room:', receiverRoom);
+      } catch (socketError) {
+        console.warn('[NotificationService] Could not emit socket event:', socketError.message);
+        // Don't fail notification creation if socket fails
+      }
+    } catch (error) {
+      console.error('[NotificationService] Error creating withdraw rejection notification:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Tạo notification cho duyệt yêu cầu rút tiền
+   */
+  async createWithdrawApprovalNotification({
+    receiverEntityAccountId,
+    amount,
+    note
+  }) {
+    try {
+      if (!receiverEntityAccountId) {
+        console.warn('[NotificationService] Missing receiverEntityAccountId for withdraw approval notification');
+        return;
+      }
+
+      // Normalize GUID to lowercase for consistency
+      const normalizedReceiverEntityAccountId = String(receiverEntityAccountId).trim().toLowerCase();
+
+      // Format số tiền
+      const formattedAmount = Number(amount).toLocaleString('vi-VN');
+
+      // Tạo content
+      const content = note 
+        ? `Yêu cầu rút tiền ${formattedAmount} đ đã được duyệt. ${note}`
+        : `Yêu cầu rút tiền ${formattedAmount} đ đã được duyệt và chuyển khoản thành công.`;
+
+      console.log('[NotificationService] Creating withdraw approval notification:', {
+        receiverEntityAccountId: normalizedReceiverEntityAccountId,
+        amount: formattedAmount,
+        note: note
+      });
+
+      const notification = new Notification({
+        type: "Wallet",
+        sender: null,
+        senderEntityAccountId: null, // System notification, không có sender
+        senderEntityId: null,
+        senderEntityType: null,
+        receiver: null,
+        receiverEntityAccountId: normalizedReceiverEntityAccountId,
+        receiverEntityId: null,
+        receiverEntityType: null,
+        content: content,
+        link: "/wallet", // Link đến trang ví
+        status: "Unread"
+      });
+
+      await notification.save();
+      console.log('[NotificationService] Withdraw approval notification created successfully:', {
+        id: notification._id,
+        type: notification.type,
+        receiverEntityAccountId: notification.receiverEntityAccountId,
+        content: notification.content
+      });
+
+      // Emit socket event for real-time notification update
+      try {
+        const io = getIO();
+        const notificationPayload = {
+          notificationId: notification._id.toString(),
+          type: notification.type,
+          senderEntityAccountId: notification.senderEntityAccountId,
+          receiverEntityAccountId: notification.receiverEntityAccountId,
+          content: notification.content,
+          link: notification.link,
+          status: notification.status,
+          createdAt: notification.createdAt,
+          isAnonymous: false
+        };
+        
+        const receiverRoom = String(normalizedReceiverEntityAccountId).trim().toLowerCase();
+        io.to(receiverRoom).emit('new_notification', notificationPayload);
+        console.log('[NotificationService] Emitted new_notification to room:', receiverRoom);
+      } catch (socketError) {
+        console.warn('[NotificationService] Could not emit socket event:', socketError.message);
+        // Don't fail notification creation if socket fails
+      }
+    } catch (error) {
+      console.error('[NotificationService] Error creating withdraw approval notification:', error);
+      throw error;
+    }
+  }
+
 }
 
 module.exports = new NotificationService();

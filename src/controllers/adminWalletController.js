@@ -3,6 +3,7 @@ const withdrawRequestModel = require("../models/withdrawRequestModel");
 const { getPool } = require("../db/sqlserver");
 const { success, error } = require("../utils/response");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
+const notificationService = require("../services/notificationService");
 
 /**
  * Lấy tất cả yêu cầu rút tiền (cho admin/kế toán)
@@ -24,10 +25,12 @@ async function getAllWithdrawRequests(req, res) {
         status: r.Status,
         bankName: r.BankName,
         accountNumber: r.AccountNumber,
+        accountHolderName: r.AccountHolderName,
         entityType: r.EntityType,
         requestedAt: r.RequestedAt,
         reviewedAt: r.ReviewedAt,
-        note: r.Note
+        note: r.Note,
+        transferProofImage: r.TransferProofImage
       }))
     }));
   } catch (e) {
@@ -46,7 +49,7 @@ async function approveWithdrawRequest(req, res) {
   try {
     await transaction.begin();
     const { withdrawRequestId } = req.params;
-    const { note } = req.body;
+    const { note, transferProofImage } = req.body;
     const reviewerId = req.user.id; // ManagerId hoặc AccountId
     const userType = req.user.type; // "manager" hoặc undefined
     
@@ -78,6 +81,7 @@ async function approveWithdrawRequest(req, res) {
       withdrawRequestId,
       reviewerManagerId,
       note,
+      transferProofImage || null,
       transaction
     );
     
@@ -113,6 +117,32 @@ async function approveWithdrawRequest(req, res) {
     }, transaction);
     
     await transaction.commit();
+    
+    // Gửi thông báo realtime cho người dùng sau khi commit thành công
+    try {
+      const entityAccountId = wallet.EntityAccountId;
+      console.log('[AdminWalletController] Attempting to send notification:', {
+        entityAccountId: entityAccountId,
+        walletId: wallet.WalletId,
+        amount: request.Amount,
+        note: note
+      });
+      
+      if (entityAccountId) {
+        await notificationService.createWithdrawApprovalNotification({
+          receiverEntityAccountId: entityAccountId,
+          amount: request.Amount,
+          note: note
+        });
+        console.log('[AdminWalletController] Notification sent successfully for withdraw approval:', entityAccountId);
+      } else {
+        console.warn('[AdminWalletController] No EntityAccountId found in wallet:', wallet);
+      }
+    } catch (notifError) {
+      // Không fail request nếu notification fail
+      console.error('[AdminWalletController] Error sending notification:', notifError);
+      console.error('[AdminWalletController] Error stack:', notifError.stack);
+    }
     
     return res.json(success("Duyệt yêu cầu thành công", {
       withdrawRequestId: approved.WithdrawRequestId,
@@ -208,6 +238,32 @@ async function rejectWithdrawRequest(req, res) {
     }, transaction);
     
     await transaction.commit();
+    
+    // Gửi thông báo realtime cho người dùng sau khi commit thành công
+    try {
+      const entityAccountId = wallet.EntityAccountId;
+      console.log('[AdminWalletController] Attempting to send rejection notification:', {
+        entityAccountId: entityAccountId,
+        walletId: wallet.WalletId,
+        amount: request.Amount,
+        note: note
+      });
+      
+      if (entityAccountId) {
+        await notificationService.createWithdrawRejectionNotification({
+          receiverEntityAccountId: entityAccountId,
+          amount: request.Amount,
+          note: note
+        });
+        console.log('[AdminWalletController] Rejection notification sent successfully:', entityAccountId);
+      } else {
+        console.warn('[AdminWalletController] No EntityAccountId found in wallet:', wallet);
+      }
+    } catch (notifError) {
+      // Không fail request nếu notification fail
+      console.error('[AdminWalletController] Error sending rejection notification:', notifError);
+      console.error('[AdminWalletController] Error stack:', notifError.stack);
+    }
     
     return res.json(success("Từ chối yêu cầu thành công"));
   } catch (e) {

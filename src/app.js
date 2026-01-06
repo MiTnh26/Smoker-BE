@@ -124,6 +124,7 @@ initSQLConnection().then(() => {
 
   // Khởi động background job để sync stats từ Revive Ad Server
   const ReviveSyncJob = require("./jobs/reviveSyncJob");
+  const ScheduledLivestreamJob = require("./jobs/scheduledLivestreamJob");
   
   // Interval từ env (mặc định: 15 phút)
   const syncIntervalMinutes = process.env.REVIVE_SYNC_INTERVAL_MINUTES 
@@ -137,6 +138,10 @@ initSQLConnection().then(() => {
   } else {
     console.log('[App] Revive sync job skipped (no Revive configuration found)');
   }
+
+  // Khởi động background job để tự động kích hoạt scheduled livestreams
+  ScheduledLivestreamJob.start();
+  console.log('[App] Scheduled livestream job started');
 
   // Background job: tự động xoá booking bàn (BarTable) chưa thanh toán quá 5 phút
   try {
