@@ -23,6 +23,12 @@ class ReviveAdServerService {
   replaceLocalhostUrls(html) {
     if (!html || typeof html !== 'string') return html;
     
+    // Nếu Revive server đang chạy localhost, không thay thế URLs (giữ nguyên cho dev)
+    const reviveUrl = process.env.REVIVE_AD_SERVER_URL || "http://localhost/revive";
+    if (reviveUrl.includes('localhost') || reviveUrl.includes('127.0.0.1')) {
+      return html; // Giữ nguyên URLs khi đang dev
+    }
+    
     // Production frontend URL
     const productionUrl = process.env.FRONTEND_URL || process.env.APP_URL || 'https://smoker-fe-henna.vercel.app';
     
