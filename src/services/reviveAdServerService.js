@@ -394,11 +394,11 @@ class ReviveAdServerService {
           if (contentType.startsWith('image/')) {
             // If Revive redirects to image, wrap it in an anchor tag
             const imageUrl = response.request.res.responseUrl || fullUrl;
-            return {
+        return {
               html: `<a href="${imageUrl}" target="_blank" rel="noopener noreferrer"><img src="${imageUrl}" alt="Advertisement" style="max-width: 100%; height: auto;" /></a>`,
-              zoneId: zoneId
-            };
-          }
+          zoneId: zoneId
+        };
+      }
 
           // If response is already HTML (from ck.php or other methods)
           if (trimmedData.startsWith('<')) {
