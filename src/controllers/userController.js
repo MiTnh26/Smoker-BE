@@ -76,29 +76,113 @@ async function updateProfile(req, res) {
 
     bio = (bio || "").slice(0, 500);
     
+    // Helper function để extract plain text từ string (có thể là JSON string)
+    const extractPlainText = (str) => {
+      if (!str || typeof str !== 'string') return "";
+      try {
+        const parsed = JSON.parse(str);
+        if (typeof parsed === 'object') {
+          // Nếu là JSON object, lấy detail hoặc fullAddress
+          return parsed.detail || parsed.fullAddress || "";
+        }
+        return str;
+      } catch (e) {
+        // Không phải JSON, trả về như plain text
+        return str.trim();
+      }
+    };
+    
     // Xử lý address: nếu có addressData (structured), lưu dưới dạng JSON
-    // Nếu không, lưu như string bình thường
-    let addressToSave = (address || "").trim();
+    // Nếu không, lưu như string bình thường hoặc parse nếu là JSON string
+    console.log("[USER] Raw address:", address);
+    console.log("[USER] Raw addressData:", addressData);
+    console.log("[USER] address type:", typeof address);
+    console.log("[USER] addressData type:", typeof addressData);
+    
+    let addressToSave = "";
+    
     if (addressData) {
+      // Ưu tiên: Nếu có addressData, dùng nó và BỎ QUA address (tránh double encoding)
       try {
         // Parse addressData nếu là string JSON
         const addressDataObj = typeof addressData === 'string' 
           ? JSON.parse(addressData) 
           : addressData;
         
-        // Lưu dưới dạng JSON string chứa cả full address và structured data
-        addressToSave = JSON.stringify({
-          fullAddress: address || addressDataObj.fullAddress || "",
+        // Extract plain text từ các trường (tránh double encoding)
+        const detailText = addressDataObj.detail 
+          ? extractPlainText(String(addressDataObj.detail))
+          : "";
+        const fullAddressText = addressDataObj.fullAddress
+          ? extractPlainText(String(addressDataObj.fullAddress))
+          : detailText;
+        
+        // Nếu không có fullAddress hoặc detail, thử dùng address (nhưng phải extract plain text)
+        let finalFullAddress = fullAddressText || detailText;
+        if (!finalFullAddress && address) {
+          finalFullAddress = extractPlainText(String(address));
+        }
+        
+        // Lưu dưới dạng JSON string với cấu trúc chuẩn (đảm bảo fullAddress và detail là plain text)
+        const addressObj = {
+          fullAddress: finalFullAddress,
           provinceId: addressDataObj.provinceId || null,
           districtId: addressDataObj.districtId || null,
           wardId: addressDataObj.wardId || null,
-          detail: addressDataObj.detail || address || ""
-        });
+          detail: detailText || finalFullAddress || ""
+        };
+        addressToSave = JSON.stringify(addressObj);
+        console.log("[USER] Final addressToSave:", addressToSave);
+        console.log("[USER] Final addressToSave length:", addressToSave.length);
       } catch (e) {
-        console.warn("[USER] Failed to parse addressData, saving as plain string:", e);
-        // Nếu parse lỗi, lưu như string bình thường
+        console.warn("[USER] Failed to parse addressData:", e);
+        // Nếu parse lỗi, fallback về address (nhưng phải kiểm tra xem có phải JSON không)
+        if (address && typeof address === 'string') {
+          try {
+            const parsedAddress = JSON.parse(address);
+            if (typeof parsedAddress === 'object') {
+              // address là JSON, lấy detail hoặc fullAddress
+              addressToSave = parsedAddress.detail || parsedAddress.fullAddress || "";
+            } else {
+              addressToSave = (address || "").trim();
+            }
+          } catch (e2) {
+            // address không phải JSON, dùng như string
+            addressToSave = (address || "").trim();
+          }
+        }
+      }
+    } else if (address) {
+      // Nếu không có addressData, kiểm tra xem address có phải JSON không
+      try {
+        const parsedAddress = JSON.parse(address);
+        if (typeof parsedAddress === 'object') {
+          // address là JSON object - convert sang format chuẩn nếu có structured data
+          if (parsedAddress.detail || parsedAddress.provinceId || parsedAddress.districtId || parsedAddress.wardId) {
+            // Có structured data, giữ nguyên format chuẩn
+            addressToSave = JSON.stringify({
+              fullAddress: parsedAddress.fullAddress || parsedAddress.detail || "",
+              provinceId: parsedAddress.provinceId || null,
+              districtId: parsedAddress.districtId || null,
+              wardId: parsedAddress.wardId || null,
+              detail: parsedAddress.detail || ""
+            });
+          } else {
+            // Không có structured data, lấy fullAddress nếu có, nếu không thì lấy chính nó
+            addressToSave = parsedAddress.fullAddress || parsedAddress.detail || address || "";
+          }
+        } else {
+          addressToSave = (address || "").trim();
+        }
+      } catch (e) {
+        // address không phải JSON, lưu như string bình thường
         addressToSave = (address || "").trim();
       }
+    }
+    
+    // Đảm bảo addressToSave không rỗng nếu cần thiết
+    if (!addressToSave) {
+      addressToSave = (address || "").trim();
     }
     
     phone = (phone || "").replace(/\s/g, "").slice(0, 20);

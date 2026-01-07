@@ -7,6 +7,7 @@ const { getPool, sql } = require("../db/sqlserver");
  * @param {string} params.userAdId - UserAdId (optional, for regular ads)
  * @param {string} params.packageId - PackageId
  * @param {string} params.barPageId - BarPageId
+ * @param {string} params.managerId - ManagerId (required)
  * @param {string} params.accountId - AccountId
  * @param {string} params.packageName - PackageName
  * @param {string} params.packageCode - PackageCode
@@ -16,19 +17,20 @@ const { getPool, sql } = require("../db/sqlserver");
  * @param {string} params.paymentMethod - PaymentMethod
  * @param {string} params.paymentId - PaymentId
  */
-async function createPurchase({ 
+async function createPurchase({
   eventId,
-  userAdId, 
-  packageId, 
-  barPageId, 
-  accountId, 
-  packageName, 
-  packageCode, 
-  impressions, 
-  price, 
-  paymentHistoryId, 
-  paymentMethod, 
-  paymentId 
+  userAdId,
+  packageId,
+  barPageId,
+  managerId,
+  accountId,
+  packageName,
+  packageCode,
+  impressions,
+  price,
+  paymentHistoryId,
+  paymentMethod,
+  paymentId
 }) {
   const pool = await getPool();
   const result = await pool.request()
@@ -36,6 +38,7 @@ async function createPurchase({
     .input("UserAdId", sql.UniqueIdentifier, userAdId || null)
     .input("PackageId", sql.UniqueIdentifier, packageId)
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
+    .input("ManagerId", sql.UniqueIdentifier, managerId)
     .input("AccountId", sql.UniqueIdentifier, accountId)
     .input("PackageName", sql.NVarChar(255), packageName)
     .input("PackageCode", sql.NVarChar(100), packageCode)
@@ -46,12 +49,12 @@ async function createPurchase({
     .input("PaymentId", sql.NVarChar(255), paymentId || null)
     .query(`
       INSERT INTO AdPurchases
-        (PurchaseId, EventId, UserAdId, PackageId, BarPageId, AccountId, PackageName, PackageCode, 
-         Impressions, Price, PaymentHistoryId, PaymentMethod, PaymentId, 
+        (PurchaseId, EventId, UserAdId, PackageId, BarPageId, ManagerId, AccountId, PackageName, PackageCode,
+         Impressions, Price, PaymentHistoryId, PaymentMethod, PaymentId,
          PaymentStatus, Status, UsedImpressions, PurchasedAt)
       OUTPUT inserted.*
       VALUES
-        (NEWID(), @EventId, @UserAdId, @PackageId, @BarPageId, @AccountId, @PackageName, @PackageCode,
+        (NEWID(), @EventId, @UserAdId, @PackageId, @BarPageId, @ManagerId, @AccountId, @PackageName, @PackageCode,
          @Impressions, @Price, @PaymentHistoryId, @PaymentMethod, @PaymentId,
          'pending', 'pending', 0, GETDATE())
     `);

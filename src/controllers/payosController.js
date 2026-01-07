@@ -449,121 +449,114 @@ class PayOSController {
       console.log("[PayOS Controller] ========== handleBookingPayment STARTED ==========");
       console.log("[PayOS Controller] Input parameters:", {
         bookedScheduleId: bookedScheduleId,
-        bookedScheduleIdType: typeof bookedScheduleId,
         processedStatus: processedData.status,
-        processedData: JSON.stringify(processedData, null, 2)
+        processedAmount: processedData.amount
       });
 
       const bookedScheduleModel = require("../models/bookedScheduleModel");
+      const voucherModel = require("../models/voucherModel");
+      const qrService = require("../services/qrService");
       const paymentHistoryModel = require("../models/paymentHistoryModel");
-      const { getPool, sql } = require("../db/sqlserver");
-
-      console.log("[PayOS Controller] Checking payment status:", {
-        status: processedData.status,
-        isPAID: processedData.status === "PAID"
-      });
+      const DetailSchedule = require("../models/detailSchedule");
 
       if (processedData.status === "PAID") {
-        // Thanh toán thành công
-        console.log("[PayOS Controller] Booking payment successful:", bookedScheduleId);
+        console.log("[PayOS Controller] ✅ Booking payment successful:", bookedScheduleId);
 
-        // 1. Lấy thông tin booking
-        console.log("[PayOS Controller] STEP 1: Fetching booking from DB...");
-        const booking = await bookedScheduleModel.getBookedScheduleById(bookedScheduleId);
+        // 1. Lấy thông tin booking với chi tiết combo/voucher
+        const booking = await bookedScheduleModel.getBookedScheduleWithDetails(bookedScheduleId);
         if (!booking) {
-          console.error("[PayOS Controller] ❌ Booking not found:", bookedScheduleId);
           throw new Error("Booking not found");
         }
-        console.log("[PayOS Controller] ✅ Booking found:", {
-          bookedScheduleId: booking.BookedScheduleId,
-          currentPaymentStatus: booking.PaymentStatus,
-          currentScheduleStatus: booking.ScheduleStatus,
-          totalAmount: booking.TotalAmount
+
+        console.log("[PayOS Controller] Booking details:", {
+          bookingId: booking.BookedScheduleId,
+          comboName: booking.ComboName,
+          originalPrice: booking.OriginalPrice,
+          discountAmount: Math.max(0, Number(booking.OriginalPrice || 0) - Number(booking.TotalAmount || 0)),
+          finalAmount: booking.TotalAmount,
+          voucherCode: booking.VoucherCode,
+          commissionAmount: Math.floor(Number(booking.OriginalPrice || 0) * 0.15),
+          barReceiveAmount: Number(booking.OriginalPrice || 0) - Math.floor(Number(booking.OriginalPrice || 0) * 0.15)
         });
 
-        // 2. Tạo PaymentHistory cho tiền cọc (chuyển cho platform, receiverId = null)
-        console.log("[PayOS Controller] Creating PaymentHistory for deposit...");
-        const depositAmount = 100000; // Tiền cọc cố định 100.000 VND
-        const paymentHistory = await paymentHistoryModel.createPaymentHistory({
-          type: 'booking',
-          senderId: booking.BookerId,
-          receiverId: null, // Platform giữ tiền cọc
-          transferContent: `Tiền cọc booking ${booking.Type || 'Performer'}`,
-          transferAmount: depositAmount
-        });
-        console.log("[PayOS Controller] PaymentHistory created for deposit:", paymentHistory.PaymentHistoryId);
-
-        // 3. Kiểm tra payment status hiện tại trước khi update
-        console.log("[PayOS Controller] Current booking payment status:", booking.PaymentStatus);
-        
-        // 4. Update booking payment + schedule status
-        //    - Luôn cập nhật PaymentStatus = 'Paid'
-        //    - Nếu là booking bàn (BarTable) và đang ở trạng thái Pending,
-        //      thì chuyển ScheduleStatus sang 'Confirmed' để khoá bàn.
-        console.log("[PayOS Controller] STEP 4: Updating booking payment status to 'Paid'...");
-        console.log("[PayOS Controller] Before update:", {
-          bookedScheduleId: bookedScheduleId,
-          currentPaymentStatus: booking.PaymentStatus,
-          targetPaymentStatus: "Paid"
-        });
-        
-        const statusUpdate = {
-          paymentStatus: "Paid", // Đã thanh toán cọc
-        };
-
-        // Chỉ auto-confirm cho BarTable; DJ/Dancer booking vẫn để Pending
-        if (
-          String(booking.Type || "").toLowerCase() === "bartable" &&
-          String(booking.ScheduleStatus || "").toLowerCase() === "pending"
-        ) {
-          statusUpdate.scheduleStatus = "Confirmed";
+        // 2. Giảm UsedCount của voucher nếu có
+        if (booking.VoucherId) {
+          console.log("[PayOS Controller] Decrementing voucher usage:", booking.VoucherId);
+          await voucherModel.incrementUsedCount(booking.VoucherId);
         }
 
+        // 3. Tạo PaymentHistory cho toàn bộ giao dịch
+        // 3a. PaymentHistory cho hoa hồng hệ thống (commission)
+        const originalPrice = Number(booking.OriginalPrice || 0);
+        const commissionAmount = Math.floor(originalPrice * 0.15);
+        const barReceiveAmount = originalPrice - commissionAmount;
+
+        if (commissionAmount > 0) {
+          const commissionHistory = await paymentHistoryModel.createPaymentHistory({
+            type: 'commission',
+            senderId: booking.BookerId,
+            receiverId: null, // Platform nhận hoa hồng
+            transferContent: `Hoa hồng 15% combo ${booking.ComboName}`,
+            transferAmount: commissionAmount
+          });
+          console.log("[PayOS Controller] Commission PaymentHistory created:", commissionHistory.PaymentHistoryId);
+        }
+
+        // 3b. PaymentHistory cho tiền bar nhận
+        if (barReceiveAmount > 0) {
+          const barPaymentHistory = await paymentHistoryModel.createPaymentHistory({
+            type: 'booking',
+            senderId: booking.BookerId,
+            receiverId: booking.ReceiverId, // Bar nhận tiền
+            transferContent: `Thanh toán combo ${booking.ComboName}`,
+            transferAmount: barReceiveAmount
+          });
+          console.log("[PayOS Controller] Bar PaymentHistory created:", barPaymentHistory.PaymentHistoryId);
+        }
+
+        // 4. Cập nhật booking status thành Paid
         const updatedBooking = await bookedScheduleModel.updateBookedScheduleStatuses(
           bookedScheduleId,
-          statusUpdate
+          { paymentStatus: "Paid" }
         );
-        
-        if (!updatedBooking) {
-          console.error("[PayOS Controller] ❌ Failed to update booking status - updatedBooking is null");
-          console.error("[PayOS Controller] This means UPDATE query returned no rows!");
-          throw new Error("Failed to update booking payment status");
+
+        console.log("[PayOS Controller] ✅ Booking payment status updated to Paid");
+
+        // 5. Generate QR code cho bar scan confirm
+        console.log("[PayOS Controller] Generating QR code for booking confirmation...");
+        const qrCode = await qrService.generateBookingQR(bookedScheduleId, booking);
+
+        // 6. Lưu QR code vào Mongo DetailSchedule (DB không có cột QRCode)
+        if (booking.MongoDetailId) {
+          await DetailSchedule.findByIdAndUpdate(
+            booking.MongoDetailId,
+            { $set: { QRCode: qrCode } },
+            { new: true }
+          );
         }
-        
-        console.log("[PayOS Controller] ✅ Booking payment status updated (from updateBookedScheduleStatuses):", {
-          bookedScheduleId: updatedBooking?.BookedScheduleId,
-          paymentStatus: updatedBooking?.PaymentStatus,
-          previousStatus: booking.PaymentStatus,
-          updateSuccess: updatedBooking?.PaymentStatus === "Paid"
+
+        console.log("[PayOS Controller] ✅ QR code generated and saved:", {
+          bookingId: bookedScheduleId,
+          qrCodeLength: qrCode.length
         });
-        
-        // 5. Verify update bằng cách query lại từ database
-        console.log("[PayOS Controller] STEP 5: Verifying update by querying DB again...");
-        const verifyBooking = await bookedScheduleModel.getBookedScheduleById(bookedScheduleId);
-        
-        if (!verifyBooking) {
-          console.error("[PayOS Controller] ❌ CRITICAL: Cannot find booking after update! BookingId:", bookedScheduleId);
-        } else {
-          console.log("[PayOS Controller] ✅ Verified booking status from DB:", {
-            bookedScheduleId: verifyBooking?.BookedScheduleId,
-            paymentStatus: verifyBooking?.PaymentStatus,
-            scheduleStatus: verifyBooking?.ScheduleStatus,
-            verificationSuccess: verifyBooking?.PaymentStatus === "Paid"
-          });
-          
-          if (verifyBooking?.PaymentStatus !== "Paid") {
-            console.error("[PayOS Controller] ❌ CRITICAL: PaymentStatus is NOT 'Paid' after update!");
-            console.error("[PayOS Controller] Expected: 'Paid', Actual:", verifyBooking?.PaymentStatus);
-          }
+
+        // 7. Gửi notification cho bar
+        try {
+          const notificationService = require("../services/notificationService");
+          await notificationService.notifyBarNewBooking(bookedScheduleId);
+          console.log("[PayOS Controller] ✅ Bar notification sent");
+        } catch (notifyError) {
+          console.warn("[PayOS Controller] ⚠️ Failed to send bar notification:", notifyError.message);
         }
 
         console.log("[PayOS Controller] ========== handleBookingPayment COMPLETED SUCCESSFULLY ==========");
       } else {
         // Thanh toán thất bại
-        console.log("[PayOS Controller] ⚠️ Booking payment status is NOT 'PAID':", {
-          bookedScheduleId: bookedScheduleId,
+        console.log("[PayOS Controller] ❌ Booking payment failed:", {
+          bookingId: bookedScheduleId,
           status: processedData.status
         });
+
         await bookedScheduleModel.updateBookedScheduleStatuses(bookedScheduleId, {
           paymentStatus: "Failed"
         });
@@ -571,9 +564,8 @@ class PayOSController {
       }
     } catch (error) {
       console.error("[PayOS Controller] ========== handleBookingPayment ERROR ==========");
-      console.error("[PayOS Controller] Error handling booking payment:", error);
-      console.error("[PayOS Controller] Error message:", error.message);
-      console.error("[PayOS Controller] Error stack:", error.stack);
+      console.error("[PayOS Controller] Error:", error.message);
+      console.error("[PayOS Controller] Stack:", error.stack);
       console.error("[PayOS Controller] Error details:", {
         name: error.name,
         code: error.code,

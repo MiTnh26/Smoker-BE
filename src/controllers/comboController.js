@@ -22,10 +22,10 @@ exports.getCombos = async (req, res) => {
 // Tạo combo
 exports.createCombo = async (req, res) => {
   try {
-    const { comboName, barPageId, price = 0, tableApplyId = null, voucherApplyId = null } = req.body;
+    const { comboName, barPageId, price = 0, description = null } = req.body;
     if (!comboName || !barPageId) return res.status(400).json({ status: "error", message: "Thiếu dữ liệu bắt buộc" });
 
-    const combo = await createCombo({ comboName, barId: barPageId, price, tableApplyId, voucherApplyId });
+    const combo = await createCombo({ comboName, barId: barPageId, price, description });
     return res.status(201).json({ status: "success", data: combo });
   } catch (err) {
     console.error("createCombo error:", err);
@@ -38,13 +38,13 @@ exports.createCombo = async (req, res) => {
 exports.updateCombo = async (req, res) => {
   try {
     const { comboId } = req.params;
-    const { comboName, price, tableApplyId, voucherApplyId } = req.body;
+    const { comboName, price, description } = req.body;
 
     if (!comboId) {
       return res.status(400).json({ status: "error", message: "Thiếu comboId" });
     }
 
-    const updated = await updateCombo(comboId, { comboName, price, tableApplyId, voucherApplyId });
+    const updated = await updateCombo(comboId, { comboName, price, description });
 
     if (!updated) {
       return res.status(404).json({ status: "error", message: "Không tìm thấy combo để cập nhật" });
