@@ -21,14 +21,17 @@ async function isBarPage(accountId) {
 async function createUserAd({ barPageId, accountId, title, description, imageUrl, redirectUrl }) {
   const pool = await getPool();
   
-  // Verify BarPage thuộc về AccountId
-  const verifyResult = await pool.request()
-    .input("BarPageId", sql.UniqueIdentifier, barPageId)
-    .input("AccountId", sql.UniqueIdentifier, accountId)
-    .query(`
+  // Verify BarPage tồn tại (và nếu có accountId thì verify ownership)
+  const verifyRequest = pool.request().input("BarPageId", sql.UniqueIdentifier, barPageId);
+  if (accountId) {
+    verifyRequest.input("AccountId", sql.UniqueIdentifier, accountId);
+  }
+
+  const verifyResult = await verifyRequest.query(`
       SELECT TOP 1 BarPageId
       FROM BarPages
-      WHERE BarPageId = @BarPageId AND AccountId = @AccountId
+      WHERE BarPageId = @BarPageId
+        ${accountId ? "AND AccountId = @AccountId" : ""}
     `);
   
   if (verifyResult.recordset.length === 0) {
@@ -42,16 +45,15 @@ async function createUserAd({ barPageId, accountId, title, description, imageUrl
   await pool.request()
     .input("UserAdId", sql.UniqueIdentifier, userAdId)
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
-    .input("AccountId", sql.UniqueIdentifier, accountId)
     .input("Title", sql.NVarChar(255), title)
     .input("Description", sql.NVarChar(sql.MAX), description || null)
     .input("ImageUrl", sql.NVarChar(sql.MAX), imageUrl)
     .input("RedirectUrl", sql.NVarChar(sql.MAX), redirectUrl)
     .query(`
       INSERT INTO UserAdvertisements
-        (UserAdId, BarPageId, AccountId, Title, Description, ImageUrl, RedirectUrl, Status, CreatedAt, UpdatedAt)
+        (UserAdId, BarPageId, Title, Description, ImageUrl, RedirectUrl, Status, CreatedAt, UpdatedAt)
       VALUES
-        (@UserAdId, @BarPageId, @AccountId, @Title, @Description, @ImageUrl, @RedirectUrl, 'pending', GETDATE(), GETDATE())
+        (@UserAdId, @BarPageId, @Title, @Description, @ImageUrl, @RedirectUrl, 'pending', GETDATE(), GETDATE())
     `);
   
   // Query the newly created record
@@ -98,10 +100,11 @@ async function getAdsByAccountId(accountId) {
   const result = await pool.request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
     .query(`
-      SELECT *
-      FROM UserAdvertisements
-      WHERE AccountId = @AccountId
-      ORDER BY CreatedAt DESC
+      SELECT ua.*
+      FROM UserAdvertisements ua
+      INNER JOIN BarPages bp ON ua.BarPageId = bp.BarPageId
+      WHERE bp.AccountId = @AccountId
+      ORDER BY ua.CreatedAt DESC
     `);
   return result.recordset;
 }
@@ -118,11 +121,10 @@ async function getPendingAds(limit = 50) {
         ua.*,
         bp.BarName,
         bp.Email AS BarEmail,
-        a.Email AS AccountEmail,
-        a.UserName AS AccountUserName
+        bp.Email AS AccountEmail,
+        bp.BarName AS AccountUserName
       FROM UserAdvertisements ua
       INNER JOIN BarPages bp ON ua.BarPageId = bp.BarPageId
-      INNER JOIN Accounts a ON ua.AccountId = a.AccountId
       WHERE ua.Status = 'pending'
       ORDER BY ua.CreatedAt ASC
     `);
@@ -151,10 +153,9 @@ async function findById(userAdId) {
       .query(`
         SELECT ua.*,
           bp.BarName,
-          a.Email AS AccountEmail
+          bp.Email AS AccountEmail
         FROM UserAdvertisements ua
         LEFT JOIN BarPages bp ON ua.BarPageId = bp.BarPageId
-        LEFT JOIN Accounts a ON ua.AccountId = a.AccountId
         WHERE ua.UserAdId = @UserAdId
       `);
     return result.recordset[0] || null;
@@ -341,10 +342,9 @@ async function getAllAds({ status, barPageId, limit = 50, offset = 0 } = {}) {
     SELECT 
       ua.*,
       bp.BarName,
-      a.Email AS AccountEmail
+      bp.Email AS AccountEmail
     FROM UserAdvertisements ua
     LEFT JOIN BarPages bp ON ua.BarPageId = bp.BarPageId
-    LEFT JOIN Accounts a ON ua.AccountId = a.AccountId
     ${whereClause}
     ORDER BY ua.CreatedAt DESC
     OFFSET @Offset ROWS
