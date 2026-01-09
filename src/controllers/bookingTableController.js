@@ -1015,7 +1015,32 @@ class BookingTableController {
         try {
           detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
           if (detailSchedule) {
-            detailSchedule = detailSchedule.toObject();
+            // Convert to plain object và xử lý Map Table
+            detailSchedule = detailSchedule.toObject({ flattenMaps: true });
+            
+            // Đảm bảo Table được convert đúng cách nếu vẫn là Map
+            if (detailSchedule.Table && detailSchedule.Table instanceof Map) {
+              const tableObj = {};
+              detailSchedule.Table.forEach((value, key) => {
+                tableObj[key] = value;
+              });
+              detailSchedule.Table = tableObj;
+            } else if (detailSchedule.Table && typeof detailSchedule.Table === 'object') {
+              // Nếu đã là object nhưng có thể cần convert nested objects
+              const tableObj = {};
+              Object.keys(detailSchedule.Table).forEach(key => {
+                const tableInfo = detailSchedule.Table[key];
+                if (tableInfo && typeof tableInfo === 'object') {
+                  tableObj[key] = {
+                    TableName: tableInfo.TableName || tableInfo.tableName || '',
+                    Price: tableInfo.Price || tableInfo.price || ''
+                  };
+                } else {
+                  tableObj[key] = tableInfo;
+                }
+              });
+              detailSchedule.Table = tableObj;
+            }
           }
         } catch (mongoError) {
           console.error("Error fetching DetailSchedule from MongoDB:", mongoError);

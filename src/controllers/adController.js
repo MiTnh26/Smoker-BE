@@ -630,12 +630,16 @@ class AdController {
           try {
             if (!purchase.PaymentHistoryId) {
               console.log("[AdController] ========== CREATING PAYMENT HISTORY ==========");
-              console.log("[AdController] Getting EntityAccountId for AccountId:", purchase.AccountId);
               
-              const entityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(purchase.AccountId);
-              console.log("[AdController] EntityAccountId result:", entityAccountId);
-              
-              if (entityAccountId) {
+              // Lấy BarPage để lấy EntityAccountId
+              const barPage = await barPageModel.getBarPageById(purchase.BarPageId);
+              if (!barPage || !barPage.EntityAccountId) {
+                console.error("[AdController] ❌ BarPage or EntityAccountId not found for BarPageId:", purchase.BarPageId);
+                console.error("[AdController] Cannot create PaymentHistory without EntityAccountId");
+              } else {
+                const entityAccountId = barPage.EntityAccountId;
+                console.log("[AdController] EntityAccountId from BarPage:", entityAccountId);
+                
                 console.log("[AdController] Creating PaymentHistory record...");
                 const paymentHistoryData = {
                   type: 'ad_package',
@@ -671,9 +675,6 @@ class AdController {
                     SELECT PaymentHistoryId FROM AdPurchases WHERE PurchaseId = @PurchaseId
                   `);
                 console.log("[AdController] Verified PaymentHistoryId:", verifyPh.recordset[0]?.PaymentHistoryId);
-              } else {
-                console.error("[AdController] ❌ EntityAccountId not found for AccountId:", purchase.AccountId);
-                console.error("[AdController] Cannot create PaymentHistory without EntityAccountId");
               }
             } else {
               console.log("[AdController] PaymentHistoryId already exists:", purchase.PaymentHistoryId);
@@ -723,10 +724,14 @@ class AdController {
               `- Package: ${purchase.PackageName} (${parseInt(purchase.Impressions).toLocaleString()} lượt xem) - ${parseFloat(purchase.Price).toLocaleString('vi-VN')} VND`
             ].join('\n');
             
+            // Lấy AccountId từ BarPage để gửi notification
+            const barPageForNotif = await barPageModel.getBarPageById(purchase.BarPageId);
+            const senderAccountId = barPageForNotif?.AccountId;
+            
             for (const admin of adminResult.recordset) {
               await notificationService.createNotification({
                 type: "Confirm",
-                sender: purchase.AccountId,
+                sender: senderAccountId || purchase.BarPageId, // Fallback to BarPageId nếu không có AccountId
                 receiver: admin.AccountId,
                 content: notificationContent,
                 link: `/admin/ads/event-purchases/pending/${purchase.PurchaseId}`
@@ -869,6 +874,23 @@ class AdController {
         });
       }
       
+      // Lấy ManagerId mặc định (admin manager) hoặc NULL nếu không có
+      // ManagerId có thể NULL trong AdPurchases nếu không bắt buộc
+      let managerId = null;
+      try {
+        const { getPool, sql } = require("../db/sqlserver");
+        const pool = await getPool();
+        const managerResult = await pool.request().query(`
+          SELECT TOP 1 ManagerId FROM Managers WHERE Role IN ('Admin', 'admin') ORDER BY CreatedAt ASC
+        `);
+        if (managerResult.recordset.length > 0) {
+          managerId = managerResult.recordset[0].ManagerId;
+        }
+      } catch (managerError) {
+        console.warn("[AdController] Could not get default ManagerId, using NULL:", managerError.message);
+        managerId = null;
+      }
+      
       // Tạo purchase record với status 'pending' và paymentStatus 'pending'
       const orderCode = Date.now(); // Tạo orderCode unique từ timestamp
       const purchase = await adPurchaseModel.createPurchase({
@@ -876,7 +898,7 @@ class AdController {
         userAdId: null,
         packageId,
         barPageId: event.BarPageId,
-        accountId,
+        managerId: managerId, // Sử dụng ManagerId mặc định hoặc NULL
         packageName,
         packageCode: pkg.PackageCode,
         impressions: parseInt(impressions),
