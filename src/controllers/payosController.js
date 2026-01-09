@@ -338,15 +338,16 @@ class PayOSController {
         // Thanh toán thành công
         console.log("[PayOS Controller] AdPurchase payment successful:", purchase.PurchaseId);
 
-        // 1. Lấy EntityAccountId
-        console.log("[PayOS Controller] Getting EntityAccountId for AccountId:", purchase.AccountId);
-        const entityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(purchase.AccountId);
+        // 1. Lấy EntityAccountId từ BarPage
+        console.log("[PayOS Controller] Getting EntityAccountId from BarPageId:", purchase.BarPageId);
+        const barPage = await barPageModel.getBarPageById(purchase.BarPageId);
         
-        if (!entityAccountId) {
-          console.error("[PayOS Controller] EntityAccountId not found for AccountId:", purchase.AccountId);
+        if (!barPage || !barPage.EntityAccountId) {
+          console.error("[PayOS Controller] BarPage or EntityAccountId not found for BarPageId:", purchase.BarPageId);
           throw new Error("EntityAccountId not found");
         }
         
+        const entityAccountId = barPage.EntityAccountId;
         console.log("[PayOS Controller] EntityAccountId found:", entityAccountId);
 
         // 2. Tạo PaymentHistory
