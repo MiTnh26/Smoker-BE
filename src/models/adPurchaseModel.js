@@ -8,7 +8,6 @@ const { getPool, sql } = require("../db/sqlserver");
  * @param {string} params.packageId - PackageId
  * @param {string} params.barPageId - BarPageId
  * @param {string} params.managerId - ManagerId (required)
- * @param {string} params.accountId - AccountId
  * @param {string} params.packageName - PackageName
  * @param {string} params.packageCode - PackageCode
  * @param {number} params.impressions - Impressions
@@ -23,7 +22,6 @@ async function createPurchase({
   packageId,
   barPageId,
   managerId,
-  accountId,
   packageName,
   packageCode,
   impressions,
@@ -33,13 +31,16 @@ async function createPurchase({
   paymentId
 }) {
   const pool = await getPool();
-  const result = await pool.request()
+  const crypto = require('crypto');
+  const purchaseId = crypto.randomUUID();
+  
+  await pool.request()
+    .input("PurchaseId", sql.UniqueIdentifier, purchaseId)
     .input("EventId", sql.UniqueIdentifier, eventId || null)
     .input("UserAdId", sql.UniqueIdentifier, userAdId || null)
     .input("PackageId", sql.UniqueIdentifier, packageId)
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
-    .input("ManagerId", sql.UniqueIdentifier, managerId)
-    .input("AccountId", sql.UniqueIdentifier, accountId)
+    .input("ManagerId", sql.UniqueIdentifier, managerId || null)
     .input("PackageName", sql.NVarChar(255), packageName)
     .input("PackageCode", sql.NVarChar(100), packageCode)
     .input("Impressions", sql.Int, impressions)
@@ -49,14 +50,42 @@ async function createPurchase({
     .input("PaymentId", sql.NVarChar(255), paymentId || null)
     .query(`
       INSERT INTO AdPurchases
-        (PurchaseId, EventId, UserAdId, PackageId, BarPageId, ManagerId, AccountId, PackageName, PackageCode,
+        (PurchaseId, EventId, UserAdId, PackageId, BarPageId, ManagerId, PackageName, PackageCode,
          Impressions, Price, PaymentHistoryId, PaymentMethod, PaymentId,
          PaymentStatus, Status, UsedImpressions, PurchasedAt)
-      OUTPUT inserted.*
       VALUES
-        (NEWID(), @EventId, @UserAdId, @PackageId, @BarPageId, @ManagerId, @AccountId, @PackageName, @PackageCode,
+        (@PurchaseId, @EventId, @UserAdId, @PackageId, @BarPageId, @ManagerId, @PackageName, @PackageCode,
          @Impressions, @Price, @PaymentHistoryId, @PaymentMethod, @PaymentId,
          'pending', 'pending', 0, GETDATE())
+    `);
+  
+  // Query lại để lấy record vừa tạo
+  const result = await pool.request()
+    .input("PurchaseId", sql.UniqueIdentifier, purchaseId)
+    .query(`
+      SELECT 
+        PurchaseId,
+        EventId,
+        UserAdId,
+        PackageId,
+        BarPageId,
+        ManagerId,
+        PackageName,
+        PackageCode,
+        Impressions,
+        Price,
+        PaymentHistoryId,
+        PaymentMethod,
+        PaymentId,
+        PaymentStatus,
+        Status,
+        UsedImpressions,
+        PurchasedAt,
+        ActivatedAt,
+        CompletedAt,
+        CancelledAt
+      FROM AdPurchases
+      WHERE PurchaseId = @PurchaseId
     `);
   return result.recordset[0];
 }
@@ -68,7 +97,31 @@ async function findById(purchaseId) {
   const pool = await getPool();
   const result = await pool.request()
     .input("PurchaseId", sql.UniqueIdentifier, purchaseId)
-    .query("SELECT TOP 1 * FROM AdPurchases WHERE PurchaseId = @PurchaseId");
+    .query(`
+      SELECT 
+        PurchaseId,
+        EventId,
+        UserAdId,
+        PackageId,
+        BarPageId,
+        ManagerId,
+        PackageName,
+        PackageCode,
+        Impressions,
+        Price,
+        PaymentHistoryId,
+        PaymentMethod,
+        PaymentId,
+        PaymentStatus,
+        Status,
+        UsedImpressions,
+        PurchasedAt,
+        ActivatedAt,
+        CompletedAt,
+        CancelledAt
+      FROM AdPurchases 
+      WHERE PurchaseId = @PurchaseId
+    `);
   return result.recordset[0] || null;
 }
 
@@ -79,7 +132,31 @@ async function findByPaymentId(paymentId) {
   const pool = await getPool();
   const result = await pool.request()
     .input("PaymentId", sql.NVarChar(255), paymentId)
-    .query("SELECT TOP 1 * FROM AdPurchases WHERE PaymentId = @PaymentId");
+    .query(`
+      SELECT TOP 1
+        PurchaseId,
+        EventId,
+        UserAdId,
+        PackageId,
+        BarPageId,
+        ManagerId,
+        PackageName,
+        PackageCode,
+        Impressions,
+        Price,
+        PaymentHistoryId,
+        PaymentMethod,
+        PaymentId,
+        PaymentStatus,
+        Status,
+        UsedImpressions,
+        PurchasedAt,
+        ActivatedAt,
+        CompletedAt,
+        CancelledAt
+      FROM AdPurchases 
+      WHERE PaymentId = @PaymentId
+    `);
   return result.recordset[0] || null;
 }
 
@@ -91,7 +168,27 @@ async function getPurchasesByUserAdId(userAdId) {
   const result = await pool.request()
     .input("UserAdId", sql.UniqueIdentifier, userAdId)
     .query(`
-      SELECT *
+      SELECT 
+        PurchaseId,
+        EventId,
+        UserAdId,
+        PackageId,
+        BarPageId,
+        ManagerId,
+        PackageName,
+        PackageCode,
+        Impressions,
+        Price,
+        PaymentHistoryId,
+        PaymentMethod,
+        PaymentId,
+        PaymentStatus,
+        Status,
+        UsedImpressions,
+        PurchasedAt,
+        ActivatedAt,
+        CompletedAt,
+        CancelledAt
       FROM AdPurchases
       WHERE UserAdId = @UserAdId
       ORDER BY PurchasedAt DESC
@@ -107,7 +204,27 @@ async function findByUserAdId(userAdId) {
   const result = await pool.request()
     .input("UserAdId", sql.UniqueIdentifier, userAdId)
     .query(`
-      SELECT TOP 1 *
+      SELECT TOP 1
+        PurchaseId,
+        EventId,
+        UserAdId,
+        PackageId,
+        BarPageId,
+        ManagerId,
+        PackageName,
+        PackageCode,
+        Impressions,
+        Price,
+        PaymentHistoryId,
+        PaymentMethod,
+        PaymentId,
+        PaymentStatus,
+        Status,
+        UsedImpressions,
+        PurchasedAt,
+        ActivatedAt,
+        CompletedAt,
+        CancelledAt
       FROM AdPurchases
       WHERE UserAdId = @UserAdId AND Status = 'active'
       ORDER BY PurchasedAt DESC
@@ -123,7 +240,27 @@ async function getPurchasesByBarPageId(barPageId) {
   const result = await pool.request()
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
     .query(`
-      SELECT *
+      SELECT 
+        PurchaseId,
+        EventId,
+        UserAdId,
+        PackageId,
+        BarPageId,
+        ManagerId,
+        PackageName,
+        PackageCode,
+        Impressions,
+        Price,
+        PaymentHistoryId,
+        PaymentMethod,
+        PaymentId,
+        PaymentStatus,
+        Status,
+        UsedImpressions,
+        PurchasedAt,
+        ActivatedAt,
+        CompletedAt,
+        CancelledAt
       FROM AdPurchases
       WHERE BarPageId = @BarPageId
       ORDER BY PurchasedAt DESC
@@ -132,19 +269,19 @@ async function getPurchasesByBarPageId(barPageId) {
 }
 
 /**
- * Lấy purchases của một Account
+ * Lấy purchases của một Account (thông qua BarPageId)
+ * @deprecated - Sử dụng getPurchasesByBarPageId thay thế
  */
 async function getPurchasesByAccountId(accountId) {
-  const pool = await getPool();
-  const result = await pool.request()
-    .input("AccountId", sql.UniqueIdentifier, accountId)
-    .query(`
-      SELECT *
-      FROM AdPurchases
-      WHERE AccountId = @AccountId
-      ORDER BY PurchasedAt DESC
-    `);
-  return result.recordset;
+  // Lấy BarPageId từ AccountId
+  const barPageModel = require("./barPageModel");
+  const barPage = await barPageModel.getBarPageByAccountId(accountId);
+  if (!barPage) {
+    return [];
+  }
+  
+  // Lấy purchases theo BarPageId
+  return getPurchasesByBarPageId(barPage.BarPageId);
 }
 
 /**
@@ -155,7 +292,27 @@ async function getPurchasesByEventId(eventId) {
   const result = await pool.request()
     .input("EventId", sql.UniqueIdentifier, eventId)
     .query(`
-      SELECT ap.*, 
+      SELECT 
+        ap.PurchaseId,
+        ap.EventId,
+        ap.UserAdId,
+        ap.PackageId,
+        ap.BarPageId,
+        ap.ManagerId,
+        ap.PackageName,
+        ap.PackageCode,
+        ap.Impressions,
+        ap.Price,
+        ap.PaymentHistoryId,
+        ap.PaymentMethod,
+        ap.PaymentId,
+        ap.PaymentStatus,
+        ap.Status,
+        ap.UsedImpressions,
+        ap.PurchasedAt,
+        ap.ActivatedAt,
+        ap.CompletedAt,
+        ap.CancelledAt,
         e.EventName,
         e.Description AS EventDescription,
         e.Picture AS EventPicture,
@@ -177,19 +334,37 @@ async function getPendingEventPurchases(limit = 50) {
     .input("Limit", sql.Int, limit)
     .query(`
       SELECT TOP (@Limit)
-        ap.*,
+        ap.PurchaseId,
+        ap.EventId,
+        ap.UserAdId,
+        ap.PackageId,
+        ap.BarPageId,
+        ap.ManagerId,
+        ap.PackageName,
+        ap.PackageCode,
+        ap.Impressions,
+        ap.Price,
+        ap.PaymentHistoryId,
+        ap.PaymentMethod,
+        ap.PaymentId,
+        ap.PaymentStatus,
+        ap.Status,
+        ap.UsedImpressions,
+        ap.PurchasedAt,
+        ap.ActivatedAt,
+        ap.CompletedAt,
+        ap.CancelledAt,
         e.EventName,
         e.Description AS EventDescription,
         e.Picture AS EventPicture,
         e.RedirectUrl AS EventRedirectUrl,
-        e.BarPageId,
+        e.BarPageId AS EventBarPageId,
         bp.BarName,
-        a.Email AS AccountEmail,
-        a.UserName AS AccountUserName
+        bp.Email AS AccountEmail,
+        bp.BarName AS AccountUserName
       FROM AdPurchases ap
       INNER JOIN Events e ON ap.EventId = e.EventId
       INNER JOIN BarPages bp ON ap.BarPageId = bp.BarPageId
-      INNER JOIN Accounts a ON ap.AccountId = a.AccountId
       WHERE ap.EventId IS NOT NULL
         AND ap.UserAdId IS NULL
         AND ap.PaymentStatus = 'paid'
@@ -238,7 +413,27 @@ async function updatePurchaseStatus(purchaseId, status, paymentStatus = null) {
   const result = await pool.request()
     .input("PurchaseId", sql.UniqueIdentifier, purchaseId)
     .query(`
-      SELECT *
+      SELECT 
+        PurchaseId,
+        EventId,
+        UserAdId,
+        PackageId,
+        BarPageId,
+        ManagerId,
+        PackageName,
+        PackageCode,
+        Impressions,
+        Price,
+        PaymentHistoryId,
+        PaymentMethod,
+        PaymentId,
+        PaymentStatus,
+        Status,
+        UsedImpressions,
+        PurchasedAt,
+        ActivatedAt,
+        CompletedAt,
+        CancelledAt
       FROM AdPurchases
       WHERE PurchaseId = @PurchaseId
     `);
@@ -251,13 +446,41 @@ async function updatePurchaseStatus(purchaseId, status, paymentStatus = null) {
  */
 async function updateUsedImpressions(purchaseId, usedImpressions) {
   const pool = await getPool();
-  const result = await pool.request()
+  await pool.request()
     .input("PurchaseId", sql.UniqueIdentifier, purchaseId)
     .input("UsedImpressions", sql.Int, usedImpressions)
     .query(`
       UPDATE AdPurchases
       SET UsedImpressions = @UsedImpressions
-      OUTPUT inserted.*
+      WHERE PurchaseId = @PurchaseId
+    `);
+  
+  // Query lại để lấy record đã update
+  const result = await pool.request()
+    .input("PurchaseId", sql.UniqueIdentifier, purchaseId)
+    .query(`
+      SELECT 
+        PurchaseId,
+        EventId,
+        UserAdId,
+        PackageId,
+        BarPageId,
+        ManagerId,
+        PackageName,
+        PackageCode,
+        Impressions,
+        Price,
+        PaymentHistoryId,
+        PaymentMethod,
+        PaymentId,
+        PaymentStatus,
+        Status,
+        UsedImpressions,
+        PurchasedAt,
+        ActivatedAt,
+        CompletedAt,
+        CancelledAt
+      FROM AdPurchases
       WHERE PurchaseId = @PurchaseId
     `);
   return result.recordset[0] || null;
@@ -271,7 +494,27 @@ async function getPurchaseByPaymentHistoryId(paymentHistoryId) {
   const result = await pool.request()
     .input("PaymentHistoryId", sql.UniqueIdentifier, paymentHistoryId)
     .query(`
-      SELECT TOP 1 *
+      SELECT TOP 1
+        PurchaseId,
+        EventId,
+        UserAdId,
+        PackageId,
+        BarPageId,
+        ManagerId,
+        PackageName,
+        PackageCode,
+        Impressions,
+        Price,
+        PaymentHistoryId,
+        PaymentMethod,
+        PaymentId,
+        PaymentStatus,
+        Status,
+        UsedImpressions,
+        PurchasedAt,
+        ActivatedAt,
+        CompletedAt,
+        CancelledAt
       FROM AdPurchases
       WHERE PaymentHistoryId = @PaymentHistoryId
     `);

@@ -1,4 +1,4 @@
-
+const crypto = require('crypto');
 const BarReview = require('../models/barReviewModel');
 const { getAccountById } = require('../models/accountModel');
 
@@ -138,7 +138,7 @@ module.exports = {
               const dateStr = dateValue.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
               
               const insertResult = await pool.request()
-                .input("BarReviewId", sql.UniqueIdentifier, require('uuid').v4())
+                .input("BarReviewId", sql.UniqueIdentifier, crypto.randomUUID())
                 .input("BarId", sql.UniqueIdentifier, reviewData.BarId)
                 .input("Star", sql.Int, reviewData.Star)
                 .input("Picture", sql.NVarChar(2000), reviewData.Picture)
@@ -182,7 +182,7 @@ module.exports = {
                 : new Date(reviewData.BookingDate);
               
               const insertResult = await pool.request()
-                .input("BarReviewId", sql.UniqueIdentifier, require('uuid').v4())
+                .input("BarReviewId", sql.UniqueIdentifier, crypto.randomUUID())
                 .input("BarId", sql.UniqueIdentifier, reviewData.BarId)
                 .input("Star", sql.Int, reviewData.Star)
                 .input("Picture", sql.NVarChar(2000), reviewData.Picture)
@@ -228,7 +228,7 @@ module.exports = {
               : new Date(reviewData.BookingDate);
             
             const insertResult = await pool.request()
-              .input("BarReviewId", sql.UniqueIdentifier, require('uuid').v4())
+              .input("BarReviewId", sql.UniqueIdentifier, crypto.randomUUID())
               .input("BarId", sql.UniqueIdentifier, reviewData.BarId)
               .input("Star", sql.Int, reviewData.Star)
               .input("Picture", sql.NVarChar(2000), reviewData.Picture)
