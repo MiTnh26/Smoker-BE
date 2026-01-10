@@ -178,7 +178,7 @@ async function createTransaction({
 async function getTransactions(walletId, { limit = 50, offset = 0, type = null, status = null } = {}) {
   const pool = await getPool();
   let query = `
-    SELECT TOP (@Limit)
+    SELECT 
       TransactionId, TransactionType, Amount, BalanceBefore, BalanceAfter,
       SourceType, SourceId, Status, Description, CreatedAt
     FROM WalletTransactions
@@ -187,7 +187,8 @@ async function getTransactions(walletId, { limit = 50, offset = 0, type = null, 
   
   const request = pool.request()
     .input("WalletId", sql.UniqueIdentifier, walletId)
-    .input("Limit", sql.Int, limit);
+    .input("Limit", sql.Int, limit)
+    .input("Offset", sql.Int, offset);
   
   if (type) {
     query += ` AND TransactionType = @Type`;
@@ -199,7 +200,9 @@ async function getTransactions(walletId, { limit = 50, offset = 0, type = null, 
     request.input("Status", sql.NVarChar(20), status);
   }
   
-  query += ` ORDER BY CreatedAt DESC`;
+  query += ` ORDER BY CreatedAt DESC
+    OFFSET @Offset ROWS
+    FETCH NEXT @Limit ROWS ONLY`;
   
   const result = await request.query(query);
   return result.recordset;
