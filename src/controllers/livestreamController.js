@@ -4,12 +4,13 @@ const { livestreamService, livestreamViewerService } = require("../services");
 // POST /api/livestream/start - Create stream and return Agora token
 exports.startLivestream = async (req, res) => {
   try {
-    const { title, description, entityAccountId, entityId, entityType } = req.body;
+    const { title, description, pinnedComment, entityAccountId, entityId, entityType } = req.body;
     const hostAccountId = req.user?.id;
 
     const { livestream, agora } = await livestreamService.startLivestream({
       title,
       description,
+      pinnedComment,
       hostAccountId,
       entityAccountId,
       entityId,
