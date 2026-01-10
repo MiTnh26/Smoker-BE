@@ -43,26 +43,42 @@ const {
   exports.createTableClassification = async (req, res) => {
     try {
       const { tableTypeName, color, barPageId, tableTypes } = req.body;
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationController.js:44',message:'createTableClassification called',data:{tableTypeName,color,barPageId,hasTableTypes:!!tableTypes,sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       
       // Handle multiple table types creation
       if (tableTypes && Array.isArray(tableTypes)) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationController.js:49',message:'Processing multiple table types',data:{tableTypesCount:tableTypes.length,barPageId,sessionId:'debug-session',runId:'run1',hypothesisId:'A'},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+
         const results = [];
         for (const tableType of tableTypes) {
           if (tableType.name && tableType.color) {
-            const newClassification = await createTableClassification({ 
-              tableTypeName: tableType.name, 
-              color: tableType.color, 
-              barPageId 
+            const newClassification = await createTableClassification({
+              tableTypeName: tableType.name,
+              color: tableType.color,
+              barPageId
             });
             results.push(newClassification);
           }
         }
         return res.status(201).json({ status: "success", data: results });
       }
-      
+
       // Handle single table type creation
-      if (!tableTypeName || !color || !barPageId)
+      if (!tableTypeName || !color || !barPageId) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationController.js:64',message:'Missing required data',data:{hasTableTypeName:!!tableTypeName,hasColor:!!color,hasBarPageId:!!barPageId,barPageId,sessionId:'debug-session',runId:'run1',hypothesisId:'A'},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         return res.status(400).json({ status: "error", message: "Thiếu dữ liệu bắt buộc" });
+      }
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationController.js:67',message:'Calling createTableClassification',data:{tableTypeName,color,barPageId,sessionId:'debug-session',runId:'run1',hypothesisId:'B'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
 
       const newClassification = await createTableClassification({ tableTypeName, color, barPageId });
       return res.status(201).json({ status: "success", data: newClassification });

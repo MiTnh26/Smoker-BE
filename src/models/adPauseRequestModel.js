@@ -56,12 +56,12 @@ async function findById(pauseRequestId) {
         ua.TotalImpressions,
         ua.TotalClicks,
         bp.BarName,
-        a.Email AS AccountEmail,
+        bp.Email AS AccountEmail,
+        bp.AccountId,
         admin.Email AS AdminEmail
       FROM AdPauseRequests pr
       INNER JOIN UserAdvertisements ua ON pr.UserAdId = ua.UserAdId
       INNER JOIN BarPages bp ON pr.BarPageId = bp.BarPageId
-      INNER JOIN Accounts a ON pr.AccountId = a.AccountId
       LEFT JOIN Accounts admin ON pr.AdminProcessedBy = admin.AccountId
       WHERE pr.PauseRequestId = @PauseRequestId
     `);
@@ -120,12 +120,11 @@ async function getAllPauseRequests({ status, limit = 50, offset = 0 } = {}) {
       ua.ReviveCampaignId,
       ua.ReviveZoneId,
       bp.BarName,
-      a.Email AS AccountEmail,
+      bp.Email AS AccountEmail,
       admin.Email AS AdminEmail
     FROM AdPauseRequests pr
     INNER JOIN UserAdvertisements ua ON pr.UserAdId = ua.UserAdId
     INNER JOIN BarPages bp ON pr.BarPageId = bp.BarPageId
-    INNER JOIN Accounts a ON pr.AccountId = a.AccountId
     LEFT JOIN Accounts admin ON pr.AdminProcessedBy = admin.AccountId
     ${whereClause}
     ORDER BY pr.CreatedAt DESC

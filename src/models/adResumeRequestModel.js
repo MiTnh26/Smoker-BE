@@ -56,12 +56,12 @@ async function findById(resumeRequestId) {
         ua.TotalImpressions,
         ua.TotalClicks,
         bp.BarName,
-        a.Email AS AccountEmail,
+        bp.Email AS AccountEmail,
+        bp.AccountId,
         admin.Email AS AdminEmail
       FROM AdResumeRequests rr
       INNER JOIN UserAdvertisements ua ON rr.UserAdId = ua.UserAdId
       INNER JOIN BarPages bp ON rr.BarPageId = bp.BarPageId
-      INNER JOIN Accounts a ON rr.AccountId = a.AccountId
       LEFT JOIN Accounts admin ON rr.AdminProcessedBy = admin.AccountId
       WHERE rr.ResumeRequestId = @ResumeRequestId
     `);
@@ -120,12 +120,11 @@ async function getAllResumeRequests({ status, limit = 50, offset = 0 } = {}) {
       ua.ReviveCampaignId,
       ua.ReviveZoneId,
       bp.BarName,
-      a.Email AS AccountEmail,
+      bp.Email AS AccountEmail,
       admin.Email AS AdminEmail
     FROM AdResumeRequests rr
     INNER JOIN UserAdvertisements ua ON rr.UserAdId = ua.UserAdId
     INNER JOIN BarPages bp ON rr.BarPageId = bp.BarPageId
-    INNER JOIN Accounts a ON rr.AccountId = a.AccountId
     LEFT JOIN Accounts admin ON rr.AdminProcessedBy = admin.AccountId
     ${whereClause}
     ORDER BY rr.CreatedAt DESC

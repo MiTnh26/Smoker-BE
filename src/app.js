@@ -15,8 +15,7 @@ const {
   postRoutes,
   storyRoutes,
   comboRoutes,
-  voucherRoutes,
-  voucherApplyRoutes,
+  // Removed: voucherRoutes, voucherApplyRoutes - bars no longer manage vouchers
   songRoutes,
   musicRoutes,
   messageRoutes,
@@ -40,6 +39,8 @@ const {
 
 const walletRoutes = require("./routes/walletRoutes");
 const adminWalletRoutes = require("./routes/adminWalletRoutes");
+const adminVoucherRoutes = require("./routes/adminVoucherRoutes");
+const adminComboRoutes = require("./routes/adminComboRoutes");
 const managerAuthRoutes = require("./routes/managerAuthRoutes");
 
 
@@ -123,7 +124,6 @@ initSQLConnection().then(() => {
 
   // Khởi động background job để sync stats từ Revive Ad Server
   const ReviveSyncJob = require("./jobs/reviveSyncJob");
-  const ScheduledLivestreamJob = require("./jobs/scheduledLivestreamJob");
   
   // Interval từ env (mặc định: 15 phút)
   const syncIntervalMinutes = process.env.REVIVE_SYNC_INTERVAL_MINUTES 
@@ -137,10 +137,6 @@ initSQLConnection().then(() => {
   } else {
     console.log('[App] Revive sync job skipped (no Revive configuration found)');
   }
-
-  // Khởi động background job để tự động kích hoạt scheduled livestreams
-  ScheduledLivestreamJob.start();
-  console.log('[App] Scheduled livestream job started');
 
   // Background job: tự động xoá booking bàn (BarTable) chưa thanh toán quá 5 phút
   try {
@@ -168,8 +164,7 @@ initSQLConnection().then(() => {
 
 // Routes
 
-app.use("/api/voucher-apply", voucherApplyRoutes);
-app.use("/api/voucher", voucherRoutes);
+// Removed: /api/voucher and /api/voucher-apply routes - bars no longer manage vouchers
 app.use("/api/combo", comboRoutes);
 app.use("/api/bar", barPageRoutes);
 app.use("/api/table-classification", tableClassificationRoutes);
@@ -207,6 +202,8 @@ app.use("/api/profile", profileRoutes);
 app.use("/api/revive/maintenance", reviveMaintenanceRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/admin", adminWalletRoutes);
+app.use("/api/admin/vouchers", adminVoucherRoutes);
+app.use("/api/admin/combos", adminComboRoutes);
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);

@@ -1,8 +1,68 @@
 // src/controllers/bookingTableController.js
 const bookingTableService = require("../services/bookingTableService");
+const qrService = require("../services/qrService");
 
 class BookingTableController {
-  // POST /api/booking-tables
+  constructor() {
+    // Bind methods that reference `this` so they work when passed as route handlers
+    this.createPayment = this.createPayment.bind(this);
+    this.getPaymentLink = this.getPaymentLink.bind(this);
+    this.createFullPayment = this.createFullPayment.bind(this);
+    this.getFullPaymentLink = this.getFullPaymentLink.bind(this);
+  }
+
+  // POST /api/booking-tables - Tạo booking với combo bắt buộc (API mới)
+  async createWithCombo(req, res) {
+    try {
+      const accountId = req.user?.id; // AccountId trong token
+
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const {
+        receiverId,    // EntityAccountId của bar
+        comboId,       // ID combo bắt buộc
+        voucherCode,   // Voucher code (optional)
+        tableId,       // ID bàn được chọn
+        bookingDate,
+        startTime,
+        endTime,
+        note
+      } = req.body;
+
+      // Validate required fields
+      if (!comboId || !tableId) {
+        return res.status(400).json({
+          success: false,
+          message: "comboId và tableId là bắt buộc"
+        });
+      }
+
+      const result = await bookingTableService.createBarTableBookingWithCombo({
+        bookerAccountId: accountId,
+        receiverEntityId: receiverId,
+        comboId,
+        voucherCode,
+        tableId,
+        bookingDate,
+        startTime,
+        endTime,
+        note
+      });
+
+      return res.status(result.success ? 201 : 400).json(result);
+    } catch (error) {
+      console.error("createWithCombo booking table error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error creating booking table with combo",
+        error: error.message,
+      });
+    }
+  }
+
+  // POST /api/booking-tables - API cũ (backward compatibility)
   async create(req, res) {
     try {
       const accountId = req.user?.id; // AccountId trong token
@@ -20,7 +80,6 @@ class BookingTableController {
         startTime,
         endTime,
         paymentStatus, // "Pending" hoặc "Paid"
-        // scheduleStatus từ FE sẽ bị bỏ qua để tránh auto-confirm sai
       } = req.body;
 
       const result = await bookingTableService.createBarTableBooking({
@@ -32,10 +91,7 @@ class BookingTableController {
         bookingDate,
         startTime,
         endTime,
-        paymentStatus: paymentStatus || "Pending", // Mặc định Pending
-        // Luôn tạo booking với ScheduleStatus = 'Pending'.
-        // Chỉ webhook PayOS (khi PaymentStatus = 'Paid' cho BarTable)
-        // mới đổi sang 'Confirmed'.
+        paymentStatus: paymentStatus || "Pending",
         scheduleStatus: "Pending",
       });
 
@@ -50,7 +106,35 @@ class BookingTableController {
     }
   }
 
-  // PATCH /api/booking-tables/:id/confirm
+  // POST /api/booking-tables/confirm-by-qr - Xác nhận bằng QR code
+  async confirmByQR(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { qrData } = req.body;
+      if (!qrData) {
+        return res.status(400).json({
+          success: false,
+          message: "qrData is required"
+        });
+      }
+
+      const result = await bookingTableService.confirmBookingByQR(qrData, accountId);
+      return res.status(result.success ? 200 : 400).json(result);
+    } catch (error) {
+      console.error("confirm by QR error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error confirming booking by QR",
+        error: error.message,
+      });
+    }
+  }
+
+  // PATCH /api/booking-tables/:id/confirm - Xác nhận thủ công (fallback)
   async confirm(req, res) {
     try {
       const accountId = req.user?.id;
@@ -85,6 +169,36 @@ class BookingTableController {
       return res.status(500).json({
         success: false,
         message: "Error canceling booking",
+        error: error.message,
+      });
+    }
+  }
+
+  // POST /api/booking-tables/:id/request-refund - Yêu cầu hoàn tiền
+  async requestRefund(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { id } = req.params;
+      const { reason, evidenceUrls } = req.body;
+
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message: "Cần cung cấp lý do hoàn tiền"
+        });
+      }
+
+      const result = await bookingTableService.requestRefund(id, accountId, reason, evidenceUrls);
+      return res.status(result.success ? 200 : 400).json(result);
+    } catch (error) {
+      console.error("request refund error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error requesting refund",
         error: error.message,
       });
     }
@@ -171,6 +285,78 @@ class BookingTableController {
     }
   }
 
+  // PATCH /api/booking-tables/:id/mark-arrived - Đánh dấu khách đã tới quán (thủ công)
+  async markArrived(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { id } = req.params;
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+
+      // Kiểm tra quyền: chỉ bar owner mới có thể mark arrived
+      const barEntityId = await require("../models/entityAccount1Model").getEntityAccountIdByAccountId(accountId, "BarPage");
+      if (!barEntityId) {
+        return res.status(403).json({
+          success: false,
+          message: "Chỉ quán bar mới có thể đánh dấu khách đã tới"
+        });
+      }
+
+      // Kiểm tra booking tồn tại và thuộc về bar này
+      const booking = await bookedScheduleModel.getBookedScheduleById(id);
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: "Booking not found"
+        });
+      }
+
+      if (booking.ReceiverId.toLowerCase() !== barEntityId.toLowerCase()) {
+        return res.status(403).json({
+          success: false,
+          message: "Bạn không có quyền đánh dấu booking này"
+        });
+      }
+
+      // Chỉ có thể mark arrived từ Confirmed status
+      const currentStatus = booking.ScheduleStatus || booking.scheduleStatus;
+      if (currentStatus !== 'Confirmed') {
+        return res.status(400).json({
+          success: false,
+          message: `Chỉ có thể đánh dấu 'Đã tới quán' từ trạng thái 'Confirmed'. Trạng thái hiện tại: ${currentStatus}`
+        });
+      }
+
+      // Cập nhật ScheduleStatus thành "Arrived"
+      const result = await bookedScheduleModel.updateBookedScheduleStatuses(id, {
+        scheduleStatus: "Arrived"
+      });
+
+      if (!result) {
+        return res.status(404).json({
+          success: false,
+          message: "Booking not found"
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+        message: "Đã đánh dấu khách đã tới quán"
+      });
+    } catch (error) {
+      console.error("markArrived error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error marking booking as arrived",
+        error: error.message
+      });
+    }
+  }
+
   // PATCH /api/booking-tables/:id/end - Cập nhật status thành Ended
   async endBooking(req, res) {
     try {
@@ -181,6 +367,34 @@ class BookingTableController {
 
       const { id } = req.params;
       const bookedScheduleModel = require("../models/bookedScheduleModel");
+
+      // Kiểm tra quyền: chỉ bar owner hoặc admin mới có thể end booking
+      const barEntityId = await require("../models/entityAccount1Model").getEntityAccountIdByAccountId(accountId, "BarPage");
+      const booking = await bookedScheduleModel.getBookedScheduleById(id);
+      
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: "Booking not found"
+        });
+      }
+
+      // Bar owner hoặc admin có thể end
+      if (barEntityId && booking.ReceiverId.toLowerCase() !== barEntityId.toLowerCase()) {
+        return res.status(403).json({
+          success: false,
+          message: "Bạn không có quyền kết thúc booking này"
+        });
+      }
+
+      // Chỉ có thể end từ Arrived hoặc Confirmed status
+      const currentStatus = booking.ScheduleStatus || booking.scheduleStatus;
+      if (currentStatus !== 'Arrived' && currentStatus !== 'Confirmed') {
+        return res.status(400).json({
+          success: false,
+          message: `Chỉ có thể kết thúc booking từ trạng thái 'Arrived' hoặc 'Confirmed'. Trạng thái hiện tại: ${currentStatus}`
+        });
+      }
 
       // Cập nhật ScheduleStatus thành "Ended"
       const result = await bookedScheduleModel.updateBookedScheduleStatuses(id, {
@@ -209,17 +423,16 @@ class BookingTableController {
     }
   }
 
-  // POST /api/booking-tables/:id/create-payment - Tạo payment link cho table booking (cọc)
-  async createPayment(req, res) {
+  // POST /api/booking-tables/:id/create-full-payment - Tạo payment link cho toàn bộ combo
+  async createFullPayment(req, res) {
     try {
       const { id } = req.params; // BookedScheduleId
-      const { depositAmount } = req.body; // Số tiền cọc (mặc định = số bàn * 100k)
       const payosService = require("../services/payosService");
       const bookedScheduleModel = require("../models/bookedScheduleModel");
       const { getPool, sql } = require("../db/sqlserver");
 
-      // Lấy booking
-      const booking = await bookedScheduleModel.getBookedScheduleById(id);
+      // Lấy booking với thông tin combo
+      const booking = await bookedScheduleModel.getBookedScheduleWithDetails(id);
       if (!booking) {
         return res.status(404).json({
           success: false,
@@ -227,21 +440,50 @@ class BookingTableController {
         });
       }
 
-      // Kiểm tra nếu đã thanh toán cọc
+      // Kiểm tra nếu đã thanh toán
       if (booking.PaymentStatus === "Paid") {
         return res.status(400).json({
           success: false,
-          message: "Booking deposit already paid"
+          message: "Booking đã được thanh toán"
         });
       }
 
-      // Sử dụng depositAmount từ request hoặc tính từ số bàn (mỗi bàn 100k)
-      const deposit = depositAmount || 100000;
+      // FE có thể truyền số tiền sau giảm + discount% để đảm bảo PayOS đúng ngay
+      const requestedAmount = req.body?.amount ?? req.body?.paymentAmount ?? req.body?.depositAmount;
+      const requestedDiscount = req.body?.discountPercentages;
 
-      if (deposit <= 0) {
+      // Nếu có dữ liệu từ FE thì update lại booking amounts trước khi tạo PayOS link
+      if (requestedAmount !== undefined || requestedDiscount !== undefined) {
+        const safeAmount = requestedAmount !== undefined ? parseInt(requestedAmount) : undefined;
+        const safeDiscount = requestedDiscount !== undefined ? parseInt(requestedDiscount) : undefined;
+
+        // guard cơ bản
+        if (safeAmount !== undefined && (!Number.isFinite(safeAmount) || safeAmount < 0)) {
+          return res.status(400).json({ success: false, message: "Invalid amount" });
+        }
+        if (safeDiscount !== undefined && (!Number.isFinite(safeDiscount) || safeDiscount < 0 || safeDiscount > 5)) {
+          return res.status(400).json({ success: false, message: "Invalid discountPercentages" });
+        }
+
+        try {
+          await bookedScheduleModel.updateBookingAmounts(id, {
+            totalAmount: safeAmount,
+            discountPercentages: safeDiscount
+          });
+          // Reload booking để dùng số tiền mới nhất
+          booking.TotalAmount = safeAmount !== undefined ? safeAmount : booking.TotalAmount;
+          booking.DiscountPercentages = safeDiscount !== undefined ? safeDiscount : booking.DiscountPercentages;
+        } catch (e) {
+          console.warn("[BookingTableController] updateBookingAmounts failed:", e.message);
+        }
+      }
+
+      // Lấy số tiền cần thanh toán (đã tính voucher)
+      const paymentAmount = requestedAmount !== undefined ? parseInt(requestedAmount) : booking.TotalAmount;
+      if (!paymentAmount || paymentAmount <= 0) {
         return res.status(400).json({
           success: false,
-          message: "Deposit amount must be greater than 0"
+          message: "Invalid payment amount"
         });
       }
 
@@ -254,10 +496,11 @@ class BookingTableController {
       const cancelUrl = `${frontendUrl}/customer/newsfeed`;
 
       // PayOS description tối đa 25 ký tự
-      const description = `Coc dat ban`.substring(0, 25);
+      const comboName = booking.ComboName || "Combo";
+      const description = `Combo ${comboName}`.substring(0, 25);
 
       const paymentData = {
-        amount: parseInt(deposit), // PayOS cần số nguyên (VND) - tiền cọc
+        amount: parseInt(paymentAmount), // Toàn bộ tiền combo sau khi áp dụng voucher
         orderCode: orderCode,
         description: description,
         returnUrl: returnUrl,
@@ -265,15 +508,14 @@ class BookingTableController {
       };
 
       const payosResult = await payosService.createPayment(paymentData);
-
-      // ✅ QUAN TRỌNG: Sử dụng orderCode từ PayOS response
       const actualOrderCode = payosResult.orderCode || orderCode;
       
-      console.log("[BookingTableController] Payment link created:", {
-        localOrderCode: orderCode,
-        payosOrderCode: payosResult.orderCode,
-        actualOrderCode: actualOrderCode,
+      console.log("[BookingTableController] Full payment link created:", {
         bookingId: id,
+        comboName: booking.ComboName,
+        originalPrice: booking.OriginalPrice,
+          discountAmount: Math.max(0, Number(booking.OriginalPrice || 0) - Number(booking.TotalAmount || 0)),
+        finalAmount: paymentAmount,
         paymentUrl: payosResult.paymentUrl
       });
 
@@ -296,11 +538,6 @@ class BookingTableController {
         `);
         
         // Insert orderCode mapping
-        console.log("[BookingTableController] Saving orderCode mapping to BookingPayments:", {
-          bookedScheduleId: id,
-          orderCode: actualOrderCode
-        });
-        
         const insertResult = await pool.request()
           .input("BookedScheduleId", sql.UniqueIdentifier, id)
           .input("OrderCode", sql.BigInt, actualOrderCode)
@@ -309,45 +546,52 @@ class BookingTableController {
             VALUES (@BookedScheduleId, @OrderCode);
           `);
         
-        console.log("[BookingTableController] ✅ OrderCode mapping saved successfully:", {
+        console.log("[BookingTableController] ✅ OrderCode mapping saved:", {
           bookedScheduleId: id,
-          orderCode: actualOrderCode,
-          rowsAffected: insertResult.rowsAffected
+          orderCode: actualOrderCode
         });
       } catch (dbError) {
-        console.error("[BookingTableController] ❌ Error saving orderCode mapping:", dbError);
-        // Continue anyway
+        console.error("[BookingTableController] ❌ Error saving orderCode:", dbError);
       }
 
       return res.status(200).json({
         success: true,
         data: {
           paymentUrl: payosResult.paymentUrl,
-          orderCode: payosResult.orderCode,
-          bookingId: id
+          orderCode: actualOrderCode,
+          bookingId: id,
+          amount: paymentAmount,
+          comboName: booking.ComboName,
+          discountAmount: Math.max(0, Number(booking.OriginalPrice || 0) - Number(booking.TotalAmount || 0))
         },
-        message: "Payment link created successfully"
+        message: "Payment link for full combo created successfully"
       });
     } catch (error) {
-      console.error("[BookingTableController] createPayment error:", error);
+      console.error("[BookingTableController] createFullPayment error:", error);
       return res.status(500).json({
         success: false,
-        message: "Error creating payment link",
+        message: "Error creating full payment link",
         error: error.message
       });
     }
   }
 
-  // GET /api/booking-tables/:id/get-payment-link - Lấy payment link từ bookingId (tái sử dụng nếu có)
-  async getPaymentLink(req, res) {
+  // POST /api/booking-tables/:id/create-payment - API cũ (backward compatibility)
+  async createPayment(req, res) {
+    console.warn("⚠️ DEPRECATED: createPayment is deprecated. Use createFullPayment instead.");
+    return this.createFullPayment(req, res);
+  }
+
+  // GET /api/booking-tables/:id/get-full-payment-link - Lấy payment link cho combo
+  async getFullPaymentLink(req, res) {
     try {
-      const { id } = req.params; // BookedScheduleId
+      const { id } = req.params;
       const payosService = require("../services/payosService");
       const bookedScheduleModel = require("../models/bookedScheduleModel");
       const { getPool, sql } = require("../db/sqlserver");
 
-      // Lấy booking
-      const booking = await bookedScheduleModel.getBookedScheduleById(id);
+      // Lấy booking với thông tin combo
+      const booking = await bookedScheduleModel.getBookedScheduleWithDetails(id);
       if (!booking) {
         return res.status(404).json({
           success: false,
@@ -355,11 +599,11 @@ class BookingTableController {
         });
       }
 
-      // Kiểm tra nếu đã thanh toán cọc
+      // Kiểm tra nếu đã thanh toán
       if (booking.PaymentStatus === "Paid") {
         return res.status(400).json({
           success: false,
-          message: "Booking deposit already paid"
+          message: "Booking đã được thanh toán"
         });
       }
 
@@ -385,7 +629,6 @@ class BookingTableController {
           try {
             const paymentInfo = await payosService.getPaymentInfo(existingOrderCode);
             if (paymentInfo.success && paymentInfo.data) {
-              // Kiểm tra xem payment link còn hợp lệ không (chưa thanh toán và chưa hết hạn)
               const paymentData = paymentInfo.data;
               const status = paymentData.status || paymentData.Status;
               
@@ -397,37 +640,24 @@ class BookingTableController {
                   data: {
                     paymentUrl: paymentData.checkoutUrl || paymentData.paymentUrl,
                     orderCode: existingOrderCode,
-                    bookingId: id
+                    bookingId: id,
+                    amount: booking.TotalAmount,
+                    comboName: booking.ComboName
                   },
                   message: "Payment link retrieved successfully"
                 });
               }
             }
           } catch (payosError) {
-            console.log("[BookingTableController] Cannot reuse payment link, creating new one:", payosError.message);
-            // Nếu không lấy được payment info, tạo mới
+            console.log("[BookingTableController] Cannot reuse payment link:", payosError.message);
           }
         }
       } catch (dbError) {
         console.error("[BookingTableController] Error checking existing orderCode:", dbError);
-        // Continue to create new payment link
       }
 
       // Nếu không có orderCode hoặc payment link đã hết hạn, tạo mới
-      // Tính số tiền cọc từ số bàn (mỗi bàn 100k)
-      const detailSchedule = booking.MongoDetailId ? await require("../models/detailSchedule").findById(booking.MongoDetailId) : null;
-      let deposit = 100000; // Mặc định 1 bàn
-      
-      if (detailSchedule && detailSchedule.Table) {
-        let tableMap = detailSchedule.Table;
-        if (tableMap instanceof Map) {
-          tableMap = Object.fromEntries(tableMap);
-        } else if (tableMap && typeof tableMap.toObject === 'function') {
-          tableMap = tableMap.toObject();
-        }
-        const tableCount = Object.keys(tableMap || {}).length;
-        deposit = tableCount * 100000;
-      }
+      const paymentAmount = booking.TotalAmount;
 
       // Tạo orderCode mới
       const orderCode = Date.now();
@@ -437,10 +667,11 @@ class BookingTableController {
       const returnUrl = `${frontendUrl}/payment-return?type=table-booking&bookingId=${id}&orderCode=${orderCode}`;
       const cancelUrl = `${frontendUrl}/customer/newsfeed`;
 
-      const description = `Coc dat ban`.substring(0, 25);
+      const comboName = booking.ComboName || "Combo";
+      const description = `Combo ${comboName}`.substring(0, 25);
 
       const paymentData = {
-        amount: parseInt(deposit),
+        amount: parseInt(paymentAmount),
         orderCode: orderCode,
         description: description,
         returnUrl: returnUrl,
@@ -450,29 +681,8 @@ class BookingTableController {
       const payosResult = await payosService.createPayment(paymentData);
       const actualOrderCode = payosResult.orderCode || orderCode;
 
-      // Lưu orderCode mới vào database (hoặc cập nhật nếu đã có)
+      // Lưu orderCode mới vào database
       try {
-        await pool.request().query(`
-          IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'BookingPayments')
-          BEGIN
-            CREATE TABLE BookingPayments (
-              Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-              BookedScheduleId UNIQUEIDENTIFIER NOT NULL,
-              OrderCode BIGINT NOT NULL UNIQUE,
-              CreatedAt DATETIME DEFAULT GETDATE(),
-              FOREIGN KEY (BookedScheduleId) REFERENCES BookedSchedules(BookedScheduleId)
-            );
-            CREATE INDEX IX_BookingPayments_OrderCode ON BookingPayments(OrderCode);
-          END
-        `);
-        
-        // Xóa orderCode cũ nếu có, rồi insert mới
-        await pool.request()
-          .input("BookedScheduleId", sql.UniqueIdentifier, id)
-          .query(`
-            DELETE FROM BookingPayments WHERE BookedScheduleId = @BookedScheduleId
-          `);
-        
         await pool.request()
           .input("BookedScheduleId", sql.UniqueIdentifier, id)
           .input("OrderCode", sql.BigInt, actualOrderCode)
@@ -489,15 +699,387 @@ class BookingTableController {
         data: {
           paymentUrl: payosResult.paymentUrl,
           orderCode: actualOrderCode,
-          bookingId: id
+          bookingId: id,
+          amount: paymentAmount,
+          comboName: booking.ComboName
         },
-        message: "Payment link created successfully"
+        message: "Full payment link created successfully"
       });
     } catch (error) {
-      console.error("[BookingTableController] getPaymentLink error:", error);
+      console.error("[BookingTableController] getFullPaymentLink error:", error);
       return res.status(500).json({
         success: false,
-        message: "Error getting payment link",
+        message: "Error getting full payment link",
+        error: error.message
+      });
+    }
+  }
+
+  // GET /api/booking-tables/:id/get-payment-link - API cũ (backward compatibility)
+  async getPaymentLink(req, res) {
+    console.warn("⚠️ DEPRECATED: getPaymentLink is deprecated. Use getFullPaymentLink instead.");
+    return this.getFullPaymentLink(req, res);
+  }
+
+  // GET /api/booking-tables/bar/:barId/available-combos - Lấy combos available
+  async getAvailableCombos(req, res) {
+    try {
+      const { barId } = req.params;
+      const result = await bookingTableService.getAvailableCombosByBar(barId);
+      return res.status(result.success ? 200 : 400).json(result);
+    } catch (error) {
+      console.error("getAvailableCombos error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching available combos",
+        error: error.message
+      });
+    }
+  }
+
+  // GET /api/booking-tables/available-vouchers - Lấy vouchers available
+  async getAvailableVouchers(req, res) {
+    try {
+      const { minComboValue } = req.query;
+      // Nếu minComboValue = 0, sẽ lấy tất cả voucher
+      const result = await bookingTableService.getAvailableVouchers(
+        minComboValue !== undefined ? parseInt(minComboValue) : 0
+      );
+      return res.status(result.success ? 200 : 400).json(result);
+    } catch (error) {
+      console.error("getAvailableVouchers error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching available vouchers",
+        error: error.message
+      });
+    }
+  }
+
+  // POST /api/booking-tables/validate-booking-data - Validate combo và voucher
+  async validateBookingData(req, res) {
+    try {
+      const { comboId, voucherCode, barId } = req.body;
+      const result = await bookingTableService.validateBookingData({
+        comboId, voucherCode, barId
+      });
+      return res.status(result.valid ? 200 : 400).json(result);
+    } catch (error) {
+      console.error("validateBookingData error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error validating booking data",
+        error: error.message
+      });
+    }
+  }
+
+  // GET /api/booking-tables/:id/qr-code - Lấy QR code cho người dùng xem
+  async getBookingQRCode(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { id } = req.params;
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+
+      // Kiểm tra quyền: chỉ người đặt hoặc bar mới xem được QR
+      const booking = await bookedScheduleModel.getBookedScheduleWithDetails(id);
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: "Booking not found"
+        });
+      }
+
+      // Check if user is the booker or bar owner
+      const bookerEntityId = await require("../models/entityAccount1Model").getEntityAccountIdByAccountId(accountId, "Account");
+      const barEntityId = await require("../models/entityAccount1Model").getEntityAccountIdByAccountId(accountId, "BarPage");
+
+      const isBooker = bookerEntityId && booking.BookerId === bookerEntityId;
+      const isBarOwner = barEntityId && booking.ReceiverId === barEntityId;
+
+      if (!isBooker && !isBarOwner) {
+        return res.status(403).json({
+          success: false,
+          message: "Không có quyền xem QR code của booking này"
+        });
+      }
+
+      // Kiểm tra booking đã thanh toán
+      // Backward-compat: một số luồng cũ set PaymentStatus='Done'
+      if (booking.PaymentStatus !== 'Paid' && booking.PaymentStatus !== 'Done') {
+        return res.status(400).json({
+          success: false,
+          message: "Booking chưa được thanh toán"
+        });
+      }
+
+      // Nếu chưa có QR code, tạo mới
+      const DetailSchedule = require("../models/detailSchedule");
+      let detailScheduleDoc = null;
+      if (booking.MongoDetailId) {
+        detailScheduleDoc = await DetailSchedule.findById(booking.MongoDetailId);
+      }
+
+      // Nếu chưa có QR code trong Mongo, tạo mới và lưu vào Mongo
+      if (!detailScheduleDoc?.QRCode) {
+        const qrService = require("../services/qrService");
+        const qrCode = await qrService.generateBookingQR(id, booking);
+        if (detailScheduleDoc) {
+          detailScheduleDoc.QRCode = qrCode;
+          await detailScheduleDoc.save();
+        }
+      }
+
+      // Lấy comboName và barName từ DetailSchedule nếu booking không có
+      const comboName = booking.ComboName || detailScheduleDoc?.Combo?.ComboName || "N/A";
+      const barName = booking.BarName || "N/A";
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          bookingId: id,
+          qrCode: detailScheduleDoc?.QRCode || null,
+          bookingDetails: {
+            comboName: comboName,
+            barName: barName,
+            bookingDate: booking.BookingDate,
+            amount: booking.TotalAmount,
+            status: booking.ScheduleStatus,
+            confirmedAt: null
+          }
+        }
+      });
+    } catch (error) {
+      console.error("getBookingQRCode error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching QR code",
+        error: error.message
+      });
+    }
+  }
+
+  // POST /api/booking-tables/scan-qr - Bar scan QR code để confirm
+  async scanQRCode(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { qrData } = req.body;
+      if (!qrData) {
+        return res.status(400).json({
+          success: false,
+          message: "qrData is required"
+        });
+      }
+
+      // Get bar entity ID
+      const barEntityId = await require("../models/entityAccount1Model").getEntityAccountIdByAccountId(accountId, "BarPage");
+      if (!barEntityId) {
+        return res.status(403).json({
+          success: false,
+          message: "Chỉ quán bar mới có thể scan QR code"
+        });
+      }
+
+      const result = await qrService.validateAndConfirmBooking(qrData, barEntityId);
+
+      if (!result.valid) {
+        return res.status(result.alreadyConfirmed ? 200 : 400).json({
+          success: result.valid,
+          message: result.reason,
+          data: result
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          bookingId: result.booking.BookedScheduleId,
+          confirmedAt: result.confirmedAt,
+          newStatus: result.newStatus || result.booking.ScheduleStatus,
+          customerName: result.booking.BookerName,
+          comboName: result.booking.ComboName,
+          amount: result.booking.TotalAmount
+        },
+        redirectTo: `/bar/bookings/${result.booking.BookedScheduleId}` // Redirect to booking details
+      });
+    } catch (error) {
+      console.error("scanQRCode error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error scanning QR code",
+        error: error.message
+      });
+    }
+  }
+
+  // GET /api/booking-tables/bar/:barId/confirmed - Lấy bookings đã confirm cho bar management
+  async getConfirmedBookingsByBar(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { barId } = req.params;
+      const { limit = 50, offset = 0, date } = req.query;
+
+      // Verify bar ownership
+      const barEntityId = await require("../models/entityAccount1Model").getEntityAccountIdByAccountId(accountId, "BarPage");
+      if (!barEntityId) {
+        return res.status(403).json({
+          success: false,
+          message: "Chỉ quán bar mới có thể xem danh sách này"
+        });
+      }
+
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+      const data = await bookedScheduleModel.getBookedSchedulesByReceiver(barEntityId, { limit: parseInt(limit), offset: parseInt(offset), date });
+
+      // Filter only confirmed bookings (DB không có ConfirmedAt)
+      const confirmedBookings = data.filter(booking => (booking.ScheduleStatus || booking.scheduleStatus) === 'Confirmed');
+
+      // Populate combo details
+      const bookingsWithDetails = await Promise.all(
+        confirmedBookings.map(async (booking) => {
+          const bookingDetails = await bookedScheduleModel.getBookedScheduleWithDetails(booking.BookedScheduleId);
+          return bookingDetails;
+        })
+      );
+
+      return res.status(200).json({
+        success: true,
+        data: bookingsWithDetails,
+        pagination: {
+          total: confirmedBookings.length,
+          limit: parseInt(limit),
+          offset: parseInt(offset)
+        }
+      });
+    } catch (error) {
+      console.error("getConfirmedBookingsByBar error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching confirmed bookings",
+        error: error.message
+      });
+    }
+  }
+
+  // GET /api/booking-tables/:id - Lấy chi tiết booking theo ID
+  async getById(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { id } = req.params;
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+      const DetailSchedule = require("../models/detailSchedule");
+
+      // Lấy booking từ SQL
+      const booking = await bookedScheduleModel.getBookedScheduleWithDetails(id);
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: "Booking not found"
+        });
+      }
+
+      // Kiểm tra quyền: chỉ booker hoặc bar owner mới xem được
+      const bookerEntityId = await require("../models/entityAccount1Model").getEntityAccountIdByAccountId(accountId, "Account");
+      const barEntityId = await require("../models/entityAccount1Model").getEntityAccountIdByAccountId(accountId, "BarPage");
+
+      const isBooker = bookerEntityId && booking.BookerId.toLowerCase() === bookerEntityId.toLowerCase();
+      const isBarOwner = barEntityId && booking.ReceiverId.toLowerCase() === barEntityId.toLowerCase();
+
+      if (!isBooker && !isBarOwner) {
+        return res.status(403).json({
+          success: false,
+          message: "Không có quyền xem booking này"
+        });
+      }
+
+      // Lấy detailSchedule từ MongoDB nếu có
+      let detailSchedule = null;
+      if (booking.MongoDetailId) {
+        try {
+          detailSchedule = await DetailSchedule.findById(booking.MongoDetailId);
+          if (detailSchedule) {
+            // Convert to plain object và xử lý Map Table
+            detailSchedule = detailSchedule.toObject({ flattenMaps: true });
+            
+            // Đảm bảo Table được convert đúng cách nếu vẫn là Map
+            if (detailSchedule.Table && detailSchedule.Table instanceof Map) {
+              const tableObj = {};
+              detailSchedule.Table.forEach((value, key) => {
+                tableObj[key] = value;
+              });
+              detailSchedule.Table = tableObj;
+            } else if (detailSchedule.Table && typeof detailSchedule.Table === 'object') {
+              // Nếu đã là object nhưng có thể cần convert nested objects
+              const tableObj = {};
+              Object.keys(detailSchedule.Table).forEach(key => {
+                const tableInfo = detailSchedule.Table[key];
+                if (tableInfo && typeof tableInfo === 'object') {
+                  tableObj[key] = {
+                    TableName: tableInfo.TableName || tableInfo.tableName || '',
+                    Price: tableInfo.Price || tableInfo.price || ''
+                  };
+                } else {
+                  tableObj[key] = tableInfo;
+                }
+              });
+              detailSchedule.Table = tableObj;
+            }
+          }
+        } catch (mongoError) {
+          console.error("Error fetching DetailSchedule from MongoDB:", mongoError);
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          ...booking,
+          detailSchedule: detailSchedule
+        }
+      });
+    } catch (error) {
+      console.error("getById error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching booking details",
+        error: error.message
+      });
+    }
+  }
+
+  // GET /api/booking-tables/bar/:barId/unconfirmed - Lấy bookings chưa confirm
+  async getUnconfirmedBookings(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const { barId } = req.params;
+      const result = await bookingTableService.getUnconfirmedBookingsByBar(accountId, req.query);
+      return res.status(result.success ? 200 : 400).json(result);
+    } catch (error) {
+      console.error("getUnconfirmedBookings error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching unconfirmed bookings",
         error: error.message
       });
     }
