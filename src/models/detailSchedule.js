@@ -4,14 +4,15 @@ const mongoose = require("mongoose");
 const tableSchema = new mongoose.Schema(
   {
     TableName: { type: String, required: true },
-    Price: { type: String, required: true },
+    // Luồng đặt bàn mới không còn cọc, nên không bắt buộc Price nữa
+    Price: { type: String, required: false, default: "" },
   },
   { _id: false }
 );
 
 const detailScheduleSchema = new mongoose.Schema(
   {
-    // Map<BarTableId (GUID), { TableName, Price }>
+    // Map<BarTableId (GUID), { TableName, Price? }>
     Table: {
       type: Map,
       of: tableSchema,
@@ -20,6 +21,24 @@ const detailScheduleSchema = new mongoose.Schema(
     Note: {
       type: String,
       default: "",
+    },
+    // QR code (base64) cho booking bàn để bar scan confirm
+    QRCode: {
+      type: String,
+      default: "",
+    },
+    // Combo áp dụng cho booking bàn (luồng mới)
+    Combo: {
+      ComboId: { type: String, default: "" },
+      ComboName: { type: String, default: "" },
+      Price: { type: Number, default: 0 },
+    },
+    // Voucher áp dụng (optional)
+    Voucher: {
+      VoucherId: { type: String, default: "" },
+      VoucherCode: { type: String, default: "" },
+      VoucherName: { type: String, default: "" },
+      DiscountPercentage: { type: Number, default: 0 },
     },
     // Địa chỉ cho DJ/Dancer booking
     Location: {

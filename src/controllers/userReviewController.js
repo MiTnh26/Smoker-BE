@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const UserReview = require("../models/userReviewModel");
 const { getAccountById } = require("../models/accountModel");
 
@@ -480,7 +481,7 @@ module.exports = {
           outputFields += ", INSERTED.created_at";
           
           const insertRequest = pool.request()
-            .input("ReviewId", sql.UniqueIdentifier, require('uuid').v4())
+            .input("ReviewId", sql.UniqueIdentifier, crypto.randomUUID())
             .input("BussinessAccountId", sql.UniqueIdentifier, payload.BussinessAccountId)
             .input("AccountId", sql.UniqueIdentifier, payload.AccountId)
             .input("Content", sql.NVarChar(500), payload.Content)

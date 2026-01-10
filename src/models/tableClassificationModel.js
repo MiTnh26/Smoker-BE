@@ -29,7 +29,47 @@ async function getTableClassificationById(tableClassificationId) {
 
 // Tạo loại bàn mới
 async function createTableClassification({ tableTypeName, color, barPageId }) {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationModel.js:31',message:'createTableClassification called',data:{tableTypeName,color,barPageId,barPageIdType:typeof barPageId,sessionId:'debug-session',runId:'run1',hypothesisId:'A,B'},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+
   const pool = await getPool();
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationModel.js:35',message:'Got database pool, checking BarPageId existence',data:{barPageId,sessionId:'debug-session',runId:'run1',hypothesisId:'C'},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+
+  // Check if BarPageId exists in BarPages table
+  try {
+    const checkResult = await pool.request()
+      .input("BarPageId", sql.UniqueIdentifier, barPageId)
+      .query(`
+        SELECT BarPageId, BarName
+        FROM BarPages
+        WHERE BarPageId = @BarPageId
+      `);
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationModel.js:40',message:'BarPageId existence check result',data:{barPageId,exists:checkResult.recordset.length > 0,barName:checkResult.recordset[0]?.BarName,sessionId:'debug-session',runId:'run1',hypothesisId:'C'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+
+    if (checkResult.recordset.length === 0) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationModel.js:45',message:'BarPageId does not exist - about to throw error',data:{barPageId,sessionId:'debug-session',runId:'run1',hypothesisId:'C'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      throw new Error(`BarPageId ${barPageId} does not exist in BarPages table`);
+    }
+  } catch (checkError) {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationModel.js:50',message:'Error checking BarPageId existence',data:{barPageId,error:checkError.message,sessionId:'debug-session',runId:'run1',hypothesisId:'C'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    throw checkError;
+  }
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationModel.js:56',message:'About to execute INSERT query',data:{tableTypeName,color,barPageId,sessionId:'debug-session',runId:'run1',hypothesisId:'D'},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+
   const result = await pool.request()
     .input("TableTypeName", sql.NVarChar(50), tableTypeName)
     .input("Color", sql.NVarChar(10), color)
@@ -39,6 +79,11 @@ async function createTableClassification({ tableTypeName, color, barPageId }) {
       OUTPUT inserted.*
       VALUES (@TableTypeName, @Color, @BarPageId)
     `);
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/909c64a8-8c02-4858-aa5d-41feb095cd4a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tableClassificationModel.js:61',message:'INSERT query completed successfully',data:{insertedId:result.recordset[0]?.TableClassificationId,sessionId:'debug-session',runId:'run1',hypothesisId:'D'},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+
   return result.recordset[0];
 }
 

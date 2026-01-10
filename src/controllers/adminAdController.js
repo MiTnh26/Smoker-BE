@@ -270,10 +270,17 @@ class AdminAdController {
       
       // Gửi notification cho BarPage
       try {
+        // Fallback: nếu ad không có AccountId (DB đã bỏ cột), resolve qua BarPageId
+        let receiverAccountId = ad.AccountId;
+        if (!receiverAccountId && ad.BarPageId) {
+          const barPage = await barPageModel.getBarPageById(ad.BarPageId);
+          receiverAccountId = barPage?.AccountId;
+        }
+
         await notificationService.createNotification({
           type: "Confirm",
           sender: adminAccountId,
-          receiver: ad.AccountId,
+          receiver: receiverAccountId,
           content: `Quảng cáo "${ad.Title}" đã được duyệt. Bạn có thể mua gói quảng cáo để bắt đầu.`,
           link: `/ads/my-ads/${userAdId}`
         });
@@ -334,21 +341,39 @@ class AdminAdController {
       
       const result = await request.query(`
         SELECT 
-          ap.*,
+          ap.PurchaseId,
+          ap.EventId,
+          ap.UserAdId,
+          ap.PackageId,
+          ap.BarPageId,
+          ap.ManagerId,
+          ap.PackageName,
+          ap.PackageCode,
+          ap.Impressions,
+          ap.Price,
+          ap.PaymentHistoryId,
+          ap.PaymentMethod,
+          ap.PaymentId,
+          ap.PaymentStatus,
+          ap.Status,
+          ap.UsedImpressions,
+          ap.PurchasedAt,
+          ap.ActivatedAt,
+          ap.CompletedAt,
+          ap.CancelledAt,
           e.EventName,
           e.Picture AS EventPicture,
           e.Description AS EventDescription,
           e.RedirectUrl AS EventRedirectUrl,
           bp.BarName,
+          bp.Email AS AccountEmail,
           ea.EntityAccountId AS BarEntityAccountId,
-          a.Email AS AccountEmail,
           ua.Title AS UserAdTitle,
           ua.Status AS UserAdStatus
         FROM AdPurchases ap
         INNER JOIN Events e ON ap.EventId = e.EventId
         INNER JOIN BarPages bp ON ap.BarPageId = bp.BarPageId
         LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = bp.BarPageId
-        INNER JOIN Accounts a ON ap.AccountId = a.AccountId
         LEFT JOIN UserAdvertisements ua ON ap.UserAdId = ua.UserAdId
         ${whereClause}
         ORDER BY ap.PurchasedAt DESC
@@ -422,10 +447,16 @@ class AdminAdController {
         return res.status(404).json({ success: false, message: "Event not found" });
       }
       
+      // Lấy AccountId từ BarPage
+      const barPage = await barPageModel.getBarPageById(purchase.BarPageId);
+      if (!barPage || !barPage.AccountId) {
+        return res.status(404).json({ success: false, message: "BarPage not found or missing AccountId" });
+      }
+      
       // Tạo UserAdvertisement từ Event
       const userAd = await userAdvertisementModel.createUserAd({
         barPageId: purchase.BarPageId,
-        accountId: purchase.AccountId,
+        accountId: barPage.AccountId,
         title: event.EventName,
         description: event.Description || null,
         imageUrl: event.Picture || event.EventPicture,
@@ -475,7 +506,7 @@ class AdminAdController {
         await notificationService.createNotification({
           type: "Confirm",
           sender: adminAccountId,
-          receiver: purchase.AccountId,
+          receiver: barPage.AccountId,
           content: `Quảng cáo cho event "${event.EventName}" đã được duyệt và kích hoạt. Đang hiển thị.`,
           link: `/ads/my-ads/${userAd.UserAdId}`
         });
@@ -522,10 +553,17 @@ class AdminAdController {
       
       // Gửi notification cho BarPage
       try {
+        // Fallback: nếu ad không có AccountId (DB đã bỏ cột), resolve qua BarPageId
+        let receiverAccountId = ad.AccountId;
+        if (!receiverAccountId && ad.BarPageId) {
+          const barPage = await barPageModel.getBarPageById(ad.BarPageId);
+          receiverAccountId = barPage?.AccountId;
+        }
+
         await notificationService.createNotification({
           type: "Confirm",
           sender: adminAccountId,
-          receiver: ad.AccountId,
+          receiver: receiverAccountId,
           content: `Quảng cáo "${ad.Title}" đã bị từ chối.${reason ? ` Lý do: ${reason}` : ''}`,
           link: `/ads/my-ads/${userAdId}`
         });

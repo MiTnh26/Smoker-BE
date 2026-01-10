@@ -7,9 +7,8 @@ const barPageRoutes = require("./barPageRoutes");
 const barTableRoutes = require("./barTableRoutes");
 const tableClassificationRoutes = require("./tableClassificationRoutes");
 const eventRoutes = require("./eventRoutes");
-const voucherRoutes = require("./voucherRoutes");
+// Removed: voucherRoutes, voucherApplyRoutes - bar voucher management removed
 const comboRoutes = require("./comboRoutes");
-const voucherApplyRoutes = require("./voucherApplyRoutes");
 const musicRoutes = require("./musicRoutes");
 const messageRoutes = require("./messageRoutes");
 const notificationRoutes = require("./notificationRoutes");
@@ -43,9 +42,8 @@ module.exports = {
   tableClassificationRoutes,
   barTableRoutes,
   eventRoutes,
-  voucherRoutes,
+  // Removed: voucherRoutes, voucherApplyRoutes - bar voucher management removed
   comboRoutes,
-  voucherApplyRoutes,
   followRoutes,
   searchRoutes,
   musicRoutes,

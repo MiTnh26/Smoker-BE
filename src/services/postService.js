@@ -1884,10 +1884,10 @@ class PostService {
           existingLikeKey = normalizedEntityAccountId;
         } else {
           // Fallback: tìm theo field entityAccountId trong value
-          for (const [likeId, like] of post.likes.entries()) {
+      for (const [likeId, like] of post.likes.entries()) {
             if (normalizeGuid(like.entityAccountId) === normalizedEntityAccountId) {
-              existingLikeKey = likeId;
-              break;
+          existingLikeKey = likeId;
+          break;
             }
           }
         }
@@ -2058,10 +2058,10 @@ class PostService {
           post.likes.delete(normalizedEntityAccountId);
         } else {
           // Fallback: tìm theo field entityAccountId trong value
-          for (const [likeId, like] of post.likes.entries()) {
+      for (const [likeId, like] of post.likes.entries()) {
             if (normalizeGuid(like.entityAccountId) === normalizedEntityAccountId) {
-              post.likes.delete(likeId);
-              break;
+          post.likes.delete(likeId);
+          break;
             }
           }
         }
@@ -2409,7 +2409,7 @@ class PostService {
         };
       }
 
-      const hasValidField = ['title', 'content', 'caption', 'medias', 'status'].some(
+      const hasValidField = ['title', 'content', 'caption', 'medias'].some(
         (field) => updateData[field] !== undefined
       );
       if (!hasValidField) {
@@ -2428,21 +2428,9 @@ class PostService {
       if (updateData.caption !== undefined) {
         post.caption = updateData.caption;
       }
-      if (updateData.status !== undefined) {
-        // Validate status
-        const validStatuses = ["public", "private", "trashed", "deleted"];
-        if (validStatuses.includes(updateData.status)) {
-          post.status = updateData.status;
-        } else {
-          console.warn(`[PostService] Invalid status "${updateData.status}" provided, ignoring`);
-        }
-      }
 
       // Handle medias update: update captions for existing, add new ones from url, drop removed
-      // Skip medias update for reposts (posts with repostedFromId or originalPost)
-      // Reposts should not have their own medias, they reference originalPost's medias
-      const isRepost = post.repostedFromId || post.originalPost;
-      if (Array.isArray(updateData.medias) && !isRepost) {
+      if (Array.isArray(updateData.medias)) {
         // Load current medias
         const existingIds = Array.isArray(post.mediaIds) ? post.mediaIds : [];
         const existingMedias = existingIds.length
@@ -2492,9 +2480,6 @@ class PostService {
 
         // Nếu payload không gửi media nào, nghĩa là xóa hết media
         post.mediaIds = nextMediaIds;
-      } else if (Array.isArray(updateData.medias) && isRepost) {
-        // For reposts, ignore medias update to preserve originalPost's medias
-        console.log(`[PostService] Ignoring medias update for repost ${postId}`);
       }
 
       await post.save();
@@ -2977,7 +2962,7 @@ class PostService {
 
       // Cập nhật trending score sau khi tăng views
       try {
-        await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+      await FeedAlgorithm.updatePostTrendingScore(postId.toString());
       } catch (trendingError) {
         // Log nhưng không fail request
         console.warn(`[PostService] Failed to update trending score for post ${postId}:`, trendingError.message);

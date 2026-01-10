@@ -23,6 +23,12 @@ class ReviveAdServerService {
   replaceLocalhostUrls(html) {
     if (!html || typeof html !== 'string') return html;
     
+    // Nếu Revive server đang chạy localhost, không thay thế URLs (giữ nguyên cho dev)
+    const reviveUrl = process.env.REVIVE_AD_SERVER_URL || "http://localhost/revive";
+    if (reviveUrl.includes('localhost') || reviveUrl.includes('127.0.0.1')) {
+      return html; // Giữ nguyên URLs khi đang dev
+    }
+    
     // Production frontend URL
     const productionUrl = process.env.FRONTEND_URL || process.env.APP_URL || 'https://smoker-fe-henna.vercel.app';
     
@@ -394,11 +400,11 @@ class ReviveAdServerService {
           if (contentType.startsWith('image/')) {
             // If Revive redirects to image, wrap it in an anchor tag
             const imageUrl = response.request.res.responseUrl || fullUrl;
-            return {
+        return {
               html: `<a href="${imageUrl}" target="_blank" rel="noopener noreferrer"><img src="${imageUrl}" alt="Advertisement" style="max-width: 100%; height: auto;" /></a>`,
-              zoneId: zoneId
-            };
-          }
+          zoneId: zoneId
+        };
+      }
 
           // If response is already HTML (from ck.php or other methods)
           if (trimmedData.startsWith('<')) {
