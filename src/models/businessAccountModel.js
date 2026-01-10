@@ -9,7 +9,7 @@ async function getBusinessAccountById(BussinessAccountId) {
     .input("BussinessAccountId", sql.UniqueIdentifier, BussinessAccountId)
     .query(`
       SELECT 
-        BussinessAccountId, AccountId, BankInfoId, UserName, Role, 
+        BussinessAccountId, AccountId, UserName, Role, 
         Avatar, Background, Phone, Address, Bio, Status, Gender, PricePerHours, PricePerSession, created_at
       FROM BussinessAccounts
       WHERE BussinessAccountId = @BussinessAccountId
@@ -25,7 +25,7 @@ async function getBusinessAccountsByAccountId(accountId) {
     .input("AccountId", sql.UniqueIdentifier, accountId)
     .query(`
       SELECT 
-        ba.BussinessAccountId, ba.AccountId, ba.BankInfoId, ba.UserName, ba.Role, 
+        ba.BussinessAccountId, ba.AccountId, ba.UserName, ba.Role, 
         ba.Avatar, ba.Background, ba.Phone, ba.Address, ba.Bio, ba.Status, ba.Gender, 
         ba.PricePerHours, ba.PricePerSession, ba.created_at, ea.EntityAccountId
       FROM BussinessAccounts ba
@@ -38,7 +38,6 @@ async function getBusinessAccountsByAccountId(accountId) {
 // ➕ Tạo BusinessAccount mới
 async function createBusinessAccount({
   accountId,
-  bankInfoId = null,
   userName,
   role,
   avatar = null,
@@ -54,7 +53,6 @@ async function createBusinessAccount({
   const pool = await getPool();
   const result = await pool.request()
     .input("AccountId", sql.UniqueIdentifier, accountId)
-    .input("BankInfoId", sql.UniqueIdentifier, bankInfoId)
     .input("UserName", sql.NVarChar(100), userName)
     .input("Role", sql.NVarChar(50), role)
     .input("Avatar", sql.NVarChar(1000), avatar)
@@ -68,12 +66,12 @@ async function createBusinessAccount({
     .input("PricePerSession", sql.Int, pricePerSession)
     .query(`
       INSERT INTO BussinessAccounts (
-        AccountId, BankInfoId, UserName, Role, Avatar, Background, 
-        Phone, Address, Bio, Gender, Status,PricePerHours, PricePerSession
+        AccountId, UserName, Role, Avatar, Background, 
+        Phone, Address, Bio, Gender, Status, PricePerHours, PricePerSession
       )
       OUTPUT inserted.*
       VALUES (
-        @AccountId, @BankInfoId, @UserName, @Role, @Avatar, @Background,
+        @AccountId, @UserName, @Role, @Avatar, @Background,
         @Phone, @Address, @Bio, @Gender, @Status, @PricePerHours, @PricePerSession
       )
     `);
