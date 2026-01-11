@@ -492,7 +492,16 @@ class ReviveAdServerService {
     let connection = null;
 
     try {
-      connection = await mysql.createConnection(reviveDbConfig);
+      const reviveDbSslEnabled = (() => {
+        const v = process.env.REVIVE_DB_SSL;
+        if (v === undefined || v === null || String(v).trim() === "") return false;
+        return ["1", "true", "yes", "y", "on"].includes(String(v).toLowerCase());
+      })();
+
+      connection = await mysql.createConnection({
+        ...reviveDbConfig,
+        ...(reviveDbSslEnabled ? { ssl: { rejectUnauthorized: false } } : {}),
+      });
       
       // Query để lấy banner ID đang active cho zone
       // Revive lưu trong bảng ox_banners và ox_ad_zone_assoc

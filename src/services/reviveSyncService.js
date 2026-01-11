@@ -11,6 +11,15 @@ class ReviveSyncService {
     
     // Initialize Revive database connection if configured
     if (process.env.REVIVE_DB_HOST) {
+      // Toggle SSL via env:
+      // - REVIVE_DB_SSL=1/true => enable SSL
+      // - REVIVE_DB_SSL=0/false/empty => disable SSL (useful for localhost MySQL without SSL)
+      const reviveDbSslEnabled = (() => {
+        const v = process.env.REVIVE_DB_SSL;
+        if (v === undefined || v === null || String(v).trim() === "") return false;
+        return ["1", "true", "yes", "y", "on"].includes(String(v).toLowerCase());
+      })();
+
       this.reviveDbConfig = {
         host: process.env.REVIVE_DB_HOST,
         port: parseInt(process.env.REVIVE_DB_PORT || "3306"),
@@ -19,10 +28,12 @@ class ReviveSyncService {
         database: process.env.REVIVE_DB_NAME || "revive",
         connectionLimit: 5,
         connectTimeout: 10000,
-        // Thêm SSL configuration cho Azure MySQL
-        ssl: {
-          rejectUnauthorized: false  // Azure MySQL yêu cầu SSL nhưng không cần verify certificate
-        }
+        ...(reviveDbSslEnabled
+          ? {
+              // Azure MySQL yêu cầu SSL nhưng có thể không cần verify certificate (tùy môi trường)
+              ssl: { rejectUnauthorized: false },
+            }
+          : {}),
       };
     }
     
@@ -378,9 +389,10 @@ class ReviveSyncService {
         } else {
           // Fallback to default variations
           columnVariations.push(
-            { id: 'ad_id', date: 'date_time', revenue: revenueColumn?.COLUMN_NAME || 'total_revenue' },
-            { id: 'bannerid', date: 'day', revenue: revenueColumn?.COLUMN_NAME || 'total_revenue' },
-            { id: 'banner_id', date: 'date_time', revenue: revenueColumn?.COLUMN_NAME || 'total_revenue' }
+            // revenue: null => query will use 0 AS total_revenue
+            { id: 'ad_id', date: 'date_time', revenue: revenueColumn?.COLUMN_NAME || null },
+            { id: 'bannerid', date: 'day', revenue: revenueColumn?.COLUMN_NAME || null },
+            { id: 'banner_id', date: 'date_time', revenue: revenueColumn?.COLUMN_NAME || null }
           );
         }
         
@@ -457,14 +469,18 @@ class ReviveSyncService {
                   }
                 }
                 
-                // Dùng revenue column đã detect (hoặc fallback nếu không có)
-                const revenueCol = cols.revenue || 'total_revenue';
-                
+                // Use detected revenue/cost column if available; otherwise default to 0
+                const revenueCol = cols.revenue || null;
+
+                const revenueSelect = revenueCol
+                  ? `SUM(COALESCE(\`${revenueCol}\`, 0)) AS total_revenue`
+                  : `0 AS total_revenue`;
+
                 let query = `
                   SELECT 
                     SUM(impressions) AS total_impressions,
                     SUM(clicks) AS total_clicks,
-                    SUM(COALESCE(\`${revenueCol}\`, 0)) AS total_revenue
+                    ${revenueSelect}
                   FROM ${tableName}
                   WHERE \`${cols.id}\` = ?
                 `;
