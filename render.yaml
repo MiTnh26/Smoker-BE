@@ -22,6 +22,8 @@ services:
         value: Minhtran26
       - key: REVIVE_DB_NAME
         value: revive_adserver
+      - key: REVIVE_DB_SSL
+        value: "1"
     region: singapore
     autoDeploy: true
 
@@ -58,6 +60,8 @@ services:
         value: Minhtran26
       - key: REVIVE_DB_NAME
         value: revive_adserver
+      - key: REVIVE_DB_SSL
+        value: "1"
       
       # Revive Ad Server URL
       # Note: fromService returns base URL, we need to append /revive
@@ -71,7 +75,7 @@ services:
       
       # Revive Maintenance Secret (cho cron job trigger)
       - key: REVIVE_MAINTENANCE_SECRET
-        value: revive-maintenance-secret-key-2025-change-this
+        value: revive-maintenance-secret-key
       
       # Các biến môi trường khác cần thiết
       - key: JWT_SECRET
