@@ -1,5 +1,6 @@
 const ROOM_PREFIX = "livestream:";
 const { getPool, sql } = require("../db/sqlserver");
+const livestreamService = require("../services/livestreamService");
 
 function buildRoomName(channelName) {
   return `${ROOM_PREFIX}${channelName}`;
@@ -81,6 +82,14 @@ function emitViewerCount(io, room) {
 // Batch notification tracking per room
 const batchNotificationQueues = new Map(); // room -> { count: number, timer: NodeJS.Timeout }
 
+// Track users đã join để tránh duplicate notifications (shared across all sockets)
+// Track theo entityAccountId vì nó unique hơn userId
+const joinedUsers = new Map(); // room -> Set<entityAccountId>
+
+// Track broadcaster sockets per channel để tự động end livestream khi disconnect
+const broadcasterSockets = new Map(); // channelName -> Set<socketId>
+const broadcasterTimeouts = new Map(); // channelName -> NodeJS.Timeout
+
 function emitBatchJoinNotification(io, room, channelName, count) {
   if (count > 0) {
     io.to(room).emit("batch-users-joined", { 
@@ -101,13 +110,58 @@ function registerLivestreamSocket(socket, io) {
       return;
     }
     const room = buildRoomName(channelName);
+    
+    // Check xem socket đã join room này chưa (tránh duplicate join từ cùng socket)
+    if (socket.rooms.has(room)) {
+      console.log(`[LivestreamSocket] Socket ${socket.id} already in room ${room}, skipping`);
+      return;
+    }
+    
+    // Check xem user (entityAccountId) đã join room này chưa (tránh duplicate notifications)
+    // Sử dụng entityAccountId vì nó unique hơn userId
+    const userKey = entityAccountId || userId; // Fallback to userId nếu không có entityAccountId
+    if (!joinedUsers.has(room)) {
+      joinedUsers.set(room, new Set());
+    }
+    const roomUsers = joinedUsers.get(room);
+    
+    // Nếu user đã join rồi (từ socket khác), chỉ update data và skip notification
+    const isAlreadyJoined = userKey && roomUsers.has(userKey);
+    
     socket.data.channelName = channelName;
     socket.data.userId = userId;
     socket.data.isBroadcaster = isBroadcaster || false;
     socket.data.entityAccountId = entityAccountId;
     
     socket.join(room);
-    console.log(`[LivestreamSocket] User ${userId} joined room ${room} (broadcaster: ${isBroadcaster || false})`);
+    
+    // Track broadcaster socket để tự động end livestream khi disconnect
+    if (isBroadcaster) {
+      if (!broadcasterSockets.has(channelName)) {
+        broadcasterSockets.set(channelName, new Set());
+      }
+      broadcasterSockets.get(channelName).add(socket.id);
+      
+      // Clear timeout nếu có (broadcaster đã reconnect)
+      if (broadcasterTimeouts.has(channelName)) {
+        clearTimeout(broadcasterTimeouts.get(channelName));
+        broadcasterTimeouts.delete(channelName);
+        console.log(`[LivestreamSocket] Broadcaster reconnected, cleared timeout for ${channelName}`);
+      }
+    }
+    
+    // Chỉ thêm vào set nếu chưa join và có userKey
+    if (!isAlreadyJoined && userKey) {
+      roomUsers.add(userKey);
+    }
+    
+    console.log(`[LivestreamSocket] User ${userId} (entityAccountId: ${entityAccountId}) joined room ${room} (broadcaster: ${isBroadcaster || false}, alreadyJoined: ${isAlreadyJoined})`);
+    
+    // Nếu đã join rồi (từ socket khác), skip notification nhưng vẫn update viewer count
+    if (isAlreadyJoined) {
+      emitViewerCount(io, room);
+      return;
+    }
     
     // Lấy thông tin user để gửi notification (cho cả broadcaster và viewer)
     let userInfo = null;
@@ -115,9 +169,9 @@ function registerLivestreamSocket(socket, io) {
       userInfo = await getEntityInfoByEntityAccountId(entityAccountId);
     }
     
-    // Nếu không phải broadcaster, gửi notification và xử lý batch
+    // Nếu không phải broadcaster và chưa join, gửi notification và xử lý batch
     // (Broadcaster cũng sẽ nhận được notifications này để thấy ai đã tham gia)
-    if (!isBroadcaster) {
+    if (!isBroadcaster && !isAlreadyJoined) {
       // Gửi notification cho user join (hiển thị trong chat)
       // Gửi cho tất cả mọi người trong room (bao gồm cả broadcaster)
       io.to(room).emit("user-joined", { 
@@ -128,7 +182,7 @@ function registerLivestreamSocket(socket, io) {
         timestamp: new Date().toISOString()
       });
       
-      // Batch notification: đếm số người join trong 3 giây
+      // Batch notification: đếm số người join trong 3 giây (chỉ đếm viewers mới join, không tính broadcaster)
       if (!batchNotificationQueues.has(room)) {
         batchNotificationQueues.set(room, { count: 0, timer: null });
       }
@@ -166,7 +220,40 @@ function registerLivestreamSocket(socket, io) {
       return;
     }
     const room = buildRoomName(channelName);
+    
+    // Check xem socket có trong room không
+    if (!socket.rooms.has(room)) {
+      console.log(`[LivestreamSocket] Socket ${socket.id} not in room ${room}, skipping leave`);
+      return;
+    }
+    
     socket.leave(room);
+    
+    // Check xem còn socket nào khác của user này trong room không
+    const userKey = socket.data?.entityAccountId || socket.data?.userId || userId;
+    let hasOtherSockets = false;
+    
+    if (userKey && joinedUsers.has(room)) {
+      // Kiểm tra xem còn socket nào khác của user này trong room không
+      const roomInfo = io.sockets.adapter.rooms.get(room);
+      if (roomInfo) {
+        for (const socketId of roomInfo) {
+          const otherSocket = io.sockets.sockets.get(socketId);
+          if (otherSocket && otherSocket.id !== socket.id) {
+            const otherUserKey = otherSocket.data?.entityAccountId || otherSocket.data?.userId;
+            if (otherUserKey === userKey) {
+              hasOtherSockets = true;
+              break;
+            }
+          }
+        }
+      }
+      
+      // Chỉ remove khỏi joinedUsers nếu không còn socket nào khác của user này
+      if (!hasOtherSockets) {
+        joinedUsers.get(room).delete(userKey);
+      }
+    }
     
     // Lấy thông tin user để gửi notification (nếu có)
     let userInfo = null;
@@ -174,12 +261,12 @@ function registerLivestreamSocket(socket, io) {
       userInfo = await getEntityInfoByEntityAccountId(socket.data.entityAccountId);
     }
     
-    // Nếu không phải broadcaster, gửi notification user left
+    // Nếu không phải broadcaster và không còn socket nào khác của user, gửi notification user left
     // (Broadcaster cũng sẽ nhận được notifications này)
-    if (!socket.data?.isBroadcaster) {
+    if (!socket.data?.isBroadcaster && !hasOtherSockets) {
       io.to(room).emit("user-left", { 
         channelName,
-        userId,
+        userId: userId || socket.data?.userId,
         userName: userInfo?.userName || "Người dùng",
         userAvatar: userInfo?.userAvatar || null,
         timestamp: new Date().toISOString()
@@ -222,6 +309,115 @@ function registerLivestreamSocket(socket, io) {
     for (const room of socket.rooms) {
       if (room.startsWith(ROOM_PREFIX)) {
         console.log(`[LivestreamSocket] Socket ${socket.id} disconnecting from room ${room}`);
+        
+        const channelName = socket.data?.channelName || room.replace(ROOM_PREFIX, '');
+        const userKey = socket.data?.entityAccountId || socket.data?.userId;
+        const isBroadcaster = socket.data?.isBroadcaster || false;
+        
+        // Nếu là broadcaster, remove khỏi broadcasterSockets và end livestream ngay lập tức
+        if (isBroadcaster && channelName && broadcasterSockets.has(channelName)) {
+          broadcasterSockets.get(channelName).delete(socket.id);
+          
+          // Nếu không còn broadcaster socket nào, end livestream ngay lập tức
+          if (broadcasterSockets.get(channelName).size === 0) {
+            broadcasterSockets.delete(channelName);
+            
+            // Clear timeout cũ nếu có
+            if (broadcasterTimeouts.has(channelName)) {
+              clearTimeout(broadcasterTimeouts.get(channelName));
+              broadcasterTimeouts.delete(channelName);
+            }
+            
+            // End livestream ngay lập tức (không chờ timeout)
+            (async () => {
+              try {
+                console.log(`[LivestreamSocket] Auto-ending livestream ${channelName} immediately after broadcaster disconnect`);
+                
+                // Tìm livestreamId từ channelName
+                const livestreamRepository = require("../repositories/livestreamRepository");
+                const livestream = await livestreamRepository.findByChannel(channelName);
+                
+                if (!livestream) {
+                  console.warn(`[LivestreamSocket] Livestream not found for channel ${channelName}, emitting ended event anyway`);
+                  // Vẫn emit event để viewers biết livestream đã kết thúc
+                  io.to(room).emit("livestream-ended", {
+                    channelName,
+                    message: "Livestream đã kết thúc"
+                  });
+                  return;
+                }
+                
+                console.log(`[LivestreamSocket] Found livestream ${livestream.livestreamId} for channel ${channelName}, current status: ${livestream.status}`);
+                
+                if (livestream.status === "live") {
+                  // End livestream và update status trong DB ngay lập tức
+                  try {
+                    await livestreamService.endLivestream(livestream.livestreamId, livestream.hostAccountId);
+                    console.log(`[LivestreamSocket] Successfully auto-ended livestream ${livestream.livestreamId} (status: ended)`);
+                  } catch (endError) {
+                    console.error(`[LivestreamSocket] Error calling endLivestream service:`, endError);
+                    // Nếu không thể end qua service, thử update trực tiếp
+                    try {
+                      await livestreamRepository.updateStatus(livestream.livestreamId, {
+                        status: "ended",
+                        endTime: new Date(),
+                      });
+                      console.log(`[LivestreamSocket] Updated livestream status directly to ended`);
+                    } catch (updateError) {
+                      console.error(`[LivestreamSocket] Error updating status directly:`, updateError);
+                    }
+                  }
+                } else {
+                  console.log(`[LivestreamSocket] Livestream ${livestream.livestreamId} already ended (status: ${livestream.status})`);
+                }
+                
+                // Emit event để thông báo cho tất cả viewers
+                io.to(room).emit("livestream-ended", {
+                  channelName,
+                  message: "Livestream đã kết thúc"
+                });
+                
+                // Emit global event để feed refresh ngay lập tức
+                io.emit("livestream-status-changed", {
+                  livestreamId: livestream.livestreamId,
+                  status: "ended",
+                  channelName
+                });
+              } catch (error) {
+                console.error(`[LivestreamSocket] Error auto-ending livestream ${channelName}:`, error);
+                // Vẫn emit event để viewers biết livestream đã kết thúc
+                io.to(room).emit("livestream-ended", {
+                  channelName,
+                  message: "Livestream đã kết thúc"
+                });
+              }
+            })();
+          }
+        }
+        
+        // Check xem còn socket nào khác của user này trong room không
+        let hasOtherSockets = false;
+        if (userKey && joinedUsers.has(room)) {
+          const roomInfo = io.sockets.adapter.rooms.get(room);
+          if (roomInfo) {
+            for (const socketId of roomInfo) {
+              const otherSocket = io.sockets.sockets.get(socketId);
+              if (otherSocket && otherSocket.id !== socket.id) {
+                const otherUserKey = otherSocket.data?.entityAccountId || otherSocket.data?.userId;
+                if (otherUserKey === userKey) {
+                  hasOtherSockets = true;
+                  break;
+                }
+              }
+            }
+          }
+          
+          // Chỉ remove khỏi joinedUsers nếu không còn socket nào khác của user này
+          if (!hasOtherSockets) {
+            joinedUsers.get(room).delete(userKey);
+          }
+        }
+        
         socket.leave(room);
         
         // Lấy thông tin user để gửi notification (nếu có)
@@ -230,12 +426,11 @@ function registerLivestreamSocket(socket, io) {
           userInfo = await getEntityInfoByEntityAccountId(socket.data.entityAccountId);
         }
         
-        // Nếu không phải broadcaster, gửi notification user left
-        if (!socket.data?.isBroadcaster) {
-          const channelName = socket.data?.channelName || room.replace(ROOM_PREFIX, '');
+        // Nếu không phải broadcaster và không còn socket nào khác của user, gửi notification user left
+        if (!isBroadcaster && userKey && !hasOtherSockets) {
           io.to(room).emit("user-left", { 
             channelName,
-            userId: socket.data?.userId || socket.id,
+            userId: socket.data?.userId || userKey,
             userName: userInfo?.userName || "Người dùng",
             userAvatar: userInfo?.userAvatar || null,
             timestamp: new Date().toISOString()

@@ -44,10 +44,33 @@ async function incrementView(livestreamId) {
 }
 
 async function createScheduled(data) {
-  return await Livestream.create({
-    ...data,
-    status: "scheduled",
-  });
+  try {
+    console.log("[LivestreamRepository] createScheduled - Input data:", {
+      hostAccountId: data.hostAccountId,
+      hostEntityAccountId: data.hostEntityAccountId,
+      hostEntityId: data.hostEntityId,
+      hostEntityType: data.hostEntityType,
+      title: data.title,
+      scheduledStartTime: data.scheduledStartTime,
+    });
+    
+    const livestream = await Livestream.create({
+      ...data,
+      status: "scheduled",
+    });
+    
+    console.log("[LivestreamRepository] createScheduled - Created livestream:", livestream?.livestreamId);
+    return livestream;
+  } catch (err) {
+    console.error("[LivestreamRepository] createScheduled error:", err);
+    console.error("[LivestreamRepository] Error details:", {
+      message: err.message,
+      name: err.name,
+      code: err.code,
+      errors: err.errors,
+    });
+    throw err;
+  }
 }
 
 async function findScheduled(limit = 50) {

@@ -39,6 +39,11 @@ const LivestreamSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    pinnedComment: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     status: {
       type: String,
       enum: ["live", "ended", "scheduled"],
