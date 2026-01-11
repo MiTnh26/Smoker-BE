@@ -327,7 +327,7 @@ async function createWithdrawRequest(req, res) {
 async function getWithdrawRequests(req, res) {
   try {
     const accountId = req.user.id;
-    const { status } = req.query;
+    const { status, limit = 5, offset = 0 } = req.query;
     
     const entityAccountId = await getEntityAccountIdByAccountId(accountId);
     if (!entityAccountId) {
@@ -340,7 +340,8 @@ async function getWithdrawRequests(req, res) {
     }
     
     const requests = await withdrawRequestModel.getWithdrawRequestsByWalletId(wallet.WalletId, {
-      limit: 50,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
       status
     });
     
@@ -351,6 +352,7 @@ async function getWithdrawRequests(req, res) {
         status: r.Status,
         bankName: r.BankName,
         accountNumber: r.AccountNumber,
+        accountHolderName: r.AccountHolderName,
         requestedAt: r.RequestedAt,
         reviewedAt: r.ReviewedAt,
         note: r.Note

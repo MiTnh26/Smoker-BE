@@ -43,10 +43,10 @@ async function getWithdrawRequestById(withdrawRequestId) {
 /**
  * Lấy danh sách yêu cầu rút tiền theo WalletId
  */
-async function getWithdrawRequestsByWalletId(walletId, { limit = 50, status = null } = {}) {
+async function getWithdrawRequestsByWalletId(walletId, { limit = 50, offset = 0, status = null } = {}) {
   const pool = await getPool();
   let query = `
-    SELECT TOP (@Limit)
+    SELECT 
       wr.WithdrawRequestId, wr.Amount, wr.Status, wr.RequestedAt,
       wr.ReviewedAt, wr.Note, bi.BankName, bi.AccountNumber, bi.AccountHolderName
     FROM WithdrawRequests wr
@@ -56,14 +56,17 @@ async function getWithdrawRequestsByWalletId(walletId, { limit = 50, status = nu
   
   const request = pool.request()
     .input("WalletId", sql.UniqueIdentifier, walletId)
-    .input("Limit", sql.Int, limit);
+    .input("Limit", sql.Int, limit)
+    .input("Offset", sql.Int, offset);
   
   if (status) {
     query += ` AND wr.Status = @Status`;
     request.input("Status", sql.NVarChar(20), status);
   }
   
-  query += ` ORDER BY wr.RequestedAt DESC`;
+  query += ` ORDER BY wr.RequestedAt DESC
+    OFFSET @Offset ROWS
+    FETCH NEXT @Limit ROWS ONLY`;
   
   const result = await request.query(query);
   return result.recordset;
