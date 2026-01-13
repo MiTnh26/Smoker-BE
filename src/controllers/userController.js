@@ -4,6 +4,7 @@
 const { accountModel,entityAccountModel } = require("../models");
 const { getPool, sql } = require("../db/sqlserver");
 const { success, error } = require("../utils/response");
+const { validateAddressWithError } = require("../utils/addressValidator");
 
 async function me(req, res) {
   try {
@@ -92,6 +93,14 @@ async function updateProfile(req, res) {
       }
     };
     
+    // Validate address format if provided
+    if (address) {
+      const addressError = validateAddressWithError(address);
+      if (addressError) {
+        return res.status(400).json(error(addressError));
+      }
+    }
+
     // Xử lý address: nếu có addressData (structured), lưu dưới dạng JSON
     // Nếu không, lưu như string bình thường hoặc parse nếu là JSON string
     console.log("[USER] Raw address:", address);
