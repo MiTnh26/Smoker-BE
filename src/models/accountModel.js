@@ -119,7 +119,7 @@ async function updateAccountInfo(accountId, updates) {
 
 function hasProfileComplete(account) {
   if (!account) return false;
-  const requiredFields = ["UserName", "Avatar", "Phone", "Gender"]; // minimal required fields
+  const requiredFields = ["UserName", "Avatar"]; // minimal required fields
   return requiredFields.every((key) => account[key] && String(account[key]).trim() !== "");
 }
 // Cập nhật mật khẩu tài khoản
