@@ -5,6 +5,8 @@ const { createEntityAccount } = require("../models/entityAccountModel");
 const { isValidEmail, isValidPassword, isGmailEmail } = require("../utils/validator");
 const { generateRandomPassword } = require("../utils/password");
 const { sendMail } = require("../utils/mailer");
+const { verifyEmailExists, isFakeEmail } = require("../utils/emailVerifier");
+const { generateDisplayNameFromEmail, generateAvatarFromEmail } = require("../utils/emailHelper");
 
 // Biến toàn cục lưu OTP theo email
 const otpMap = new Map(); // key: email, value: { otp, expires }
@@ -39,6 +41,21 @@ async function precheckRegisterService(email, password, confirmPassword) {
   if (!isValidPassword(password)) throw new Error("Mật khẩu không hợp lệ");
   if (password !== confirmPassword) throw new Error("Xác nhận mật khẩu không khớp");
 
+  // Kiểm tra email có pattern không hợp lệ (email giả)
+  if (isFakeEmail(email)) {
+    const err = new Error("Email không hợp lệ hoặc không tồn tại");
+    err.code = 400;
+    throw err;
+  }
+
+  // Kiểm tra email có tồn tại thực sự (kiểm tra MX record)
+  const emailVerification = await verifyEmailExists(email);
+  if (!emailVerification.valid) {
+    const err = new Error(emailVerification.reason || "Email không tồn tại");
+    err.code = 400;
+    throw err;
+  }
+
   const existing = await accountModel.findAccountByEmail(email);
   if (existing) {
     const err = new Error("Email đã tồn tại");
@@ -62,13 +79,25 @@ async function registerService(email, password, confirmPassword) {
     err.code = 409;
     throw err;
   }
+  
+  // Tạo tên và avatar tự động từ email
+  const userName = generateDisplayNameFromEmail(email);
+  const avatar = generateAvatarFromEmail(email, userName);
+  
   const hashed = await bcrypt.hash(password, 10);
-  const created = await accountModel.createAccount({ email, hashedPassword: hashed, role: "customer", status: "active" });
+  const created = await accountModel.createAccount({ 
+    email, 
+    hashedPassword: hashed, 
+    userName: userName,
+    avatar: avatar,
+    role: "customer", 
+    status: "active" 
+  });
+  
   // EntityAccounts sau khi tạo tài khoản
   if (created?.AccountId) {
     await createEntityAccount("Account", created.AccountId, created.AccountId);
   }
-
 
   return { id: created.AccountId, email: created.Email };
 }
@@ -180,9 +209,28 @@ async function googleLoginService({ email, userName = null, avatar = null, phone
       // Không throw error, vì đăng ký đã thành công
     }
   } else {
-    // ✅ Nếu đã có tài khoản nhưng chưa có số điện thoại, cập nhật nếu Google cung cấp
-    if (phone && !user.Phone) {
-      await accountModel.updateAccountInfo(user.AccountId, { phone });
+    // ✅ Nếu đã có tài khoản, chỉ cập nhật thông tin từ Google nếu user chưa có
+    // Điều này tránh ghi đè thông tin mà user đã tự thay đổi trong hệ thống
+    const updates = {};
+    
+    // Chỉ cập nhật userName từ Google nếu user chưa có tên
+    if (userName && (!user.UserName || user.UserName.trim() === "")) {
+      updates.userName = userName;
+    }
+    
+    // Chỉ cập nhật avatar từ Google nếu user chưa có ảnh
+    if (avatar && (!user.Avatar || user.Avatar.trim() === "")) {
+      updates.avatar = avatar;
+    }
+    
+    // Cập nhật phone nếu chưa có và Google cung cấp
+    if (phone && (!user.Phone || user.Phone.trim() === "")) {
+      updates.phone = phone;
+    }
+    
+    // Nếu có thông tin cần cập nhật
+    if (Object.keys(updates).length > 0) {
+      await accountModel.updateAccountInfo(user.AccountId, updates);
       // Cập nhật lại user object để trả về thông tin mới nhất
       user = await accountModel.findAccountByEmail(email);
     }
@@ -226,6 +274,53 @@ async function forgotPasswordService(email) {
       <p>Bạn đã yêu cầu khôi phục mật khẩu.</p>
       <p>Mã OTP của bạn là: <b>${otp}</b></p>
       <p>OTP có hiệu lực trong 5 phút. Vui lòng nhập OTP để xác minh và đổi mật khẩu.</p>
+    `
+  });
+
+  return true;
+}
+
+// Gửi OTP cho đăng ký tài khoản
+async function sendRegisterOtpService(email) {
+  if (!email) throw new Error("Email là bắt buộc");
+  if (!isValidEmail(email)) throw new Error("Email không hợp lệ");
+
+  // Kiểm tra email đã tồn tại chưa
+  const existing = await accountModel.findAccountByEmail(email);
+  if (existing) {
+    const err = new Error("Email đã tồn tại");
+    err.code = 409;
+    throw err;
+  }
+
+  // Kiểm tra email có pattern không hợp lệ (email giả)
+  if (isFakeEmail(email)) {
+    const err = new Error("Email không hợp lệ hoặc không tồn tại");
+    err.code = 400;
+    throw err;
+  }
+
+  // Kiểm tra email có tồn tại thực sự (kiểm tra MX record)
+  const emailVerification = await verifyEmailExists(email);
+  if (!emailVerification.valid) {
+    const err = new Error(emailVerification.reason || "Email không tồn tại");
+    err.code = 400;
+    throw err;
+  }
+
+  // Tạo OTP ngẫu nhiên 6 số
+  const otp = Math.floor(100000 + Math.random() * 900000);
+  const expires = Date.now() + 5 * 60 * 1000; // 5 phút
+  otpMap.set(email, { otp, expires });
+
+  // Gửi mail với OTP
+  await sendMail({
+    to: email,
+    subject: "Smoker - Mã xác thực OTP đăng ký tài khoản",
+    html: `
+      <p>Bạn đã yêu cầu đăng ký tài khoản Smoker.</p>
+      <p>Mã OTP của bạn là: <b>${otp}</b></p>
+      <p>OTP có hiệu lực trong 5 phút. Vui lòng nhập OTP để xác minh email và tiếp tục đăng ký.</p>
     `
   });
 
@@ -362,6 +457,7 @@ module.exports = {
   loginService,
   googleLoginService,
   forgotPasswordService,
+  sendRegisterOtpService,
   changePasswordService,
   facebookLoginService,
   facebookRegisterService,

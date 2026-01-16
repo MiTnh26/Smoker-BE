@@ -4,6 +4,7 @@ const authController = require("../controllers/authController");
 const { verifyToken } = require("../middleware/authMiddleware");
 
 router.post("/register/check", authController.precheckRegister);
+router.post("/register/send-otp", authController.sendRegisterOtp);
 router.post("/register", authController.register);
 router.post("/google-register", authController.googleRegister);
 router.post("/login", authController.login);
