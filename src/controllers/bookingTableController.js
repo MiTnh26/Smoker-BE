@@ -11,6 +11,67 @@ class BookingTableController {
     this.getFullPaymentLink = this.getFullPaymentLink.bind(this);
   }
 
+  /**
+   * Tạo booking với voucher mới (luồng mới)
+   * POST /api/booking-tables/with-voucher
+   * Body: { receiverId, tableId, voucherId, salePrice, bookingDate, startTime, endTime, note }
+   */
+  async createWithVoucher(req, res) {
+    try {
+      const accountId = req.user?.id;
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const {
+        receiverId,    // EntityAccountId của bar
+        tableId,       // ID bàn
+        voucherId,     // VoucherId từ bar (optional - nếu không có thì chỉ đặt bàn với cọc 100k)
+        salePrice,     // Giá admin bán voucher (optional - chỉ cần khi có voucher)
+        bookingDate,
+        startTime,
+        endTime,
+        note
+      } = req.body;
+
+      if (!receiverId || !tableId) {
+        return res.status(400).json({
+          success: false,
+          message: "receiverId và tableId là bắt buộc"
+        });
+      }
+
+      // Nếu có voucher thì phải có salePrice
+      if (voucherId && !salePrice) {
+        return res.status(400).json({
+          success: false,
+          message: "salePrice là bắt buộc khi có voucherId"
+        });
+      }
+
+      const result = await bookingTableService.createBookingWithVoucher({
+        bookerAccountId: accountId,
+        receiverEntityId: receiverId,
+        tableId,
+        voucherId,
+        salePrice,
+        bookingDate,
+        startTime,
+        endTime,
+        note
+      });
+
+      return res.status(result.success ? 201 : 400).json(result);
+    } catch (error) {
+      console.error("createWithVoucher booking error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error creating booking with voucher",
+        error: error.message,
+      });
+    }
+  }
+
   // POST /api/booking-tables - Tạo booking với combo bắt buộc (API mới)
   async createWithCombo(req, res) {
     try {
@@ -1081,6 +1142,301 @@ class BookingTableController {
         success: false,
         message: "Error fetching unconfirmed bookings",
         error: error.message
+      });
+    }
+  }
+
+  /**
+   * Bar xác nhận booking
+   * POST /api/bar/bookings/:id/confirm
+   */
+  async confirmBookingByBar(req, res) {
+    try {
+      const accountId = req.user?.id || req.user?.accountId;
+      const { id } = req.params; // bookedScheduleId
+      
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      
+      // Lấy BarPage của account
+      const barPageModel = require("../models/barPageModel");
+      const barPage = await barPageModel.getBarPageByAccountId(accountId);
+      if (!barPage) {
+        return res.status(403).json({ success: false, message: "Access denied - No BarPage found" });
+      }
+      
+      // Lấy booking
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+      const booking = await bookedScheduleModel.getBookedScheduleById(id);
+      if (!booking) {
+        return res.status(404).json({ success: false, message: "Booking not found" });
+      }
+      
+      // Kiểm tra quyền (booking phải thuộc về bar này)
+      // ReceiverId trong booking là EntityAccountId của bar, không phải BarPageId
+      const bookingReceiverId = booking.ReceiverId?.toString().toLowerCase();
+      const barEntityAccountId = barPage.EntityAccountId?.toString().toLowerCase();
+      
+      console.log('[confirmBookingByBar] Checking authorization:', {
+        bookingReceiverId,
+        barEntityAccountId,
+        barPageId: barPage.BarPageId,
+        match: bookingReceiverId === barEntityAccountId
+      });
+      
+      if (bookingReceiverId !== barEntityAccountId) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
+      
+      // Update booking
+      const { getPool, sql } = require("../db/sqlserver");
+      const pool = await getPool();
+      await pool.request()
+        .input("BookedScheduleId", sql.UniqueIdentifier, id)
+        .input("BarPageId", sql.UniqueIdentifier, barPage.BarPageId)
+        .query(`
+          UPDATE BookedSchedules
+          SET BarConfirmationStatus = 'confirmed',
+              BarConfirmedAt = GETDATE(),
+              BarConfirmedBy = @BarPageId,
+              ScheduleStatus = 'Confirmed'
+          WHERE BookedScheduleId = @BookedScheduleId
+        `);
+      
+      // Gửi notification cho người dùng
+      try {
+        const notificationService = require("../services/notificationService");
+        const entityAccountModel = require("../models/entityAccountModel");
+        const userEntityAccountId = booking.BookerId;
+        const barEntityAccountId = await entityAccountModel.getEntityAccountIdByEntityId(barPage.BarPageId, "BarPage");
+        
+        if (userEntityAccountId && barEntityAccountId) {
+          await notificationService.createNotification({
+            type: "Confirm",
+            sender: barEntityAccountId,
+            receiver: userEntityAccountId,
+            content: `Đặt bàn của bạn đã được xác nhận. Mã voucher: ${booking.VoucherCode || 'N/A'}`,
+            link: `/booking/my`
+          });
+        }
+      } catch (notifError) {
+        console.warn("[BookingTableController] Failed to send notification:", notifError);
+      }
+      
+      return res.json({
+        success: true,
+        message: "Đã xác nhận đặt bàn",
+        data: { voucherCode: booking.VoucherCode }
+      });
+      
+    } catch (error) {
+      console.error("confirmBookingByBar error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error confirming booking",
+        error: error.message,
+      });
+    }
+  }
+
+  /**
+   * Bar từ chối booking
+   * POST /api/bar/bookings/:id/reject
+   */
+  async rejectBookingByBar(req, res) {
+    try {
+      const accountId = req.user?.id || req.user?.accountId;
+      const { id } = req.params; // bookedScheduleId
+      const { rejectionReason } = req.body;
+      
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      
+      // Lấy BarPage của account
+      const barPageModel = require("../models/barPageModel");
+      const barPage = await barPageModel.getBarPageByAccountId(accountId);
+      if (!barPage) {
+        return res.status(403).json({ success: false, message: "Access denied - No BarPage found" });
+      }
+      
+      // Lấy booking
+      const bookedScheduleModel = require("../models/bookedScheduleModel");
+      const booking = await bookedScheduleModel.getBookedScheduleById(id);
+      if (!booking) {
+        return res.status(404).json({ success: false, message: "Booking not found" });
+      }
+      
+      // Kiểm tra quyền
+      // booking.ReceiverId là EntityAccountId của bar, barPage.BarPageId là BarPageId -> phải so sánh với barPage.EntityAccountId
+      const bookingReceiverId = booking.ReceiverId?.toString().toLowerCase();
+      const barEntityAccountId = barPage.EntityAccountId?.toString().toLowerCase();
+      if (!bookingReceiverId || !barEntityAccountId || bookingReceiverId !== barEntityAccountId) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
+      
+      // Update booking
+      const { getPool, sql } = require("../db/sqlserver");
+      const pool = await getPool();
+      await pool.request()
+        .input("BookedScheduleId", sql.UniqueIdentifier, id)
+        .input("BarPageId", sql.UniqueIdentifier, barPage.BarPageId)
+        .input("RejectionReason", sql.NVarChar(sql.MAX), rejectionReason || null)
+        .query(`
+          UPDATE BookedSchedules
+          SET BarConfirmationStatus = 'rejected',
+              BarConfirmedAt = GETDATE(),
+              BarConfirmedBy = @BarPageId,
+              RejectionReason = @RejectionReason,
+              ScheduleStatus = 'Rejected'
+          WHERE BookedScheduleId = @BookedScheduleId
+        `);
+      
+      // Tạo refund request
+      const refundRequestModel = require("../models/refundRequestModel");
+      // Không tạo trùng refund request
+      const existingRefundRequest = await refundRequestModel.findByBookedScheduleId(id);
+      if (existingRefundRequest) {
+        return res.json({
+          success: true,
+          message: "Đã từ chối đặt bàn. Yêu cầu hoàn tiền đã tồn tại.",
+          data: { refundRequest: existingRefundRequest }
+        });
+      }
+
+      let refundAmount = booking.DepositAmount || 100000;
+      if (booking.VoucherDistributionId) {
+        const voucherDistributionModel = require("../models/voucherDistributionModel");
+        const distribution = await voucherDistributionModel.findByBookedScheduleId(id);
+        if (distribution) {
+          refundAmount += parseFloat(distribution.SalePrice || 0);
+        }
+      }
+      
+      // Convert EntityAccountId (booking.BookerId) -> AccountId để lưu vào RefundRequests.UserId
+      const entityAccountModel = require("../models/entityAccountModel");
+      const bookerEntityInfo = await entityAccountModel.verifyEntityAccountId(booking.BookerId);
+      const bookerAccountId = bookerEntityInfo?.AccountId;
+      if (!bookerAccountId) {
+        return res.status(500).json({
+          success: false,
+          message: "Không xác định được AccountId của người đặt để tạo yêu cầu hoàn tiền"
+        });
+      }
+
+      await refundRequestModel.createRefundRequest({
+        bookedScheduleId: id,
+        userId: bookerAccountId,
+        amount: refundAmount,
+        reason: rejectionReason || "Bar từ chối đặt bàn"
+      });
+      
+      // Gửi notification cho người dùng và kế toán
+      try {
+        const notificationService = require("../services/notificationService");
+        const entityAccountModel = require("../models/entityAccountModel");
+        const userEntityAccountId = booking.BookerId;
+        const barEntityAccountId = await entityAccountModel.getEntityAccountIdByEntityId(barPage.BarPageId, "BarPage");
+        
+        // Thông báo người dùng
+        if (userEntityAccountId && barEntityAccountId) {
+          await notificationService.createNotification({
+            type: "Info",
+            sender: barEntityAccountId,
+            receiver: userEntityAccountId,
+            content: `Đặt bàn của bạn đã bị từ chối. Yêu cầu hoàn tiền đã được gửi.`,
+            link: `/booking/my`
+          });
+        }
+        
+        // Thông báo kế toán
+        const accountantResult = await pool.request().query(`
+          SELECT TOP 1 AccountId FROM Accounts WHERE Role = 'Accountant' ORDER BY CreatedAt ASC
+        `);
+        if (accountantResult.recordset.length > 0) {
+          const accountantAccountId = accountantResult.recordset[0].AccountId;
+          const accountantEntityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(accountantAccountId, "Account");
+          if (accountantEntityAccountId && barEntityAccountId) {
+            await notificationService.createNotification({
+              type: "Info",
+              sender: barEntityAccountId,
+              receiver: accountantEntityAccountId,
+              content: `Yêu cầu hoàn tiền ${refundAmount.toLocaleString('vi-VN')} đ cho booking #${id.substring(0, 8)}`,
+              link: `/accountant/refund-requests`
+            });
+          }
+        }
+      } catch (notifError) {
+        console.warn("[BookingTableController] Failed to send notification:", notifError);
+      }
+      
+      return res.json({
+        success: true,
+        message: "Đã từ chối đặt bàn. Yêu cầu hoàn tiền đã được gửi.",
+      });
+      
+    } catch (error) {
+      console.error("rejectBookingByBar error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error rejecting booking",
+        error: error.message,
+      });
+    }
+  }
+
+  /**
+   * Bar xem danh sách booking chờ xác nhận
+   * GET /api/bar/bookings/pending
+   */
+  async getPendingBookings(req, res) {
+    try {
+      const accountId = req.user?.id || req.user?.accountId;
+      
+      if (!accountId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      
+      // Lấy BarPage của account
+      const barPageModel = require("../models/barPageModel");
+      const barPage = await barPageModel.getBarPageByAccountId(accountId);
+      if (!barPage) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
+      
+      // Lấy bookings chờ xác nhận
+      const { getPool, sql } = require("../db/sqlserver");
+      const pool = await getPool();
+      const entityAccountModel = require("../models/entityAccountModel");
+      const barEntityAccountId = await entityAccountModel.getEntityAccountIdByEntityId(barPage.BarPageId, "BarPage");
+      
+      const result = await pool.request()
+        .input("ReceiverId", sql.UniqueIdentifier, barEntityAccountId)
+        .query(`
+          SELECT bs.*,
+            a.UserName AS BookerName,
+            a.Email AS BookerEmail
+          FROM BookedSchedules bs
+          LEFT JOIN EntityAccounts ea ON bs.BookerId = ea.EntityAccountId
+          LEFT JOIN Accounts a ON ea.EntityType = 'Account' AND ea.EntityId = a.AccountId
+          WHERE bs.ReceiverId = @ReceiverId
+            AND bs.BarConfirmationStatus = 'pending'
+            AND bs.PaymentStatus = 'Paid'
+          ORDER BY bs.CreatedAt DESC
+        `);
+      
+      return res.json({
+        success: true,
+        data: result.recordset
+      });
+      
+    } catch (error) {
+      console.error("getPendingBookings error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching pending bookings",
+        error: error.message,
       });
     }
   }

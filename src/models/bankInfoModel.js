@@ -65,20 +65,47 @@ async function getBankInfoByEntityAccountId(entityAccountId) {
   return result.recordset[0] || null;
 }
 
-// 📖 Lấy BankInfo theo AccountId (backward compatibility - convert AccountId → EntityAccountId)
+// 📖 Lấy BankInfo theo AccountId
+// Query trực tiếp theo AccountId (bảng BankInfo có cột AccountId)
 async function getBankInfoByAccountId(accountId) {
   if (!accountId) {
+    console.log("⚠️ getBankInfoByAccountId: accountId is null or undefined");
     return null;
   }
   
-  // Convert AccountId → EntityAccountId
-  const entityAccountId = await normalizeToEntityAccountId(accountId);
-  if (!entityAccountId) {
-    console.log("⚠️ getBankInfoByAccountId: Could not convert AccountId to EntityAccountId");
+  const pool = await getPool();
+  
+  try {
+    console.log("🔍 Querying BankInfo by AccountId:", accountId);
+    // Query theo AccountId trực tiếp - SELECT tất cả cột để tránh lỗi tên cột
+    const result = await pool.request()
+      .input("AccountId", sql.UniqueIdentifier, accountId)
+      .query(`
+        SELECT *
+        FROM BankInfo
+        WHERE AccountId = @AccountId
+      `);
+    
+    console.log("🔍 Query result - Records found:", result.recordset.length);
+    
+    if (result.recordset.length > 0) {
+      const bankInfo = result.recordset[0];
+      console.log("✅ Found BankInfo by AccountId:", {
+        BankInfoId: bankInfo.BankInfoId,
+        BankName: bankInfo.BankName,
+        AccountNumber: bankInfo.AccountNumber,
+        AccountId: bankInfo.AccountId
+      });
+      return bankInfo;
+    }
+    
+    console.log("⚠️ No BankInfo found for AccountId:", accountId);
+    return null;
+  } catch (err) {
+    console.error("❌ Error querying BankInfo by AccountId:", err.message);
+    console.error("❌ Error stack:", err.stack);
     return null;
   }
-  
-  return await getBankInfoByEntityAccountId(entityAccountId);
 }
 
 

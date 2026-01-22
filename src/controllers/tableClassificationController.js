@@ -12,6 +12,16 @@ const {
       const { barPageId } = req.params;
       if (!barPageId)
         return res.status(400).json({ status: "error", message: "Thiếu barPageId" });
+      
+      // Validate GUID format to prevent route conflicts
+      const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!guidRegex.test(barPageId)) {
+        return res.status(400).json({
+          status: "error",
+          message: "Validation failed for parameter 'BarPageId'. Invalid GUID.",
+          received: barPageId
+        });
+      }
   
       const classifications = await getTableClassificationsByBarPageId(barPageId);
       return res.status(200).json({ status: "success", data: classifications });

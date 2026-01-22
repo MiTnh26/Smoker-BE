@@ -5,6 +5,9 @@ const { verifyToken } = require("../middleware/authMiddleware");
 
 // === COMBO-BASED BOOKING APIs (NEW) ===
 
+// Tạo booking với voucher mới (luồng mới)
+router.post("/with-voucher", verifyToken, bookingTableController.createWithVoucher);
+
 // Tạo booking với combo bắt buộc
 router.post("/with-combo", verifyToken, bookingTableController.createWithCombo);
 
@@ -40,6 +43,15 @@ router.get("/bar/:barId/confirmed", verifyToken, bookingTableController.getConfi
 
 // Lấy bookings chưa confirm theo bar
 router.get("/bar/:barId/unconfirmed", verifyToken, bookingTableController.getUnconfirmedBookings);
+
+// Bar xem danh sách booking chờ xác nhận
+router.get("/bar/bookings/pending", verifyToken, bookingTableController.getPendingBookings);
+
+// Bar xác nhận booking
+router.post("/bar/bookings/:id/confirm", verifyToken, bookingTableController.confirmBookingByBar);
+
+// Bar từ chối booking
+router.post("/bar/bookings/:id/reject", verifyToken, bookingTableController.rejectBookingByBar);
 
 // === PAYMENT APIs (UPDATED) ===
 
