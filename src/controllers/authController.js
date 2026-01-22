@@ -58,9 +58,41 @@ async function login(req, res) {
 }
 console.log("authService object:", authService);
 
+// Helper function để lấy số điện thoại từ Google People API
+async function getPhoneFromPeopleAPI(accessToken) {
+  try {
+    const response = await fetch(
+      `https://people.googleapis.com/v1/people/me?personFields=phoneNumbers`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn("[Google OAuth] Failed to fetch phone from People API:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    const phoneNumbers = data.phoneNumbers || [];
+    
+    // Lấy số điện thoại đầu tiên có giá trị
+    if (phoneNumbers.length > 0 && phoneNumbers[0].value) {
+      return phoneNumbers[0].value;
+    }
+    
+    return null;
+  } catch (error) {
+    console.warn("[Google OAuth] Error fetching phone from People API:", error.message);
+    return null;
+  }
+}
+
 async function googleOAuthLogin(req, res) {
   try {
-    const { idToken } = req.body;
+    const { idToken, accessToken } = req.body;
     if (!idToken)
       return res.status(400).json({ message: "Thiếu Google ID token" });
 
@@ -73,15 +105,14 @@ async function googleOAuthLogin(req, res) {
     const email = payload.email;
     const name = payload.name || null;
     const picture = payload.picture || null;
-    // Lấy số điện thoại nếu có trong payload (thường không có, cần gọi People API)
-    // Để lấy số điện thoại từ People API, cần access token và scope phù hợp
+    
+    // Lấy số điện thoại: ưu tiên từ People API nếu có accessToken, sau đó từ payload
     let phone = payload.phone_number || null;
     
-    // Nếu có access token và muốn lấy số điện thoại từ People API, có thể gọi ở đây
-    // const { accessToken } = req.body;
-    // if (accessToken && !phone) {
-    //   phone = await getPhoneFromPeopleAPI(accessToken);
-    // }
+    // Nếu có access token, thử lấy số điện thoại từ People API
+    if (accessToken && !phone) {
+      phone = await getPhoneFromPeopleAPI(accessToken);
+    }
 
     // ✅ Gọi service login/register qua Google (tự động đăng ký nếu chưa có)
     const result = await authService.googleLoginService({ 
@@ -184,6 +215,16 @@ async function verifyOtp(req, res) {
   }
 }
 
+async function sendRegisterOtp(req, res) {
+  try {
+    const { email } = req.body;
+    await authService.sendRegisterOtpService(email);
+    return res.json({ message: "Đã gửi mã OTP về email" });
+  } catch (err) {
+    const status = err.code === 409 ? 409 : 400;
+    return res.status(status).json({ message: err.message || "Gửi OTP thất bại" });
+  }
+}
 
 async function resetPassword(req, res) {
   try {
@@ -203,6 +244,7 @@ module.exports = {
   login,
   googleOAuthLogin,
   forgotPassword,
+  sendRegisterOtp,
   changePassword,
   facebookOAuthLogin,
   facebookRegister,

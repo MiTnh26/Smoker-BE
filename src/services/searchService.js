@@ -207,6 +207,171 @@ class SearchService {
       throw error;
     }
   }
+
+  /**
+   * Lấy danh sách trending searches (gợi ý tìm kiếm phổ biến)
+   * Thuật toán: Kết hợp từ nhiều nguồn:
+   * 1. Top trending posts → lấy tên author
+   * 2. Popular bars (có nhiều followers)
+   * 3. Popular users/DJs/Dancers (có nhiều followers)
+   * @param {number} limit - Số lượng kết quả trả về (default: 6)
+   * @returns {Promise<Array<string>>} - Danh sách tên trending
+   */
+  async getTrendingSearches(limit = 6) {
+    try {
+      const pool = await getPool();
+      const trendingSearches = new Map(); // Map để tránh duplicate và tính điểm
+
+      // 1. Lấy top trending posts (top 20 posts có trendingScore cao nhất)
+      try {
+        const Post = require('../models/postModel');
+        const trendingPosts = await Post.find({ status: 'public' })
+          .sort({ trendingScore: -1, createdAt: -1 })
+          .limit(20)
+          .lean()
+          .select('entityAccountId authorName authorEntityAccountId');
+
+        // Enrich với author info nếu chưa có
+        const postsWithAuthor = trendingPosts.filter(p => p.authorName || p.entityAccountId);
+        if (postsWithAuthor.length > 0) {
+          const entityIds = postsWithAuthor
+            .map(p => p.entityAccountId || p.authorEntityAccountId)
+            .filter(Boolean);
+          
+          if (entityIds.length > 0) {
+            // Giới hạn số lượng để tránh query quá dài (tối đa 20 IDs)
+            const limitedIds = entityIds.slice(0, 20);
+            const request = pool.request();
+            
+            // Tạo placeholders và bind parameters
+            const placeholders = limitedIds.map((_, i) => `@id${i}`).join(',');
+            limitedIds.forEach((id, i) => {
+              request.input(`id${i}`, sql.UniqueIdentifier, id);
+            });
+
+            const authorResult = await request.query(`
+              SELECT 
+                EA.EntityAccountId,
+                CASE 
+                  WHEN EA.EntityType = 'Account' THEN A.UserName
+                  WHEN EA.EntityType = 'BarPage' THEN BP.BarName
+                  WHEN EA.EntityType = 'BusinessAccount' THEN BA.UserName
+                  ELSE NULL
+                END AS name
+              FROM EntityAccounts EA
+              LEFT JOIN Accounts A ON EA.EntityType = 'Account' AND EA.EntityId = A.AccountId
+              LEFT JOIN BarPages BP ON EA.EntityType = 'BarPage' AND EA.EntityId = BP.BarPageId
+              LEFT JOIN BussinessAccounts BA ON EA.EntityType = 'BusinessAccount' AND EA.EntityId = BA.BussinessAccountId
+              WHERE EA.EntityAccountId IN (${placeholders})
+            `);
+
+            authorResult.recordset.forEach(row => {
+              const name = row.name;
+              if (name && name.trim()) {
+                const currentScore = trendingSearches.get(name) || 0;
+                trendingSearches.set(name, currentScore + 10); // Trending post = +10 điểm
+              }
+            });
+          }
+        }
+      } catch (error) {
+        console.warn('[SearchService] Error getting trending posts:', error);
+      }
+
+      // 2. Lấy popular bars (có nhiều followers) - top 10
+      try {
+        const popularBarsResult = await pool.request().query(`
+          SELECT TOP 10
+            BP.BarName as name,
+            COUNT(F.FollowerId) as followerCount
+          FROM BarPages BP
+          LEFT JOIN EntityAccounts EA ON BP.BarPageId = EA.EntityId AND EA.EntityType = 'BarPage'
+          LEFT JOIN Follows F ON F.FollowingId = EA.EntityAccountId
+          WHERE BP.BarName IS NOT NULL AND BP.BarName != ''
+          GROUP BY BP.BarName, EA.EntityAccountId
+          HAVING COUNT(F.FollowerId) > 0
+          ORDER BY COUNT(F.FollowerId) DESC
+        `);
+
+        popularBarsResult.recordset.forEach(row => {
+          const name = row.name;
+          if (name && name.trim()) {
+            const followerCount = row.followerCount || 0;
+            const currentScore = trendingSearches.get(name) || 0;
+            // Điểm = số followers / 10 (tối đa 5 điểm)
+            trendingSearches.set(name, currentScore + Math.min(5, followerCount / 10));
+          }
+        });
+      } catch (error) {
+        console.warn('[SearchService] Error getting popular bars:', error);
+      }
+
+      // 3. Lấy popular users/DJs/Dancers (có nhiều followers) - top 10
+      try {
+        // Query riêng cho Accounts
+        const popularAccountsResult = await pool.request().query(`
+          SELECT TOP 5
+            A.UserName as name,
+            COUNT(F.FollowerId) as followerCount
+          FROM Accounts A
+          JOIN EntityAccounts EA ON A.AccountId = EA.EntityId AND EA.EntityType = 'Account'
+          LEFT JOIN Follows F ON F.FollowingId = EA.EntityAccountId
+          WHERE A.UserName IS NOT NULL AND A.UserName != ''
+          GROUP BY A.UserName, EA.EntityAccountId
+          HAVING COUNT(F.FollowerId) > 0
+          ORDER BY COUNT(F.FollowerId) DESC
+        `);
+
+        popularAccountsResult.recordset.forEach(row => {
+          const name = row.name;
+          if (name && name.trim()) {
+            const followerCount = row.followerCount || 0;
+            const currentScore = trendingSearches.get(name) || 0;
+            trendingSearches.set(name, currentScore + Math.min(5, followerCount / 10));
+          }
+        });
+
+        // Query riêng cho BusinessAccounts (DJ, Dancer)
+        const popularBusinessResult = await pool.request().query(`
+          SELECT TOP 5
+            BA.UserName as name,
+            COUNT(F.FollowerId) as followerCount
+          FROM BussinessAccounts BA
+          JOIN EntityAccounts EA ON BA.BussinessAccountId = EA.EntityId AND EA.EntityType = 'BusinessAccount'
+          LEFT JOIN Follows F ON F.FollowingId = EA.EntityAccountId
+          WHERE BA.UserName IS NOT NULL AND BA.UserName != ''
+            AND BA.Role IN ('DJ', 'DANCER')
+          GROUP BY BA.UserName, EA.EntityAccountId
+          HAVING COUNT(F.FollowerId) > 0
+          ORDER BY COUNT(F.FollowerId) DESC
+        `);
+
+        popularBusinessResult.recordset.forEach(row => {
+          const name = row.name;
+          if (name && name.trim()) {
+            const followerCount = row.followerCount || 0;
+            const currentScore = trendingSearches.get(name) || 0;
+            trendingSearches.set(name, currentScore + Math.min(5, followerCount / 10));
+          }
+        });
+      } catch (error) {
+        console.warn('[SearchService] Error getting popular users:', error);
+      }
+
+      // 4. Sort theo điểm và lấy top N
+      const sortedSearches = Array.from(trendingSearches.entries())
+        .sort((a, b) => b[1] - a[1]) // Sort theo điểm giảm dần
+        .slice(0, limit)
+        .map(([name]) => name.trim())
+        .filter(name => name.length > 0);
+
+      return sortedSearches;
+    } catch (error) {
+      console.error('[SearchService] Error in getTrendingSearches:', error);
+      // Fallback: trả về empty array nếu có lỗi
+      return [];
+    }
+  }
 }
 
 module.exports = new SearchService();
