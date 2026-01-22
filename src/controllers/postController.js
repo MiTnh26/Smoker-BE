@@ -1602,9 +1602,10 @@ class PostController {
         });
       }
 
-      // authorId trong params có thể là entityAccountId hoặc entityId
-      // Nếu có query parameter entityAccountId thì dùng nó, không thì coi authorId là entityAccountId
-      const entityAccountId = req.query.entityAccountId || authorId;
+      // ⚠️ QUAN TRỌNG: authorId từ params là ID của profile đang xem (author)
+      // req.query.entityAccountId là của current user (viewer) - KHÔNG dùng làm authorId
+      // Luôn dùng authorId từ params làm entityAccountId của author
+      const entityAccountId = authorId;
 
       // Delegate sang PostService để xử lý giống feed (populate medias/music/reposts, enrich author, comments, topComments)
       const viewerAccountId = req.user?.id || null;
