@@ -28,18 +28,18 @@ loaderDelay=250
 
 [database]
 type=mysqli
-host=mysql-smoker.mysql.database.azure.com
+host=smoker1.mysql.database.azure.com
 socket=
 port=3306
-username=smoker
-password=Minhtran26
-name=revive_adserver
+username=minhdbd4
+password=Minhtran26@
+name=Mysql-Revive-New
 persistent=
 protocol=tcp
 compress=
 ssl=1
 capath="/var/www/html/revive/certs"
-ca="/var/www/html/revive/certs/azure-mysql-ssl-cert.pem"
+ca="/var/www/html/revive/certs/azure-mysql-ca-cert.pem"
 
 [databaseCharset]
 checkComplete=1
