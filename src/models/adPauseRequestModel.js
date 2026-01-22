@@ -3,7 +3,7 @@ const { getPool, sql } = require("../db/sqlserver");
 /**
  * Tạo yêu cầu tạm dừng quảng cáo (từ BarPage)
  */
-async function createPauseRequest({ userAdId, barPageId, accountId, reason, requestNote }) {
+async function createPauseRequest({ userAdId, barPageId, managerId, reason, requestNote }) {
   const pool = await getPool();
   const crypto = require('crypto');
   const pauseRequestId = crypto.randomUUID();
@@ -12,14 +12,13 @@ async function createPauseRequest({ userAdId, barPageId, accountId, reason, requ
     .input("PauseRequestId", sql.UniqueIdentifier, pauseRequestId)
     .input("UserAdId", sql.UniqueIdentifier, userAdId)
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
-    .input("AccountId", sql.UniqueIdentifier, accountId)
     .input("Reason", sql.NVarChar(sql.MAX), reason || null)
     .input("RequestNote", sql.NVarChar(sql.MAX), requestNote || null)
     .query(`
       INSERT INTO AdPauseRequests
-        (PauseRequestId, UserAdId, BarPageId, AccountId, Reason, RequestNote, Status, CreatedAt, UpdatedAt)
+        (PauseRequestId, UserAdId, BarPageId, Reason, RequestNote, Status, CreatedAt, UpdatedAt)
       VALUES
-        (@PauseRequestId, @UserAdId, @BarPageId, @AccountId, @Reason, @RequestNote, 'pending', GETDATE(), GETDATE())
+        (@PauseRequestId, @UserAdId, @BarPageId, @Reason, @RequestNote, 'pending', GETDATE(), GETDATE())
     `);
   
   const result = await pool.request()
@@ -57,7 +56,6 @@ async function findById(pauseRequestId) {
         ua.TotalClicks,
         bp.BarName,
         bp.Email AS AccountEmail,
-        bp.AccountId,
         admin.Email AS AdminEmail
       FROM AdPauseRequests pr
       INNER JOIN UserAdvertisements ua ON pr.UserAdId = ua.UserAdId
@@ -85,6 +83,28 @@ async function getByBarPageId(barPageId) {
       FROM AdPauseRequests pr
       INNER JOIN UserAdvertisements ua ON pr.UserAdId = ua.UserAdId
       WHERE pr.BarPageId = @BarPageId
+      ORDER BY pr.CreatedAt DESC
+    `);
+  
+  return result.recordset;
+}
+
+/**
+ * Lấy tất cả yêu cầu pause của một UserAd
+ */
+async function getByUserAdId(userAdId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("UserAdId", sql.UniqueIdentifier, userAdId)
+    .query(`
+      SELECT pr.*,
+        ua.Title AS AdTitle,
+        ua.ImageUrl AS AdImageUrl,
+        ua.Status AS AdStatus,
+        ua.ReviveBannerId
+      FROM AdPauseRequests pr
+      INNER JOIN UserAdvertisements ua ON pr.UserAdId = ua.UserAdId
+      WHERE pr.UserAdId = @UserAdId
       ORDER BY pr.CreatedAt DESC
     `);
   
@@ -141,7 +161,10 @@ async function getAllPauseRequests({ status, limit = 50, offset = 0 } = {}) {
 async function approvePauseRequest(pauseRequestId, adminAccountId, { adminNote, revivePaused = true } = {}) {
   const pool = await getPool();
   
-  await pool.request()
+  console.log(`[adPauseRequestModel] Approving pause request ${pauseRequestId} by admin ${adminAccountId}`);
+  
+  // Update AdPauseRequests status
+  const updateRequestResult = await pool.request()
     .input("PauseRequestId", sql.UniqueIdentifier, pauseRequestId)
     .input("AdminAccountId", sql.UniqueIdentifier, adminAccountId)
     .input("AdminNote", sql.NVarChar(sql.MAX), adminNote || null)
@@ -158,8 +181,15 @@ async function approvePauseRequest(pauseRequestId, adminAccountId, { adminNote, 
       WHERE PauseRequestId = @PauseRequestId
     `);
   
+  const rowsAffected1 = updateRequestResult.rowsAffected[0];
+  console.log(`[adPauseRequestModel] Updated AdPauseRequests: ${rowsAffected1} row(s) affected`);
+  
+  if (rowsAffected1 === 0) {
+    throw new Error(`No pause request found with ID ${pauseRequestId} or already processed`);
+  }
+  
   // Update UserAdvertisement status to 'paused'
-  await pool.request()
+  const updateAdResult = await pool.request()
     .input("PauseRequestId", sql.UniqueIdentifier, pauseRequestId)
     .query(`
       UPDATE ua
@@ -170,7 +200,35 @@ async function approvePauseRequest(pauseRequestId, adminAccountId, { adminNote, 
       WHERE pr.PauseRequestId = @PauseRequestId
     `);
   
-  return await findById(pauseRequestId);
+  const rowsAffected2 = updateAdResult.rowsAffected[0];
+  console.log(`[adPauseRequestModel] Updated UserAdvertisements: ${rowsAffected2} row(s) affected`);
+  
+  if (rowsAffected2 === 0) {
+    console.warn(`[adPauseRequestModel] Warning: No UserAdvertisement found for pause request ${pauseRequestId}`);
+  } else {
+    // Verify the update by querying the UserAdvertisement status
+    const verifyResult = await pool.request()
+      .input("PauseRequestId", sql.UniqueIdentifier, pauseRequestId)
+      .query(`
+        SELECT ua.UserAdId, ua.Status, ua.Title
+        FROM UserAdvertisements ua
+        INNER JOIN AdPauseRequests pr ON ua.UserAdId = pr.UserAdId
+        WHERE pr.PauseRequestId = @PauseRequestId
+      `);
+    
+    if (verifyResult.recordset.length > 0) {
+      const adStatus = verifyResult.recordset[0].Status;
+      console.log(`[adPauseRequestModel] Verified UserAdvertisement status: ${adStatus} (UserAdId: ${verifyResult.recordset[0].UserAdId})`);
+      if (adStatus !== 'paused') {
+        console.error(`[adPauseRequestModel] ERROR: UserAdvertisement status is ${adStatus}, expected 'paused'!`);
+      }
+    }
+  }
+  
+  const updatedRequest = await findById(pauseRequestId);
+  console.log(`[adPauseRequestModel] Approved pause request ${pauseRequestId}, AdPauseRequest status: ${updatedRequest?.Status}, UserAd status: ${updatedRequest?.AdStatus}`);
+  
+  return updatedRequest;
 }
 
 /**
@@ -240,6 +298,7 @@ module.exports = {
   createPauseRequest,
   findById,
   getByBarPageId,
+  getByUserAdId,
   getAllPauseRequests,
   approvePauseRequest,
   rejectPauseRequest,

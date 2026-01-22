@@ -38,7 +38,8 @@ const detailScheduleSchema = new mongoose.Schema(
       VoucherId: { type: String, default: "" },
       VoucherCode: { type: String, default: "" },
       VoucherName: { type: String, default: "" },
-      DiscountPercentage: { type: Number, default: 0 },
+      OriginalValue: { type: Number, default: 0 },
+      SalePrice: { type: Number, default: 0 },
     },
     // Địa chỉ cho DJ/Dancer booking
     Location: {

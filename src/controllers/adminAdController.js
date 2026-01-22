@@ -863,12 +863,16 @@ class AdminAdController {
         });
       }
       
+      console.log(`[AdminAdController] Current pause request status: ${pauseRequest.Status}`);
+      
       if (pauseRequest.Status !== 'pending') {
         return res.status(400).json({ 
           success: false, 
           message: `Yêu cầu đã được xử lý (status: ${pauseRequest.Status})` 
         });
       }
+      
+      console.log(`[AdminAdController] Approving pause request ${pauseRequestId} by admin ${adminAccountId}`);
       
       // Approve pause request và update ad status
       const updatedRequest = await adPauseRequestModel.approvePauseRequest(
@@ -877,15 +881,33 @@ class AdminAdController {
         { adminNote, revivePaused }
       );
       
-      // Gửi notification cho BarPage
+      console.log(`[AdminAdController] Pause request approved, new status: ${updatedRequest?.Status}`);
+
+      
+      // Gửi notification cho BarPage (lấy AccountId từ BarPages)
       try {
-        await notificationService.createNotification({
-          type: "Confirm",
-          sender: adminAccountId,
-          receiver: pauseRequest.AccountId,
-          content: `Yêu cầu tạm dừng quảng cáo "${pauseRequest.AdTitle}" đã được duyệt.`,
-          link: `/bar/dashboard`
-        });
+        const { getPool, sql } = require("../db/sqlserver");
+        const pool = await getPool();
+        const barPageResult = await pool.request()
+          .input("BarPageId", sql.UniqueIdentifier, pauseRequest.BarPageId)
+          .query(`
+            SELECT TOP 1 AccountId
+            FROM BarPages
+            WHERE BarPageId = @BarPageId
+          `);
+        
+        if (barPageResult.recordset.length > 0) {
+          const barPageAccountId = barPageResult.recordset[0].AccountId;
+          if (barPageAccountId) {
+            await notificationService.createNotification({
+              type: "Confirm",
+              sender: adminAccountId,
+              receiver: barPageAccountId,
+              content: `Yêu cầu tạm dừng quảng cáo "${pauseRequest.AdTitle || 'N/A'}" đã được duyệt.`,
+              link: `/bar/dashboard`
+            });
+          }
+        }
       } catch (notifError) {
         console.warn("[AdminAdController] Failed to send notification:", notifError);
       }
