@@ -119,8 +119,21 @@ async function updateAccountInfo(accountId, updates) {
 
 function hasProfileComplete(account) {
   if (!account) return false;
-  const requiredFields = ["UserName", "Avatar"]; // minimal required fields
-  return requiredFields.every((key) => account[key] && String(account[key]).trim() !== "");
+  
+  // Required fields for profile setup
+  const requiredFields = ["UserName", "Avatar"];
+  const hasRequiredFields = requiredFields.every((key) => account[key] && String(account[key]).trim() !== "");
+  
+  if (!hasRequiredFields) return false;
+  
+  // Check additional important fields (Address and Phone are important for complete profile)
+  const hasAddress = account.Address && String(account.Address).trim() !== "";
+  const hasPhone = account.Phone && String(account.Phone).trim() !== "";
+  
+  // Profile is complete if has required fields AND (address OR phone)
+  // This allows flexibility: user can have either address or phone to be considered "complete"
+  // But ideally should have both
+  return hasRequiredFields && (hasAddress || hasPhone);
 }
 // Cập nhật mật khẩu tài khoản
 async function updatePassword(accountId, hashedPassword) {

@@ -4,7 +4,7 @@ const { success, error } = require("../utils/response");
 class FeedController {
   async getFeed(req, res) {
     try {
-      const { limit = 10, cursor, entityAccountId } = req.query;
+      const { limit = 10, cursor, entityAccountId, feedType = 'trending' } = req.query;
       const currentUser = req.user; // Lấy từ middleware verifyToken
       
       // Ưu tiên entityAccountId từ query param (FE gửi) để biết role hiện tại đang dùng
@@ -17,6 +17,7 @@ class FeedController {
         currentUser,
         limit: parseInt(limit, 10),
         cursor,
+        feedType, // 'trending' | 'following' | 'friends'
       });
 
       return res.json(success("Feed retrieved successfully", result));
