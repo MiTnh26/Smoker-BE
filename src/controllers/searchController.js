@@ -28,4 +28,27 @@ exports.searchAll = async (req, res) => {
   }
 };
 
+/**
+ * Lấy danh sách trending searches (gợi ý tìm kiếm phổ biến)
+ * GET /api/search/trending?limit=6
+ */
+exports.getTrendingSearches = async (req, res) => {
+  try {
+    const { limit = 6 } = req.query;
+    const trendingSearches = await searchService.getTrendingSearches(parseInt(limit, 10));
+    
+    res.json({ 
+      success: true, 
+      data: trendingSearches 
+    });
+  } catch (err) {
+    console.error('[SearchController] getTrendingSearches - Error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to get trending searches', 
+      error: err.message 
+    });
+  }
+};
+
 

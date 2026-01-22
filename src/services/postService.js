@@ -553,6 +553,8 @@ class PostService {
   // Lấy tất cả posts
     async getAllPosts(page = 1, limit = 10, includeMedias = false, includeMusic = false, cursor = null, populateReposts = false, options = {}) {
     try {
+      const { viewerAccountId, viewerEntityAccountId, followingList } = options;
+      
       // Filter posts: chỉ lấy posts có status = "public" (công khai, chưa trash, chưa xóa)
       // VÀ chỉ lấy posts có type = "post" (không lấy stories - type = "story")
       // Loại trừ deleted và trashed posts
@@ -564,6 +566,21 @@ class PostService {
         ]
       };
 
+      // ✅ THÊM: Filter theo followingList nếu có (cho tab Follow và Bạn bè)
+      if (followingList && followingList.length > 0) {
+        // Filter trực tiếp theo entityAccountId trong posts
+        // followingList đã là EntityAccountIds
+        baseFilter.entityAccountId = { $in: followingList };
+      }
+
+      // Determine sort order based on options
+      // Default: sort by trendingScore (for trending feed)
+      // If sortBy = 'createdAt': sort by createdAt only (for following/friends feed)
+      const sortBy = options?.sortBy || 'trendingScore';
+      const sortOrder = sortBy === 'createdAt' 
+        ? { createdAt: -1, _id: -1 }  // Sort by newest first (chronological)
+        : { trendingScore: -1, createdAt: -1 };  // Sort by trending score (algorithm)
+
       // Parse cursor nếu có
       const parsedCursor = typeof cursor === 'string' ? this.parseCursor(cursor) : cursor;
       
@@ -572,39 +589,56 @@ class PostService {
       
       if (parsedCursor) {
         // Cursor-based pagination: query posts before cursor
-        // Sort order: trendingScore DESC, createdAt DESC
-        // So sánh trendingScore trước, sau đó createdAt, cuối cùng _id
-        queryFilter = {
-          $and: [
-            baseFilter,
-            {
-              $or: [
-                { trendingScore: { $lt: parsedCursor.trendingScore } },
-                {
-                  $and: [
-                    { trendingScore: parsedCursor.trendingScore },
-                    { createdAt: { $lt: parsedCursor.createdAt } }
-                  ]
-                },
-                {
-                  $and: [
-                    { trendingScore: parsedCursor.trendingScore },
-                    { createdAt: parsedCursor.createdAt },
-                    { _id: { $lt: parsedCursor._id } }
-                  ]
-                }
-              ]
-            }
-          ]
-        };
+        // Logic khác nhau tùy theo sortBy
+        if (sortBy === 'createdAt') {
+          // Sort theo createdAt: cursor chỉ cần createdAt và _id
+          queryFilter = {
+            $and: [
+              baseFilter,
+              {
+                $or: [
+                  { createdAt: { $lt: parsedCursor.createdAt } },
+                  {
+                    $and: [
+                      { createdAt: parsedCursor.createdAt },
+                      { _id: { $lt: parsedCursor._id } }
+                    ]
+                  }
+                ]
+              }
+            ]
+          };
+        } else {
+          // Sort theo trendingScore: cursor dựa trên trendingScore, createdAt, _id
+          queryFilter = {
+            $and: [
+              baseFilter,
+              {
+                $or: [
+                  { trendingScore: { $lt: parsedCursor.trendingScore } },
+                  {
+                    $and: [
+                      { trendingScore: parsedCursor.trendingScore },
+                      { createdAt: { $lt: parsedCursor.createdAt } }
+                    ]
+                  },
+                  {
+                    $and: [
+                      { trendingScore: parsedCursor.trendingScore },
+                      { createdAt: parsedCursor.createdAt },
+                      { _id: { $lt: parsedCursor._id } }
+                    ]
+                  }
+                ]
+              }
+            ]
+          };
+        }
       }
       // If no cursor, use baseFilter as-is (for backward compatibility with page-based)
 
       const query = Post.find(queryFilter)
-        // Sort ưu tiên trendingScore: sort theo trendingScore trước, sau đó mới sort theo createdAt
-        // Điều này đảm bảo posts có trendingScore cao hơn luôn hiển thị trước, sau đó mới sắp xếp theo thời gian
-        // Posts trending sẽ được ưu tiên hiển thị, bất kể thời gian tạo
-        .sort({ trendingScore: -1, createdAt: -1 })
+        .sort(sortOrder)
         .lean(); // Use lean() to get plain JavaScript objects, bypass Mongoose cache
 
       // Apply skip/limit for backward compatibility (only if no cursor)
@@ -755,9 +789,8 @@ class PostService {
         }
       });
 
-      // Get viewer info from options
-      const viewerAccountId = options?.viewerAccountId || null;
-      const viewerEntityAccountId = options?.viewerEntityAccountId || null;
+      // viewerAccountId và viewerEntityAccountId đã được destructure từ options ở đầu function (dòng 556)
+      // Không cần khai báo lại ở đây
 
       // Transform posts to DTO format
       const postsDTO = postsPlain.map(post => {
