@@ -13,15 +13,15 @@ services:
       - key: PORT
         value: "80"
       - key: REVIVE_DB_HOST
-        value: mysql-smoker.mysql.database.azure.com
+        value: smoker1.mysql.database.azure.com
       - key: REVIVE_DB_PORT
         value: "3306"
       - key: REVIVE_DB_USER
-        value: smoker
+        value: minhdbd4
       - key: REVIVE_DB_PASSWORD
-        value: Minhtran26
+        value: Minhtran26@
       - key: REVIVE_DB_NAME
-        value: revive_adserver
+        value: Mysql-Revive-New
       - key: REVIVE_DB_SSL
         value: "1"
     region: singapore
@@ -39,27 +39,27 @@ services:
       
       # SQL Server cho database chính (cần cấu hình riêng)
       - key: MSSQL_SERVER
-        value: smoker.database.windows.net
+        value: smoker1.database.windows.net
       - key: MSSQL_PORT
         value: "1433"
       - key: MSSQL_USER
-        value: smoker
+        value: Minhdbd4
       - key: MSSQL_PASSWORD
-        value: Minhtran26
+        value: Minhtran26@
       - key: MSSQL_DATABASE
         value: Smoker
       
       # Revive Database (Azure MySQL)
       - key: REVIVE_DB_HOST
-        value: mysql-smoker.mysql.database.azure.com
+        value: smoker1.mysql.database.azure.com
       - key: REVIVE_DB_PORT
         value: "3306"
       - key: REVIVE_DB_USER
-        value: smoker
+        value: minhdbd4
       - key: REVIVE_DB_PASSWORD
-        value: Minhtran26
+        value: Minhtran26@
       - key: REVIVE_DB_NAME
-        value: revive_adserver
+        value: Mysql-Revive-New
       - key: REVIVE_DB_SSL
         value: "1"
       
