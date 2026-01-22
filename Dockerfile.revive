@@ -19,8 +19,10 @@ RUN apt-get update && apt-get install -y \
 # Enable Apache mod_rewrite
 RUN a2enmod rewrite
 RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
-# Create certs directory (certificate file will be copied with revive files)
-RUN mkdir -p /var/www/html/revive/certs
+# Create certs directory and download Azure MySQL SSL certificate
+RUN mkdir -p /var/www/html/revive/certs && \
+    curl -o /var/www/html/revive/certs/azure-mysql-ca-cert.pem \
+    https://cacerts.digicert.com/DigiCertGlobalRootCA.crt.pem
 
 # Copy Revive files
 COPY revive/ /var/www/html/revive/
