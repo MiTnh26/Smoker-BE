@@ -42,6 +42,9 @@ const adminWalletRoutes = require("./routes/adminWalletRoutes");
 const adminVoucherRoutes = require("./routes/adminVoucherRoutes");
 const adminComboRoutes = require("./routes/adminComboRoutes");
 const managerAuthRoutes = require("./routes/managerAuthRoutes");
+const barVoucherRoutes = require("./routes/barVoucherRoutes");
+const voucherDistributionRoutes = require("./routes/voucherDistributionRoutes");
+const refundRequestRoutes = require("./routes/refundRequestRoutes");
 
 
 const userReviewRoutes = require('./routes/userReviewRoutes');
@@ -166,6 +169,9 @@ initSQLConnection().then(() => {
 
 // Removed: /api/voucher and /api/voucher-apply routes - bars no longer manage vouchers
 app.use("/api/combo", comboRoutes);
+// IMPORTANT: barVoucherRoutes must be registered BEFORE barPageRoutes to avoid route conflict
+// Route /api/bar/vouchers must match before /api/bar/:barPageId
+app.use("/api/bar/vouchers", barVoucherRoutes);
 app.use("/api/bar", barPageRoutes);
 app.use("/api/table-classification", tableClassificationRoutes);
 app.use("/api/bar-table", barTableRoutes);
@@ -204,6 +210,9 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/admin", adminWalletRoutes);
 app.use("/api/admin/vouchers", adminVoucherRoutes);
 app.use("/api/admin/combos", adminComboRoutes);
+app.use("/api/admin/voucher-distributions", voucherDistributionRoutes);
+// Refund Request APIs
+app.use("/api", refundRequestRoutes);
 // UserReview & BarReview APIs
 app.use("/api/user-reviews", userReviewRoutes);
 app.use("/api/bar-reviews", barReviewRoutes);

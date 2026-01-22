@@ -102,7 +102,6 @@ async function getBookedScheduleById(bookedScheduleId) {
         bs.*,
         v.VoucherName,
         v.VoucherCode,
-        v.DiscountPercentage,
         CASE
           WHEN bs.Type = 'business' THEN ba.UserName
           ELSE a.UserName
@@ -147,7 +146,6 @@ async function getBookedSchedulesByBooker(bookerId, { limit = 50, offset = 0 } =
         bs.*,
         v.VoucherName,
         v.VoucherCode,
-        v.DiscountPercentage,
         CASE
           WHEN bs.Type = 'business' THEN ba.UserName
           ELSE a.UserName
@@ -199,7 +197,6 @@ async function getBookedSchedulesByReceiver(receiverId, { limit = 50, offset = 0
         bs.*,
         v.VoucherName,
         v.VoucherCode,
-        v.DiscountPercentage,
         CASE
           WHEN bs.Type = 'business' THEN ba.UserName
           ELSE a.UserName
@@ -865,7 +862,6 @@ async function getBookedScheduleWithDetails(bookedScheduleId) {
         -- Thông tin voucher
         v.VoucherName,
         v.VoucherCode,
-        v.DiscountPercentage AS VoucherDiscountPercentage,
         -- Thông tin bar
         bp.BarName,
         bp.Address AS BarAddress,

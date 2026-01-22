@@ -356,7 +356,20 @@ class BookingService {
 
   async getBookingsByBooker(bookerId, { limit = 50, offset = 0 } = {}) {
     try {
+      console.log(`[BookingService] getBookingsByBooker called with bookerId: ${bookerId}, limit: ${limit}, offset: ${offset}`);
       const data = await bookedScheduleModel.getBookedSchedulesByBooker(bookerId, { limit, offset });
+      console.log(`[BookingService] Found ${data.length} bookings from database`);
+      
+      // Log payment status của các booking
+      data.forEach((booking, index) => {
+        console.log(`[BookingService] Booking ${index + 1}:`, {
+          BookedScheduleId: booking.BookedScheduleId,
+          PaymentStatus: booking.PaymentStatus,
+          ScheduleStatus: booking.ScheduleStatus,
+          Type: booking.Type,
+          MongoDetailId: booking.MongoDetailId
+        });
+      });
       
       // Populate detailSchedule và receiver info từ MongoDB và SQL Server cho mỗi booking
       const bookingsWithDetails = await Promise.all(
@@ -373,7 +386,7 @@ class BookingService {
                 detailSchedule = detailScheduleDoc.toObject ? detailScheduleDoc.toObject({ flattenMaps: true }) : detailScheduleDoc;
               }
             } catch (error) {
-              console.error(`Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
+              console.error(`[BookingService] Error fetching detailSchedule for ${booking.MongoDetailId}:`, error);
             }
           }
           
@@ -382,7 +395,7 @@ class BookingService {
             try {
               receiverInfo = await this._getReceiverInfo(booking.ReceiverId);
             } catch (error) {
-              console.error(`Error fetching receiver info for ${booking.ReceiverId}:`, error);
+              console.error(`[BookingService] Error fetching receiver info for ${booking.ReceiverId}:`, error);
             }
           }
           
@@ -394,8 +407,10 @@ class BookingService {
         })
       );
 
+      console.log(`[BookingService] Returning ${bookingsWithDetails.length} bookings with details`);
       return { success: true, data: bookingsWithDetails };
     } catch (error) {
+      console.error(`[BookingService] Error in getBookingsByBooker:`, error);
       return { success: false, message: error.message || "Failed to fetch schedules by booker" };
     }
   }

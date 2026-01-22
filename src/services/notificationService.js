@@ -744,6 +744,115 @@ class NotificationService {
     }
   }
 
+  /**
+   * Tạo notification đơn giản (generic)
+   */
+  async createNotification({
+    type,
+    sender,
+    receiver,
+    content,
+    link,
+    senderEntityAccountId = null,
+    receiverEntityAccountId = null
+  }) {
+    try {
+      if (!receiver && !receiverEntityAccountId) {
+        console.warn('[NotificationService] Missing receiver or receiverEntityAccountId for notification');
+        return;
+      }
+
+      // Nếu có receiver (AccountId) nhưng chưa có receiverEntityAccountId, cần lấy từ EntityAccounts
+      let finalReceiverEntityAccountId = receiverEntityAccountId;
+      if (receiver && !finalReceiverEntityAccountId) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("AccountId", sql.UniqueIdentifier, receiver)
+            .query(`
+              SELECT TOP 1 EntityAccountId
+              FROM EntityAccounts
+              WHERE EntityType = 'Account' AND EntityId = @AccountId
+            `);
+          if (result.recordset.length > 0) {
+            finalReceiverEntityAccountId = result.recordset[0].EntityAccountId;
+          }
+        } catch (err) {
+          console.warn('[NotificationService] Could not get receiverEntityAccountId:', err);
+        }
+      }
+
+      // Nếu có sender (AccountId) nhưng chưa có senderEntityAccountId, cần lấy từ EntityAccounts
+      let finalSenderEntityAccountId = senderEntityAccountId;
+      if (sender && !finalSenderEntityAccountId) {
+        try {
+          const pool = await getPool();
+          const result = await pool.request()
+            .input("AccountId", sql.UniqueIdentifier, sender)
+            .query(`
+              SELECT TOP 1 EntityAccountId
+              FROM EntityAccounts
+              WHERE EntityType = 'Account' AND EntityId = @AccountId
+            `);
+          if (result.recordset.length > 0) {
+            finalSenderEntityAccountId = result.recordset[0].EntityAccountId;
+          }
+        } catch (err) {
+          console.warn('[NotificationService] Could not get senderEntityAccountId:', err);
+        }
+      }
+
+      if (!finalReceiverEntityAccountId) {
+        console.warn('[NotificationService] Could not determine receiverEntityAccountId');
+        return;
+      }
+
+      // Normalize GUIDs to lowercase for consistency
+      const normalizedReceiverEntityAccountId = String(finalReceiverEntityAccountId).trim().toLowerCase();
+      const normalizedSenderEntityAccountId = finalSenderEntityAccountId 
+        ? String(finalSenderEntityAccountId).trim().toLowerCase() 
+        : null;
+
+      const notification = new Notification({
+        type: type || "Info",
+        sender: sender || null,
+        senderEntityAccountId: normalizedSenderEntityAccountId,
+        receiver: receiver || null,
+        receiverEntityAccountId: normalizedReceiverEntityAccountId,
+        content: content || "",
+        link: link || "/",
+        status: "Unread"
+      });
+
+      await notification.save();
+      console.log('[NotificationService] Notification created:', notification._id);
+
+      // Emit socket event for real-time notification update
+      try {
+        const io = getIO();
+        const notificationPayload = {
+          notificationId: notification._id.toString(),
+          type: notification.type,
+          senderEntityAccountId: notification.senderEntityAccountId,
+          receiverEntityAccountId: notification.receiverEntityAccountId,
+          content: notification.content,
+          link: notification.link,
+          status: notification.status,
+          createdAt: notification.createdAt
+        };
+        
+        const receiverRoom = normalizedReceiverEntityAccountId;
+        io.to(receiverRoom).emit('new_notification', notificationPayload);
+        console.log('[NotificationService] Emitted new_notification to room:', receiverRoom);
+      } catch (socketError) {
+        console.warn('[NotificationService] Could not emit socket event:', socketError.message);
+      }
+    } catch (error) {
+      console.error('[NotificationService] Error creating notification:', error);
+      throw error;
+    }
+  }
+
 }
 
 module.exports = new NotificationService();

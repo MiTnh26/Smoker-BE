@@ -37,6 +37,61 @@ async function getBarPageByAccountId(accountId) {
 }
 
 /**
+ * Lấy BarPage theo ManagerId
+ * JOIN với EntityAccounts để lấy EntityAccountId
+ * Tìm BarPageId từ AdPurchases (có ManagerId) hoặc từ BarPages nếu có cột ManagerId
+ */
+async function getBarPageByManagerId(managerId) {
+  const pool = await getPool();
+  
+  // Method 1: Thử query từ AdPurchases (nếu có ManagerId trong đó)
+  try {
+    const purchaseResult = await pool
+      .request()
+      .input("ManagerId", sql.UniqueIdentifier, managerId)
+      .query(`
+        SELECT TOP 1 ap.BarPageId
+        FROM AdPurchases ap
+        WHERE ap.ManagerId = @ManagerId
+        ORDER BY ap.CreatedAt DESC
+      `);
+    
+    if (purchaseResult.recordset.length > 0) {
+      const barPageId = purchaseResult.recordset[0].BarPageId;
+      // Lấy BarPage từ BarPageId
+      return await getBarPageById(barPageId);
+    }
+  } catch (error) {
+    console.warn("[barPageModel] Error querying from AdPurchases:", error.message);
+  }
+  
+  // Method 2: Thử query trực tiếp từ BarPages nếu có cột ManagerId
+  try {
+    const result = await pool
+      .request()
+      .input("ManagerId", sql.UniqueIdentifier, managerId)
+      .query(`
+        SELECT b.BarPageId, b.AccountId, b.BarName, b.Avatar, b.Background, b.Address, b.PhoneNumber, b.Role, b.Email, b.Status, b.created_at, ea.EntityAccountId
+        FROM BarPages b
+        LEFT JOIN EntityAccounts ea ON ea.EntityType = 'BarPage' AND ea.EntityId = b.BarPageId
+        WHERE b.ManagerId = @ManagerId
+      `);
+    if (result.recordset.length > 0) {
+      return result.recordset[0];
+    }
+  } catch (error) {
+    // If ManagerId column doesn't exist in BarPages, that's okay
+    if (error.message && error.message.includes("Invalid column name 'ManagerId'")) {
+      console.warn("[barPageModel] ManagerId column not found in BarPages table, tried AdPurchases");
+    } else {
+      console.warn("[barPageModel] Error querying BarPages:", error.message);
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Lấy danh sách BarPage nổi bật kèm rating trung bình và số lượng đánh giá
  * @param {number} limit - số lượng bar cần lấy
  * @returns {Promise<Array>}
@@ -173,6 +228,7 @@ async function deleteBarPage(barPageId) {
 module.exports = {
   getBarPageById, 
   getBarPageByAccountId,
+  getBarPageByManagerId,
   createBarPage,
   updateBarPage,
   deleteBarPage,

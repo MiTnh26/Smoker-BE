@@ -18,8 +18,6 @@ class AdminVoucherController {
       // Format dates in response
       const formattedVouchers = vouchers.map(voucher => ({
         ...voucher,
-        StartDate: voucher.StartDate ? new Date(voucher.StartDate).toISOString().split('T')[0] : null,
-        EndDate: voucher.EndDate ? new Date(voucher.EndDate).toISOString().split('T')[0] : null,
         CreatedAt: voucher.CreatedAt ? new Date(voucher.CreatedAt).toISOString() : null
       }));
 
@@ -82,48 +80,22 @@ class AdminVoucherController {
       const {
         voucherName,
         voucherCode,
-        discountPercentage,
         maxUsage,
-        minComboValue = 1000000,
-        startDate,
-        endDate,
         status = "ACTIVE"
       } = req.body;
 
       console.log('🔍 Validation step 1 - Required fields check');
       // Validate required fields
-      if (!voucherName || !voucherCode || discountPercentage == null || !maxUsage || !startDate || !endDate) {
+      if (!voucherName || !voucherCode || !maxUsage) {
         console.log('❌ Missing required fields');
         return res.status(400).json({
           success: false,
-          message: "Missing required fields: voucherName, voucherCode, discountPercentage, maxUsage, startDate, endDate"
+          message: "Missing required fields: voucherName, voucherCode, maxUsage"
         });
       }
       console.log('✅ Required fields OK');
 
-      console.log('🔍 Validation step 2 - Discount percentage check');
-      // Validate discount percentage (3-5%)
-      if (discountPercentage < 3 || discountPercentage > 5) {
-        console.log('❌ Invalid discount percentage:', discountPercentage);
-        return res.status(400).json({
-          success: false,
-          message: "Discount percentage must be between 3 and 5"
-        });
-      }
-      console.log('✅ Discount percentage OK');
-
-      console.log('🔍 Validation step 3 - Min combo value check');
-      // Validate min combo value
-      if (minComboValue < 1000000) {
-        console.log('❌ Invalid min combo value:', minComboValue);
-        return res.status(400).json({
-          success: false,
-          message: "Minimum combo value must be at least 1,000,000 VND"
-        });
-      }
-      console.log('✅ Min combo value OK');
-
-      console.log('🔍 Validation step 4 - Check duplicate voucher code');
+      console.log('🔍 Validation step 2 - Check duplicate voucher code');
       // Check if voucher code already exists
       const existingVoucher = await voucherModel.getVoucherByCode(voucherCode);
       if (existingVoucher) {
@@ -139,11 +111,7 @@ class AdminVoucherController {
       const voucher = await voucherModel.createVoucher({
         voucherName,
         voucherCode,
-        discountPercentage,
         maxUsage,
-        minComboValue,
-        startDate,
-        endDate,
         status
       });
 
@@ -152,8 +120,6 @@ class AdminVoucherController {
       // Format dates for JSON response - ensure all dates are serializable
       const formattedVoucher = {
         ...voucher,
-        StartDate: voucher.StartDate ? new Date(voucher.StartDate).toISOString().split('T')[0] : null,
-        EndDate: voucher.EndDate ? new Date(voucher.EndDate).toISOString().split('T')[0] : null,
         CreatedAt: voucher.CreatedAt ? new Date(voucher.CreatedAt).toISOString() : null
       };
 
@@ -179,23 +145,6 @@ class AdminVoucherController {
       const { id } = req.params;
       const updates = req.body;
 
-      // Validate discount percentage if provided
-      if (updates.discountPercentage !== undefined) {
-        if (updates.discountPercentage < 3 || updates.discountPercentage > 5) {
-          return res.status(400).json({
-            success: false,
-            message: "Discount percentage must be between 3 and 5"
-          });
-        }
-      }
-
-      // Validate min combo value if provided
-      if (updates.minComboValue !== undefined && updates.minComboValue < 1000000) {
-        return res.status(400).json({
-          success: false,
-          message: "Minimum combo value must be at least 1,000,000 VND"
-        });
-      }
 
       // Check if voucher exists
       const existingVoucher = await voucherModel.getVoucherById(id);
@@ -345,6 +294,263 @@ class AdminVoucherController {
       return res.status(500).json({
         success: false,
         message: "Error fetching voucher stats",
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Admin xem danh sách voucher do bar tạo kèm thống kê doanh thu
+   * GET /api/admin/vouchers/bar-vouchers?barPageId=xxx
+   */
+  async getBarVouchersWithStats(req, res) {
+    try {
+      const { barPageId } = req.query;
+      console.log("[AdminVoucherController] getBarVouchersWithStats called, barPageId:", barPageId);
+      
+      const vouchers = await voucherModel.getBarVouchersWithStats(barPageId || null);
+      console.log("[AdminVoucherController] getBarVouchersWithStats - Found vouchers:", vouchers?.length || 0);
+      
+      return res.json({
+        success: true,
+        data: vouchers
+      });
+    } catch (error) {
+      console.error("[AdminVoucherController] getBarVouchersWithStats error:", error);
+      console.error("[AdminVoucherController] getBarVouchersWithStats error stack:", error.stack);
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Admin xem danh sách các bar đã tạo voucher (để filter)
+   * GET /api/admin/vouchers/bar-vouchers/bars
+   */
+  async getBarsWithVouchers(req, res) {
+    try {
+      console.log("[AdminVoucherController] getBarsWithVouchers called");
+      const bars = await voucherModel.getBarsWithVouchers();
+      console.log("[AdminVoucherController] getBarsWithVouchers - Found bars:", bars?.length || 0);
+      
+      return res.json({
+        success: true,
+        data: bars
+      });
+    } catch (error) {
+      console.error("[AdminVoucherController] getBarsWithVouchers error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Admin xem danh sách voucher do bar tạo chờ duyệt - DEPRECATED
+   * GET /api/admin/vouchers/bar-vouchers/pending
+   */
+  async getBarVouchersPending(req, res) {
+    try {
+      console.log("[AdminVoucherController] getBarVouchersPending called (DEPRECATED - use getBarVouchersWithStats)");
+      const vouchers = await voucherModel.getBarVouchersPending();
+      console.log("[AdminVoucherController] getBarVouchersPending - Found vouchers:", vouchers?.length || 0);
+      
+      return res.json({
+        success: true,
+        data: vouchers
+      });
+    } catch (error) {
+      console.error("[AdminVoucherController] getBarVouchersPending error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Admin duyệt voucher từ bar
+   * POST /api/admin/vouchers/:id/approve-bar
+   */
+  async approveBarVoucher(req, res) {
+    try {
+      const { id } = req.params;
+      const managerId = req.user?.id || req.user?.managerId;
+      
+      if (!managerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
+      }
+      
+      const voucher = await voucherModel.getVoucherById(id);
+      if (!voucher) {
+        return res.status(404).json({
+          success: false,
+          message: "Voucher not found"
+        });
+      }
+      
+      if (voucher.VoucherStatus !== 'pending') {
+        return res.status(400).json({
+          success: false,
+          message: `Voucher đã được xử lý (status: ${voucher.VoucherStatus})`
+        });
+      }
+      
+      const updatedVoucher = await voucherModel.approveBarVoucher(id, managerId);
+      
+      // Gửi notification cho bar
+      try {
+        if (voucher.BarPageId) {
+          const barPageModel = require("../models/barPageModel");
+          const barPage = await barPageModel.getBarPageById(voucher.BarPageId);
+          if (barPage && barPage.AccountId) {
+            const entityAccountModel = require("../models/entityAccountModel");
+            const barEntityAccountId = await entityAccountModel.getEntityAccountIdByEntityId(voucher.BarPageId, "BarPage");
+            const adminEntityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(managerId, "Account");
+            
+            if (barEntityAccountId && adminEntityAccountId) {
+              await notificationService.createNotification({
+                type: "Confirm",
+                sender: adminEntityAccountId,
+                receiver: barEntityAccountId,
+                content: `Voucher "${voucher.VoucherName}" đã được duyệt`,
+                link: `/bar/vouchers`
+              });
+            }
+          }
+        }
+      } catch (notifError) {
+        console.warn("[AdminVoucherController] Failed to send notification:", notifError);
+      }
+      
+      return res.json({
+        success: true,
+        message: "Voucher đã được duyệt",
+        data: updatedVoucher
+      });
+      
+    } catch (error) {
+      console.error("[AdminVoucherController] approveBarVoucher error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Admin từ chối voucher từ bar
+   * POST /api/admin/vouchers/:id/reject-bar
+   */
+  async rejectBarVoucher(req, res) {
+    try {
+      const { id } = req.params;
+      const managerId = req.user?.id || req.user?.managerId;
+      const { rejectedReason } = req.body;
+      
+      if (!managerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
+      }
+      
+      const voucher = await voucherModel.getVoucherById(id);
+      if (!voucher) {
+        return res.status(404).json({
+          success: false,
+          message: "Voucher not found"
+        });
+      }
+      
+      if (voucher.VoucherStatus !== 'pending') {
+        return res.status(400).json({
+          success: false,
+          message: `Voucher đã được xử lý (status: ${voucher.VoucherStatus})`
+        });
+      }
+      
+      const updatedVoucher = await voucherModel.rejectBarVoucher(id, managerId, rejectedReason);
+      
+      // Gửi notification cho bar
+      try {
+        if (voucher.BarPageId) {
+          const barPageModel = require("../models/barPageModel");
+          const barPage = await barPageModel.getBarPageById(voucher.BarPageId);
+          if (barPage && barPage.AccountId) {
+            const entityAccountModel = require("../models/entityAccountModel");
+            const barEntityAccountId = await entityAccountModel.getEntityAccountIdByEntityId(voucher.BarPageId, "BarPage");
+            const adminEntityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(managerId, "Account");
+            
+            if (barEntityAccountId && adminEntityAccountId) {
+              await notificationService.createNotification({
+                type: "Info",
+                sender: adminEntityAccountId,
+                receiver: barEntityAccountId,
+                content: `Voucher "${voucher.VoucherName}" đã bị từ chối. Lý do: ${rejectedReason || 'Không có lý do'}`,
+                link: `/bar/vouchers`
+              });
+            }
+          }
+        }
+      } catch (notifError) {
+        console.warn("[AdminVoucherController] Failed to send notification:", notifError);
+      }
+      
+      return res.json({
+        success: true,
+        message: "Voucher đã bị từ chối",
+        data: updatedVoucher
+      });
+      
+    } catch (error) {
+      console.error("[AdminVoucherController] rejectBarVoucher error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // GET /api/admin/vouchers/code/:code - Lấy voucher theo code (public endpoint)
+  async getVoucherByCode(req, res) {
+    try {
+      const { code } = req.params;
+      
+      if (!code) {
+        return res.status(400).json({
+          success: false,
+          message: "Voucher code is required"
+        });
+      }
+
+      const voucher = await voucherModel.getVoucherByCode(code);
+
+      if (!voucher) {
+        return res.status(404).json({
+          success: false,
+          message: "Voucher not found"
+        });
+      }
+
+      // Loại bỏ VoucherId khỏi response
+      const { VoucherId, ...voucherWithoutId } = voucher;
+
+      return res.status(200).json({
+        success: true,
+        data: voucherWithoutId
+      });
+    } catch (error) {
+      console.error("getVoucherByCode error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching voucher",
         error: error.message
       });
     }
