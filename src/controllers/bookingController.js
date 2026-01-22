@@ -142,7 +142,15 @@ class BookingController {
       const userId = req.user?.id;
       const { limit = 50, offset = 0 } = req.query;
 
+      console.log("[BookingController] getMyBookings called:", {
+        userId: userId,
+        limit: limit,
+        offset: offset,
+        userType: req.user?.type
+      });
+
       if (!userId) {
+        console.error("[BookingController] getMyBookings: No userId found in req.user");
         return res.status(401).json({
           success: false,
           message: "Unauthorized"
@@ -153,7 +161,13 @@ class BookingController {
       const { getEntityAccountIdByAccountId } = require("../models/entityAccount1Model");
       const entityAccountId = await getEntityAccountIdByAccountId(userId, "Account");
 
+      console.log("[BookingController] getMyBookings: EntityAccountId resolved:", {
+        userId: userId,
+        entityAccountId: entityAccountId
+      });
+
       if (!entityAccountId) {
+        console.log("[BookingController] getMyBookings: No EntityAccountId found, returning empty array");
         return res.status(200).json({
           success: true,
           data: []
@@ -163,6 +177,11 @@ class BookingController {
       const result = await bookingService.getBookingsByBooker(entityAccountId, {
         limit: parseInt(limit),
         offset: parseInt(offset)
+      });
+
+      console.log("[BookingController] getMyBookings: Result:", {
+        success: result.success,
+        dataCount: result.data?.length || 0
       });
 
       if (result.success) {

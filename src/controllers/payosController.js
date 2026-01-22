@@ -469,50 +469,81 @@ class PayOSController {
           throw new Error("Booking not found");
         }
 
+        // Lấy detailSchedule từ MongoDB để kiểm tra có combo hay không
+        let hasCombo = false;
+        let comboName = null;
+        if (booking.MongoDetailId) {
+          try {
+            const detailScheduleDoc = await DetailSchedule.findById(booking.MongoDetailId);
+            if (detailScheduleDoc) {
+              const detailSchedule = detailScheduleDoc.toObject ? detailScheduleDoc.toObject({ flattenMaps: true }) : detailScheduleDoc;
+              hasCombo = !!(detailSchedule.Combo && detailSchedule.Combo.ComboName);
+              comboName = detailSchedule.Combo?.ComboName || null;
+            }
+          } catch (error) {
+            console.warn("[PayOS Controller] Error fetching detailSchedule:", error);
+          }
+        }
+
         console.log("[PayOS Controller] Booking details:", {
           bookingId: booking.BookedScheduleId,
-          comboName: booking.ComboName,
+          hasCombo: hasCombo,
+          comboName: comboName,
           originalPrice: booking.OriginalPrice,
-          discountAmount: Math.max(0, Number(booking.OriginalPrice || 0) - Number(booking.TotalAmount || 0)),
-          finalAmount: booking.TotalAmount,
+          totalAmount: booking.TotalAmount,
           voucherCode: booking.VoucherCode,
-          commissionAmount: Math.floor(Number(booking.OriginalPrice || 0) * 0.15),
-          barReceiveAmount: Number(booking.OriginalPrice || 0) - Math.floor(Number(booking.OriginalPrice || 0) * 0.15)
+          voucherId: booking.VoucherId
         });
 
-        // 2. Giảm UsedCount của voucher nếu có
+        // 2. Tăng UsedCount của voucher nếu có (cho booking với voucher)
         if (booking.VoucherId) {
-          console.log("[PayOS Controller] Decrementing voucher usage:", booking.VoucherId);
+          console.log("[PayOS Controller] Incrementing user voucher usage:", booking.VoucherId);
           await voucherModel.incrementUsedCount(booking.VoucherId);
+          
+          // 2a. Nếu có VoucherDistributionId, tăng UsedCount cho voucher gốc (bar voucher)
+          // Lấy VoucherDistributionId từ booking (bs.* đã bao gồm VoucherDistributionId)
+          if (booking.VoucherDistributionId) {
+            const voucherDistributionModel = require("../models/voucherDistributionModel");
+            const distribution = await voucherDistributionModel.findById(booking.VoucherDistributionId);
+            if (distribution && distribution.VoucherId) {
+              console.log("[PayOS Controller] Incrementing original bar voucher usage:", distribution.VoucherId);
+              await voucherModel.incrementUsedCount(distribution.VoucherId);
+            }
+          }
         }
 
-        // 3. Tạo PaymentHistory cho toàn bộ giao dịch
-        // 3a. PaymentHistory cho hoa hồng hệ thống (commission)
-        const originalPrice = Number(booking.OriginalPrice || 0);
-        const commissionAmount = Math.floor(originalPrice * 0.15);
-        const barReceiveAmount = originalPrice - commissionAmount;
+        // 3. Tạo PaymentHistory (chỉ cho booking có combo, không tạo cho booking chỉ có voucher)
+        if (hasCombo && comboName) {
+          // 3a. PaymentHistory cho hoa hồng hệ thống (commission)
+          const originalPrice = Number(booking.OriginalPrice || 0);
+          const commissionAmount = Math.floor(originalPrice * 0.15);
+          const barReceiveAmount = originalPrice - commissionAmount;
 
-        if (commissionAmount > 0) {
-          const commissionHistory = await paymentHistoryModel.createPaymentHistory({
-            type: 'commission',
-            senderId: booking.BookerId,
-            receiverId: null, // Platform nhận hoa hồng
-            transferContent: `Hoa hồng 15% combo ${booking.ComboName}`,
-            transferAmount: commissionAmount
-          });
-          console.log("[PayOS Controller] Commission PaymentHistory created:", commissionHistory.PaymentHistoryId);
-        }
+          if (commissionAmount > 0) {
+            const commissionHistory = await paymentHistoryModel.createPaymentHistory({
+              type: 'commission',
+              senderId: booking.BookerId,
+              receiverId: null, // Platform nhận hoa hồng
+              transferContent: `Hoa hồng 15% combo ${comboName}`,
+              transferAmount: commissionAmount
+            });
+            console.log("[PayOS Controller] Commission PaymentHistory created:", commissionHistory.PaymentHistoryId);
+          }
 
-        // 3b. PaymentHistory cho tiền bar nhận
-        if (barReceiveAmount > 0) {
-          const barPaymentHistory = await paymentHistoryModel.createPaymentHistory({
-            type: 'booking',
-            senderId: booking.BookerId,
-            receiverId: booking.ReceiverId, // Bar nhận tiền
-            transferContent: `Thanh toán combo ${booking.ComboName}`,
-            transferAmount: barReceiveAmount
-          });
-          console.log("[PayOS Controller] Bar PaymentHistory created:", barPaymentHistory.PaymentHistoryId);
+          // 3b. PaymentHistory cho tiền bar nhận
+          if (barReceiveAmount > 0) {
+            const barPaymentHistory = await paymentHistoryModel.createPaymentHistory({
+              type: 'booking',
+              senderId: booking.BookerId,
+              receiverId: booking.ReceiverId, // Bar nhận tiền
+              transferContent: `Thanh toán combo ${comboName}`,
+              transferAmount: barReceiveAmount
+            });
+            console.log("[PayOS Controller] Bar PaymentHistory created:", barPaymentHistory.PaymentHistoryId);
+          }
+        } else {
+          // Booking với voucher (không có combo) - chỉ cập nhật payment status, không tạo PaymentHistory
+          console.log("[PayOS Controller] Booking with voucher only (no combo), skipping PaymentHistory creation");
         }
 
         // 4. Cập nhật booking status thành Paid

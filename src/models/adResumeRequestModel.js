@@ -3,7 +3,7 @@ const { getPool, sql } = require("../db/sqlserver");
 /**
  * Tạo yêu cầu tiếp tục quảng cáo (từ BarPage)
  */
-async function createResumeRequest({ userAdId, barPageId, accountId, reason, requestNote }) {
+async function createResumeRequest({ userAdId, barPageId, managerId, reason, requestNote }) {
   const pool = await getPool();
   const crypto = require('crypto');
   const resumeRequestId = crypto.randomUUID();
@@ -12,14 +12,13 @@ async function createResumeRequest({ userAdId, barPageId, accountId, reason, req
     .input("ResumeRequestId", sql.UniqueIdentifier, resumeRequestId)
     .input("UserAdId", sql.UniqueIdentifier, userAdId)
     .input("BarPageId", sql.UniqueIdentifier, barPageId)
-    .input("AccountId", sql.UniqueIdentifier, accountId)
     .input("Reason", sql.NVarChar(sql.MAX), reason || null)
     .input("RequestNote", sql.NVarChar(sql.MAX), requestNote || null)
     .query(`
       INSERT INTO AdResumeRequests
-        (ResumeRequestId, UserAdId, BarPageId, AccountId, Reason, RequestNote, Status, CreatedAt, UpdatedAt)
+        (ResumeRequestId, UserAdId, BarPageId, Reason, RequestNote, Status, CreatedAt, UpdatedAt)
       VALUES
-        (@ResumeRequestId, @UserAdId, @BarPageId, @AccountId, @Reason, @RequestNote, 'pending', GETDATE(), GETDATE())
+        (@ResumeRequestId, @UserAdId, @BarPageId, @Reason, @RequestNote, 'pending', GETDATE(), GETDATE())
     `);
   
   const result = await pool.request()
@@ -57,7 +56,6 @@ async function findById(resumeRequestId) {
         ua.TotalClicks,
         bp.BarName,
         bp.Email AS AccountEmail,
-        bp.AccountId,
         admin.Email AS AdminEmail
       FROM AdResumeRequests rr
       INNER JOIN UserAdvertisements ua ON rr.UserAdId = ua.UserAdId
@@ -85,6 +83,28 @@ async function getByBarPageId(barPageId) {
       FROM AdResumeRequests rr
       INNER JOIN UserAdvertisements ua ON rr.UserAdId = ua.UserAdId
       WHERE rr.BarPageId = @BarPageId
+      ORDER BY rr.CreatedAt DESC
+    `);
+  
+  return result.recordset;
+}
+
+/**
+ * Lấy tất cả yêu cầu resume của một UserAd
+ */
+async function getByUserAdId(userAdId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input("UserAdId", sql.UniqueIdentifier, userAdId)
+    .query(`
+      SELECT rr.*,
+        ua.Title AS AdTitle,
+        ua.ImageUrl AS AdImageUrl,
+        ua.Status AS AdStatus,
+        ua.ReviveBannerId
+      FROM AdResumeRequests rr
+      INNER JOIN UserAdvertisements ua ON rr.UserAdId = ua.UserAdId
+      WHERE rr.UserAdId = @UserAdId
       ORDER BY rr.CreatedAt DESC
     `);
   
@@ -240,6 +260,7 @@ module.exports = {
   createResumeRequest,
   findById,
   getByBarPageId,
+  getByUserAdId,
   getAllResumeRequests,
   approveResumeRequest,
   rejectResumeRequest,

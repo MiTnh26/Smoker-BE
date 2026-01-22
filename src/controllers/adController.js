@@ -417,11 +417,49 @@ class AdController {
       
       const ads = await userAdvertisementModel.getAdsByBarPage(barPageId);
       
-      // Lấy purchases cho mỗi ad
+      // Lấy purchases và pause/resume requests cho mỗi ad
       const adsWithPurchases = await Promise.all(
         ads.map(async (ad) => {
           const purchases = await adPurchaseModel.getPurchasesByUserAdId(ad.UserAdId);
-          return { ...ad, purchases, source: 'direct' }; // Direct ads (tạo trực tiếp)
+          
+          // Lấy pause request mới nhất (nếu có)
+          const pauseRequests = await adPauseRequestModel.getByUserAdId(ad.UserAdId);
+          const latestPauseRequest = pauseRequests && pauseRequests.length > 0 
+            ? pauseRequests[0] 
+            : null;
+          
+          // Lấy resume request mới nhất (nếu có)
+          const resumeRequests = await adResumeRequestModel.getByUserAdId(ad.UserAdId);
+          const latestResumeRequest = resumeRequests && resumeRequests.length > 0 
+            ? resumeRequests[0] 
+            : null;
+          
+          // Xác định display status dựa trên ad status và pause/resume requests
+          let displayStatus = ad.Status;
+          let statusLabel = ad.Status;
+          
+          // Map status sang tiếng Việt
+          const statusMap = {
+            'pending': 'Chờ duyệt',
+            'approved': 'Đã duyệt',
+            'active': 'Đang hoạt động',
+            'paused': 'Tạm dừng',
+            'completed': 'Hoàn thành',
+            'rejected': 'Từ chối',
+            'cancelled': 'Đã hủy'
+          };
+          
+          statusLabel = statusMap[ad.Status] || ad.Status;
+          
+          return { 
+            ...ad, 
+            purchases, 
+            source: 'direct',
+            pauseRequest: latestPauseRequest,
+            resumeRequest: latestResumeRequest,
+            statusLabel: statusLabel,
+            displayStatus: displayStatus
+          };
         })
       );
       
@@ -824,12 +862,16 @@ class AdController {
    */
   async purchasePackage(req, res) {
     try {
-      const accountId = req.user?.id || req.user?.accountId;
-      const { eventId, packageId, price, impressions, packageName } = req.body;
+      // Lấy ManagerId từ req.user nếu user là manager, hoặc AccountId nếu là account
+      let managerId = req.user?.type === 'manager' ? (req.user?.id || req.user?.managerId) : null;
+      const accountId = req.user?.type !== 'manager' ? (req.user?.id || req.user?.accountId) : null;
       
-      if (!accountId) {
+      // Nếu không có managerId và không có accountId, không được phép
+      if (!managerId && !accountId) {
         return res.status(401).json({ success: false, message: "Unauthorized" });
       }
+      
+      const { eventId, packageId, price, impressions, packageName } = req.body;
       
       if (!eventId || !packageId || !price || !impressions || !packageName) {
         return res.status(400).json({ 
@@ -848,13 +890,59 @@ class AdController {
         });
       }
       
-      // Verify Event thuộc về BarPage của user
-      const barPage = await barPageModel.getBarPageByAccountId(accountId);
-      if (!barPage || barPage.BarPageId !== event.BarPageId) {
-        return res.status(403).json({ 
-          success: false, 
-          message: "Event not found or access denied" 
-        });
+      // Verify ownership: Nếu là manager, kiểm tra qua AdPurchases; nếu là account, kiểm tra qua BarPage
+      let barPage = null;
+      if (managerId) {
+        // Manager: Kiểm tra ManagerId có quyền với BarPageId này qua AdPurchases
+        const pool = await getPool();
+        const ownershipCheck = await pool.request()
+          .input("ManagerId", sql.UniqueIdentifier, managerId)
+          .input("BarPageId", sql.UniqueIdentifier, event.BarPageId)
+          .query(`
+            SELECT TOP 1 PurchaseId
+            FROM AdPurchases
+            WHERE ManagerId = @ManagerId 
+              AND BarPageId = @BarPageId
+          `);
+        
+        if (ownershipCheck.recordset.length === 0) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "Access denied" 
+          });
+        }
+        barPage = await barPageModel.getBarPageById(event.BarPageId);
+      } else if (accountId) {
+        // Account: Kiểm tra qua BarPage
+        barPage = await barPageModel.getBarPageByAccountId(accountId);
+        if (!barPage || barPage.BarPageId !== event.BarPageId) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "Event not found or access denied" 
+          });
+        }
+        // Nếu là account, cần lấy ManagerId từ AdPurchases cũ hoặc tạo mới
+        // Tạm thời lấy ManagerId từ AdPurchases cũ của BarPage này
+        const pool = await getPool();
+        const managerResult = await pool.request()
+          .input("BarPageId", sql.UniqueIdentifier, event.BarPageId)
+          .query(`
+            SELECT TOP 1 ManagerId
+            FROM AdPurchases
+            WHERE BarPageId = @BarPageId AND ManagerId IS NOT NULL
+            ORDER BY PurchasedAt DESC
+          `);
+        if (managerResult.recordset.length > 0) {
+          managerId = managerResult.recordset[0].ManagerId;
+        } else {
+          // Nếu không có, lấy admin manager mặc định
+          const adminResult = await pool.request().query(`
+            SELECT TOP 1 ManagerId FROM Managers WHERE Role IN ('Admin', 'admin') ORDER BY CreatedAt ASC
+          `);
+          if (adminResult.recordset.length > 0) {
+            managerId = adminResult.recordset[0].ManagerId;
+          }
+        }
       }
       
       // Lấy thông tin package
@@ -874,21 +962,12 @@ class AdController {
         });
       }
       
-      // Lấy ManagerId mặc định (admin manager) hoặc NULL nếu không có
-      // ManagerId có thể NULL trong AdPurchases nếu không bắt buộc
-      let managerId = null;
-      try {
-        const { getPool, sql } = require("../db/sqlserver");
-        const pool = await getPool();
-        const managerResult = await pool.request().query(`
-          SELECT TOP 1 ManagerId FROM Managers WHERE Role IN ('Admin', 'admin') ORDER BY CreatedAt ASC
-        `);
-        if (managerResult.recordset.length > 0) {
-          managerId = managerResult.recordset[0].ManagerId;
-        }
-      } catch (managerError) {
-        console.warn("[AdController] Could not get default ManagerId, using NULL:", managerError.message);
-        managerId = null;
+      // Đảm bảo có ManagerId (bắt buộc trong schema)
+      if (!managerId) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "ManagerId is required for purchase" 
+        });
       }
       
       // Tạo purchase record với status 'pending' và paymentStatus 'pending'
@@ -1161,13 +1240,22 @@ class AdController {
    */
   async createPauseRequest(req, res) {
     try {
-      const accountId = req.user?.id || req.user?.accountId;
+      const userType = req.user?.type; // "manager" hoặc undefined (account)
+      const managerId = userType === 'manager' ? (req.user?.id || req.user?.managerId) : null;
+      const accountId = userType !== 'manager' ? (req.user?.id || req.user?.accountId) : null;
       const { userAdId, reason, requestNote } = req.body;
       
       if (!userAdId) {
         return res.status(400).json({ 
           success: false, 
           message: "userAdId is required" 
+        });
+      }
+      
+      if (!managerId && !accountId) {
+        return res.status(401).json({ 
+          success: false, 
+          message: "Unauthorized" 
         });
       }
       
@@ -1180,13 +1268,40 @@ class AdController {
         });
       }
       
-      // Verify ownership
-      const barPage = await barPageModel.getBarPageByAccountId(accountId);
-      if (!barPage || barPage.BarPageId !== ad.BarPageId) {
-        return res.status(403).json({ 
-          success: false, 
-          message: "Access denied" 
-        });
+      // Verify ownership: 
+      // - Nếu là Manager: Kiểm tra ManagerId có quyền với BarPageId này qua AdPurchases
+      // - Nếu là Account: Kiểm tra AccountId có quyền với BarPageId này qua BarPages
+      let barPage = null;
+      if (managerId) {
+        // Manager: Kiểm tra qua AdPurchases
+        const pool = await getPool();
+        const ownershipCheck = await pool.request()
+          .input("ManagerId", sql.UniqueIdentifier, managerId)
+          .input("BarPageId", sql.UniqueIdentifier, ad.BarPageId)
+          .query(`
+            SELECT TOP 1 PurchaseId
+            FROM AdPurchases
+            WHERE ManagerId = @ManagerId 
+              AND BarPageId = @BarPageId
+          `);
+        
+        if (ownershipCheck.recordset.length === 0) {
+          console.warn(`[AdController] Access denied for ManagerId ${managerId}, BarPageId ${ad.BarPageId} - No purchase found`);
+          return res.status(403).json({ 
+            success: false, 
+            message: "Access denied - Manager does not have access to this BarPage" 
+          });
+        }
+        barPage = await barPageModel.getBarPageById(ad.BarPageId);
+      } else if (accountId) {
+        // Account: Kiểm tra qua BarPages
+        barPage = await barPageModel.getBarPageByAccountId(accountId);
+        if (!barPage || barPage.BarPageId !== ad.BarPageId) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "Access denied - Account does not own this BarPage" 
+          });
+        }
       }
       
       // Kiểm tra ad có đang active không
@@ -1206,11 +1321,29 @@ class AdController {
         });
       }
       
-      // Tạo pause request
+      // Lấy ManagerId từ AdPurchases nếu chưa có (cho trường hợp Account)
+      let finalManagerId = managerId;
+      if (!finalManagerId && accountId) {
+        // Nếu là Account, lấy ManagerId từ AdPurchases của BarPage này
+        const pool = await getPool();
+        const managerResult = await pool.request()
+          .input("BarPageId", sql.UniqueIdentifier, ad.BarPageId)
+          .query(`
+            SELECT TOP 1 ManagerId
+            FROM AdPurchases
+            WHERE BarPageId = @BarPageId AND ManagerId IS NOT NULL
+            ORDER BY PurchasedAt DESC
+          `);
+        if (managerResult.recordset.length > 0) {
+          finalManagerId = managerResult.recordset[0].ManagerId;
+        }
+      }
+      
+      // Tạo pause request (ManagerId có thể null nếu không tìm thấy, nhưng vẫn tạo được request)
       const pauseRequest = await adPauseRequestModel.createPauseRequest({
         userAdId,
         barPageId: ad.BarPageId,
-        accountId,
+        managerId: finalManagerId,
         reason,
         requestNote
       });
@@ -1230,7 +1363,7 @@ class AdController {
           const adminAccountId = adminResult.recordset[0].AccountId;
           await notificationService.createNotification({
             type: "Info",
-            sender: accountId,
+            sender: finalManagerId || accountId || managerId,
             receiver: adminAccountId,
             content: `Yêu cầu tạm dừng quảng cáo từ ${barPage.BarName}: ${ad.Title}`,
             link: `/admin/ads/pause-requests/${pauseRequest.PauseRequestId}`
@@ -1258,18 +1391,51 @@ class AdController {
    */
   async getMyPauseRequests(req, res) {
     try {
-      const accountId = req.user?.id || req.user?.accountId;
+      const userType = req.user?.type; // "manager" hoặc undefined (account)
+      const managerId = userType === 'manager' ? (req.user?.id || req.user?.managerId) : null;
+      const accountId = userType !== 'manager' ? (req.user?.id || req.user?.accountId) : null;
       
-      // Verify BarPage
-      const barPage = await barPageModel.getBarPageByAccountId(accountId);
-      if (!barPage) {
-        return res.status(403).json({ 
+      if (!managerId && !accountId) {
+        return res.status(401).json({ 
           success: false, 
-          message: "Access denied" 
+          message: "Unauthorized" 
         });
       }
       
-      const pauseRequests = await adPauseRequestModel.getByBarPageId(barPage.BarPageId);
+      // Verify ownership và lấy BarPageId
+      let barPageId = null;
+      if (accountId) {
+        // Account: Lấy BarPageId từ BarPages
+        const barPage = await barPageModel.getBarPageByAccountId(accountId);
+        if (!barPage) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "Access denied - No BarPage found for this account" 
+          });
+        }
+        barPageId = barPage.BarPageId;
+      } else if (managerId) {
+        // Manager: Lấy BarPageId từ AdPurchases
+        const pool = await getPool();
+        const ownershipCheck = await pool.request()
+          .input("ManagerId", sql.UniqueIdentifier, managerId)
+          .query(`
+            SELECT TOP 1 BarPageId
+            FROM AdPurchases
+            WHERE ManagerId = @ManagerId
+            ORDER BY PurchasedAt DESC
+          `);
+        
+        if (ownershipCheck.recordset.length === 0) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "Access denied - No purchase found" 
+          });
+        }
+        barPageId = ownershipCheck.recordset[0].BarPageId;
+      }
+      
+      const pauseRequests = await adPauseRequestModel.getByBarPageId(barPageId);
       
       return res.json({
         success: true,
@@ -1288,13 +1454,22 @@ class AdController {
    */
   async createResumeRequest(req, res) {
     try {
-      const accountId = req.user?.id || req.user?.accountId;
+      const userType = req.user?.type; // "manager" hoặc undefined (account)
+      const managerId = userType === 'manager' ? (req.user?.id || req.user?.managerId) : null;
+      const accountId = userType !== 'manager' ? (req.user?.id || req.user?.accountId) : null;
       const { userAdId, reason, requestNote } = req.body;
       
       if (!userAdId) {
         return res.status(400).json({ 
           success: false, 
           message: "userAdId is required" 
+        });
+      }
+      
+      if (!managerId && !accountId) {
+        return res.status(401).json({ 
+          success: false, 
+          message: "Unauthorized" 
         });
       }
       
@@ -1307,13 +1482,40 @@ class AdController {
         });
       }
       
-      // Verify ownership
-      const barPage = await barPageModel.getBarPageByAccountId(accountId);
-      if (!barPage || barPage.BarPageId !== ad.BarPageId) {
-        return res.status(403).json({ 
-          success: false, 
-          message: "Access denied" 
-        });
+      // Verify ownership: 
+      // - Nếu là Manager: Kiểm tra ManagerId có quyền với BarPageId này qua AdPurchases
+      // - Nếu là Account: Kiểm tra AccountId có quyền với BarPageId này qua BarPages
+      let barPage = null;
+      if (managerId) {
+        // Manager: Kiểm tra qua AdPurchases
+        const pool = await getPool();
+        const ownershipCheck = await pool.request()
+          .input("ManagerId", sql.UniqueIdentifier, managerId)
+          .input("BarPageId", sql.UniqueIdentifier, ad.BarPageId)
+          .query(`
+            SELECT TOP 1 PurchaseId
+            FROM AdPurchases
+            WHERE ManagerId = @ManagerId 
+              AND BarPageId = @BarPageId
+          `);
+        
+        if (ownershipCheck.recordset.length === 0) {
+          console.warn(`[AdController] Access denied for ManagerId ${managerId}, BarPageId ${ad.BarPageId} - No purchase found`);
+          return res.status(403).json({ 
+            success: false, 
+            message: "Access denied - Manager does not have access to this BarPage" 
+          });
+        }
+        barPage = await barPageModel.getBarPageById(ad.BarPageId);
+      } else if (accountId) {
+        // Account: Kiểm tra qua BarPages
+        barPage = await barPageModel.getBarPageByAccountId(accountId);
+        if (!barPage || barPage.BarPageId !== ad.BarPageId) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "Access denied - Account does not own this BarPage" 
+          });
+        }
       }
       
       // Kiểm tra ad có đang paused không
@@ -1333,11 +1535,29 @@ class AdController {
         });
       }
       
-      // Tạo resume request
+      // Lấy ManagerId từ AdPurchases nếu chưa có (cho trường hợp Account)
+      let finalManagerId = managerId;
+      if (!finalManagerId && accountId) {
+        // Nếu là Account, lấy ManagerId từ AdPurchases của BarPage này
+        const pool = await getPool();
+        const managerResult = await pool.request()
+          .input("BarPageId", sql.UniqueIdentifier, ad.BarPageId)
+          .query(`
+            SELECT TOP 1 ManagerId
+            FROM AdPurchases
+            WHERE BarPageId = @BarPageId AND ManagerId IS NOT NULL
+            ORDER BY PurchasedAt DESC
+          `);
+        if (managerResult.recordset.length > 0) {
+          finalManagerId = managerResult.recordset[0].ManagerId;
+        }
+      }
+      
+      // Tạo resume request (ManagerId có thể null nếu không tìm thấy, nhưng vẫn tạo được request)
       const resumeRequest = await adResumeRequestModel.createResumeRequest({
         userAdId,
         barPageId: ad.BarPageId,
-        accountId,
+        managerId: finalManagerId,
         reason,
         requestNote
       });
@@ -1357,7 +1577,7 @@ class AdController {
           const adminAccountId = adminResult.recordset[0].AccountId;
           await notificationService.createNotification({
             type: "Info",
-            sender: accountId,
+            sender: finalManagerId || accountId || managerId,
             receiver: adminAccountId,
             content: `Yêu cầu tiếp tục quảng cáo từ ${barPage.BarName}: ${ad.Title}`,
             link: `/admin/ads/resume-requests/${resumeRequest.ResumeRequestId}`
@@ -1385,18 +1605,51 @@ class AdController {
    */
   async getMyResumeRequests(req, res) {
     try {
-      const accountId = req.user?.id || req.user?.accountId;
+      const userType = req.user?.type; // "manager" hoặc undefined (account)
+      const managerId = userType === 'manager' ? (req.user?.id || req.user?.managerId) : null;
+      const accountId = userType !== 'manager' ? (req.user?.id || req.user?.accountId) : null;
       
-      // Verify BarPage
-      const barPage = await barPageModel.getBarPageByAccountId(accountId);
-      if (!barPage) {
-        return res.status(403).json({ 
+      if (!managerId && !accountId) {
+        return res.status(401).json({ 
           success: false, 
-          message: "Access denied" 
+          message: "Unauthorized" 
         });
       }
       
-      const resumeRequests = await adResumeRequestModel.getByBarPageId(barPage.BarPageId);
+      // Verify ownership và lấy BarPageId
+      let barPageId = null;
+      if (accountId) {
+        // Account: Lấy BarPageId từ BarPages
+        const barPage = await barPageModel.getBarPageByAccountId(accountId);
+        if (!barPage) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "Access denied - No BarPage found for this account" 
+          });
+        }
+        barPageId = barPage.BarPageId;
+      } else if (managerId) {
+        // Manager: Lấy BarPageId từ AdPurchases
+        const pool = await getPool();
+        const ownershipCheck = await pool.request()
+          .input("ManagerId", sql.UniqueIdentifier, managerId)
+          .query(`
+            SELECT TOP 1 BarPageId
+            FROM AdPurchases
+            WHERE ManagerId = @ManagerId
+            ORDER BY PurchasedAt DESC
+          `);
+        
+        if (ownershipCheck.recordset.length === 0) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "Access denied - No purchase found" 
+          });
+        }
+        barPageId = ownershipCheck.recordset[0].BarPageId;
+      }
+      
+      const resumeRequests = await adResumeRequestModel.getByBarPageId(barPageId);
       
       return res.json({
         success: true,
