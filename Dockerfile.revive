@@ -21,7 +21,7 @@ RUN a2enmod rewrite
 RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 # Create certs directory and download Azure MySQL SSL certificate
 RUN mkdir -p /var/www/html/revive/certs && \
-    curl -o /var/www/html/revive/certs/azure-mysql-ca-cert.pem \
+    curl -o /var/www/html/revive/certs/azure-mysql-ssl-cert.pem \
     https://cacerts.digicert.com/DigiCertGlobalRootCA.crt.pem
 
 # Copy Revive files
