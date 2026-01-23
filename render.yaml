@@ -7,7 +7,7 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile.revive
     plan: free
-    healthCheckPath: /revive/www/admin/
+    healthCheckPath: /health.php
     envVars:
       # Sử dụng Azure MySQL thay vì Render MySQL service
       - key: PORT
