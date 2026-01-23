@@ -90,7 +90,7 @@ class OA_DB
         // Is this a MySQL database connection that should happen via SSL?
         // Modify the DSN string to include the required CA and CAPATH options
         if ((strcasecmp($databaseType, 'mysql') === 0 || strcasecmp($databaseType, 'mysqli') === 0) && !empty($aDriverOptions['ssl']) && (!empty($aDriverOptions['ca']) && !empty($aDriverOptions['capath']))) {
-            $dsn .= "?ca={$aDriverOptions['ca']}&capath={$aDriverOptions['capath']}";
+            $dsn .= "?ca=" . urlencode(basename($aDriverOptions['ca'])) . "&capath=" . urlencode($aDriverOptions['capath']);
         }
 
         // Create an MD5 checksum of the DSN
