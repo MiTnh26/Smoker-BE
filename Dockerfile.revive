@@ -27,6 +27,9 @@ RUN mkdir -p /var/www/html/revive/certs && \
 # Copy Revive files
 COPY revive/ /var/www/html/revive/
 
+# Copy health check to web root
+COPY revive/var/www/html/health.php /var/www/html/health.php
+
 # Set permissions
 RUN chown -R www-data:www-data /var/www/html/revive
 RUN chmod -R 755 /var/www/html/revive
