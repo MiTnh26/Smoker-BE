@@ -31,7 +31,7 @@ type=mysqli
 host=smoker1.mysql.database.azure.com
 socket=
 port=3306
-username=minhdbd4
+username=minhdbd4@smoker1
 password=Minhtran26@
 name=smoker
 persistent=
@@ -255,13 +255,13 @@ adminDomain=
 
 [debug]
 logfile=
-production=1
+production=0
 sendErrorEmails=
 emailSubject="Error from Revive Adserver"
 email="email@example.com"
 emailAdminThreshold=3
 errorOverride=1
-showBacktrace=
+showBacktrace=1
 disableSendEmails=
 
 [var]
