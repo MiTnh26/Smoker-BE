@@ -12,7 +12,7 @@ echo "<h1>Azure MySQL Connection Test</h1>";
 
 $host = 'smoker1.mysql.database.azure.com';
 $port = 3306;
-$username = 'minhdbd4@smoker1';
+$username = 'minhdbd4';
 $password = 'Minhtran26@';
 $database = 'smoker';
 $certPath = '/var/www/html/revive/certs/azure-mysql-ssl-cert.pem';
