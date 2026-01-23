@@ -17,11 +17,11 @@ services:
       - key: REVIVE_DB_PORT
         value: "3306"
       - key: REVIVE_DB_USER
-        value: minhdbd4
+        value: minhdbd4@smoker1
       - key: REVIVE_DB_PASSWORD
         value: Minhtran26@
       - key: REVIVE_DB_NAME
-        value: Mysql-Revive-New
+        value: smoker
       - key: REVIVE_DB_SSL
         value: "1"
     region: singapore
@@ -59,7 +59,7 @@ services:
       - key: REVIVE_DB_PASSWORD
         value: Minhtran26@
       - key: REVIVE_DB_NAME
-        value: Mysql-Revive-New
+        value: smoker
       - key: REVIVE_DB_SSL
         value: "1"
       
