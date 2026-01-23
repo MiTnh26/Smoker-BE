@@ -146,6 +146,8 @@ class OA_DB
             $oDbh = MDB2::singleton($dsn, $aOptions);
             RV::enableErrorHandling();
             if (PEAR::isError($oDbh)) {
+                // Ghi lại lỗi chi tiết vào một file log
+                error_log("MDB2::singleton() failed: " . $oDbh->getMessage() . " Code: " . $oDbh->getCode() . " UserInfo: " . $oDbh->getUserInfo());
                 return $oDbh;
             }
 
@@ -170,6 +172,8 @@ class OA_DB
             $success = $oDbh->connect();
             RV::enableErrorHandling();
             if (PEAR::isError($success)) {
+                // Ghi lại lỗi chi tiết vào một file log
+                error_log("MDB2 connect() failed: " . $success->getMessage() . " Code: " . $success->getCode() . " UserInfo: " . $success->getUserInfo());
                 return $success;
             }
             // Set charset if needed
