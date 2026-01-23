@@ -31,14 +31,13 @@ type=mysqli
 host=smoker1.mysql.database.azure.com
 socket=
 port=3306
-username=minhdbd4
+username=minhdbd4@smoker1
 password=Minhtran26@
-name=Mysql-Revive-New
+name=smoker
 persistent=
 protocol=tcp
 compress=
 ssl=1
-capath="/var/www/html/revive/certs"
 ca="/var/www/html/revive/certs/azure-mysql-ca-cert.pem"
 
 [databaseCharset]
