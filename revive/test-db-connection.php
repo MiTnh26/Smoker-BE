@@ -10,11 +10,11 @@ ini_set('display_errors', 1);
 
 echo "<h1>Azure MySQL Connection Test</h1>";
 
-$host = 'mysql-smoker.mysql.database.azure.com';
+$host = 'smoker1.mysql.database.azure.com';
 $port = 3306;
-$username = 'smoker';
-$password = 'Minhtran26';
-$database = 'revive_adserver';
+$username = 'minhdbd4';
+$password = 'Minhtran26@';
+$database = 'smoker';
 $certPath = '/var/www/html/revive/certs/azure-mysql-ca-cert.pem';
 
 echo "<h2>Connection Details:</h2>";
