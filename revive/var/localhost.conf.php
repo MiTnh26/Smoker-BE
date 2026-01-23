@@ -38,7 +38,7 @@ persistent=
 protocol=tcp
 compress=
 ssl=1
-ca="/var/www/html/revive/certs/azure-mysql-ca-cert.pem"
+ca="/var/www/html/revive/certs/azure-mysql-ssl-cert.pem"
 
 [databaseCharset]
 checkComplete=1
