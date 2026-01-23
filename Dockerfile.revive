@@ -27,6 +27,9 @@ RUN mkdir -p /var/www/html/revive/certs && \
 # Copy Revive files
 COPY revive/ /var/www/html/revive/
 
+# Copy health check to web root
+COPY public-health.php /var/www/html/health.php
+
 # Set permissions
 RUN chown -R www-data:www-data /var/www/html/revive
 RUN chmod -R 755 /var/www/html/revive
@@ -48,9 +51,6 @@ RUN echo '# Revive Ad Server Configuration' > /etc/apache2/conf-available/revive
     echo '    Require all granted' >> /etc/apache2/conf-available/revive.conf && \
     echo '</Directory>' >> /etc/apache2/conf-available/revive.conf && \
     a2enconf revive
-
-# Simple health endpoint for Render (no DB required)
-RUN echo '<?php http_response_code(200); header("Content-Type: text/plain"); echo "OK"; ?>' > /var/www/html/health.php
 
 # Create a simple index.php in root to redirect to revive
 RUN echo '<?php header("Location: /revive/www/admin/"); ?>' > /var/www/html/index.php
