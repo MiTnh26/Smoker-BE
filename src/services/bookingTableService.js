@@ -10,11 +10,12 @@ const { getEntityAccountIdByAccountId } = require("../models/entityAccount1Model
 class BookingTableService {
   /**
    * Tạo booking bàn với combo và voucher (luồng mới)
+   * comboId không còn bắt buộc - có thể đặt bàn chỉ với voucher hoặc không có gì (chỉ cọc)
    */
   async createBarTableBookingWithCombo({
     bookerAccountId,  // AccountId lấy từ token
     receiverEntityId, // EntityAccountId của bar
-    comboId,          // ID combo bắt buộc
+    comboId,          // ID combo (optional - không còn bắt buộc)
     voucherCode,      // Voucher code (optional)
     tableId,          // ID bàn được chọn
     bookingDate,
@@ -22,48 +23,124 @@ class BookingTableService {
     endTime,
     note = ""
   }) {
-    if (!bookerAccountId || !receiverEntityId || !comboId || !tableId) {
+    // DEBUG: Log input parameters
+    console.log("=== [DEBUG] createBarTableBookingWithCombo - Input Parameters ===");
+    console.log("[DEBUG] bookerAccountId:", bookerAccountId ? `${bookerAccountId} (type: ${typeof bookerAccountId})` : "✗ MISSING");
+    console.log("[DEBUG] receiverEntityId:", receiverEntityId ? `${receiverEntityId} (type: ${typeof receiverEntityId})` : "✗ MISSING");
+    console.log("[DEBUG] comboId:", comboId ? `${comboId} (type: ${typeof comboId})` : "null/undefined (OK - optional)");
+    console.log("[DEBUG] voucherCode:", voucherCode ? `${voucherCode} (type: ${typeof voucherCode})` : "null/undefined (OK - optional)");
+    console.log("[DEBUG] tableId:", tableId ? `${tableId} (type: ${typeof tableId})` : "✗ MISSING");
+    console.log("[DEBUG] bookingDate:", bookingDate || "MISSING");
+    console.log("[DEBUG] startTime:", startTime || "MISSING");
+    console.log("[DEBUG] endTime:", endTime || "MISSING");
+    console.log("[DEBUG] note:", note || "empty");
+
+    // Validate required fields
+    const missingFields = [];
+    if (!bookerAccountId) missingFields.push("bookerAccountId");
+    if (!receiverEntityId) missingFields.push("receiverEntityId");
+    if (!tableId) missingFields.push("tableId");
+
+    if (missingFields.length > 0) {
+      console.error("[DEBUG] ❌ Validation failed - Missing fields:", missingFields);
+      console.error("[DEBUG] Received values:", {
+        bookerAccountId: bookerAccountId || null,
+        receiverEntityId: receiverEntityId || null,
+        tableId: tableId || null,
+        comboId: comboId || null,
+        voucherCode: voucherCode || null
+      });
       return {
         success: false,
-        message: "Thiếu thông tin bắt buộc: bookerAccountId, receiverEntityId, comboId, tableId"
+        message: `Thiếu thông tin bắt buộc: ${missingFields.join(", ")}`,
+        debug: {
+          missingFields,
+          received: {
+            bookerAccountId: bookerAccountId || null,
+            receiverEntityId: receiverEntityId || null,
+            tableId: tableId || null,
+            comboId: comboId || null,
+            voucherCode: voucherCode || null
+          }
+        }
       };
     }
 
+    console.log("[DEBUG] ✓ All required fields present");
+
     // Map AccountId → EntityAccountId cho người đặt
+    console.log("[DEBUG] Mapping bookerAccountId to EntityAccountId...");
     const bookerEntityId = await getEntityAccountIdByAccountId(bookerAccountId, "Account");
+    console.log("[DEBUG] bookerEntityId result:", bookerEntityId || "NOT FOUND");
     if (!bookerEntityId) {
-      return { success: false, message: "Không tìm thấy EntityAccount cho người đặt" };
+      console.error("[DEBUG] ❌ Cannot find EntityAccount for booker");
+      return { 
+        success: false, 
+        message: "Không tìm thấy EntityAccount cho người đặt",
+        debug: {
+          bookerAccountId,
+          entityType: "Account"
+        }
+      };
     }
 
     try {
-      // 1. Lấy thông tin combo
-      const combo = await comboModel.getComboById(comboId);
-      if (!combo) {
-        return { success: false, message: "Combo không tồn tại" };
-      }
-
-      // 2. Validate và áp dụng voucher (nếu có)
+      console.log("[DEBUG] Starting booking creation process...");
+      let combo = null;
       let voucher = null;
       let discountPercentage = 0;
+      let amounts = null;
 
-      if (voucherCode) {
-        // voucher áp dụng dựa trên giá combo (Price)
-        const voucherValidation = await voucherModel.validateVoucher(voucherCode, combo.Price);
-        if (!voucherValidation.valid) {
-          return { success: false, message: voucherValidation.reason };
+      // 1. Nếu có comboId, lấy thông tin combo
+      if (comboId) {
+        console.log("[DEBUG] ComboId provided, fetching combo...");
+        combo = await comboModel.getComboById(comboId);
+        console.log("[DEBUG] Combo result:", combo ? `Found: ${combo.ComboName}` : "NOT FOUND");
+        if (!combo) {
+          return { 
+            success: false, 
+            message: "Combo không tồn tại",
+            debug: { comboId }
+          };
         }
-        voucher = voucherValidation.voucher; // voucher object từ DB
-        // Không còn DiscountPercentage, set về 0
-        discountPercentage = 0;
+
+        // 2. Validate và áp dụng voucher (nếu có) - voucher áp dụng dựa trên giá combo
+        if (voucherCode) {
+          const voucherValidation = await voucherModel.validateVoucher(voucherCode, combo.Price);
+          if (!voucherValidation.valid) {
+            return { success: false, message: voucherValidation.reason };
+          }
+          voucher = voucherValidation.voucher;
+          discountPercentage = 0;
+        }
+
+        // 3. Tính toán các amounts theo logic mới
+        amounts = bookedScheduleModel.calculateBookingAmounts(
+          combo.Price,
+          discountPercentage
+        );
+      } else {
+        // Không có combo: chỉ đặt bàn với voucher (nếu có) hoặc không có gì (chỉ cọc)
+        console.log("[DEBUG] No comboId provided - booking without combo");
+        // Logic này tương tự createBookingWithVoucher nhưng đơn giản hơn
+        if (voucherCode) {
+          // Nếu có voucherCode nhưng không có combo, cần validate voucher
+          // Tạm thời không validate vì không có giá trị để validate
+          // Có thể bỏ qua hoặc yêu cầu voucher phải có giá trị tối thiểu
+          console.warn("[DEBUG] ⚠️ Voucher code được cung cấp nhưng không có comboId - voucher sẽ không được áp dụng");
+        }
+        
+        // Không có combo: chỉ tính cọc 100k
+        const depositAmount = 100000;
+        amounts = {
+          originalPrice: depositAmount,
+          discountPercentages: 0,
+          finalPaymentAmount: depositAmount
+        };
+        console.log("[DEBUG] Calculated amounts (no combo):", amounts);
       }
 
-      // 3. Tính toán các amounts theo logic mới
-      const amounts = bookedScheduleModel.calculateBookingAmounts(
-        combo.Price,
-        discountPercentage
-      );
-
-      // 4. Lưu chi tiết bàn và combo vào Mongo
+      // 4. Lưu chi tiết bàn và combo (nếu có) vào Mongo
       const tableMap = {};
       const table = await barTableModel.getBarTableById(tableId);
       tableMap[tableId] = {
@@ -72,11 +149,11 @@ class BookingTableService {
 
       const detailDoc = await DetailSchedule.create({
         Table: tableMap,
-        Combo: {
+        Combo: combo ? {
           ComboId: comboId,
           ComboName: combo.ComboName,
           Price: combo.Price
-        },
+        } : null,
         Voucher: voucher ? {
           VoucherId: voucher.VoucherId,
           VoucherCode: voucher.VoucherCode,
@@ -85,21 +162,47 @@ class BookingTableService {
         Note: note || "",
       });
 
-      // 5. Tạo booking trong SQL với logic combo mới
-      const createdBooking = await bookedScheduleModel.createBookedScheduleWithCombo({
-        bookerId: bookerEntityId,
-        receiverId: receiverEntityId,
-        voucherId: voucher?.VoucherId || null,
-        type: "BarTable",
-        originalComboPrice: amounts.originalPrice,
-        discountPercentages: amounts.discountPercentages,
-        finalPaymentAmount: amounts.finalPaymentAmount,
-        bookingDate,
-        startTime,
-        endTime,
-        mongoDetailId: detailDoc._id.toString(),
-      });
+      // 5. Tạo booking trong SQL
+      console.log("[DEBUG] Creating booking in SQL database...");
+      let createdBooking;
+      if (combo) {
+        // Có combo: sử dụng logic combo
+        console.log("[DEBUG] Using createBookedScheduleWithCombo (with combo)");
+        createdBooking = await bookedScheduleModel.createBookedScheduleWithCombo({
+          bookerId: bookerEntityId,
+          receiverId: receiverEntityId,
+          voucherId: voucher?.VoucherId || null,
+          type: "BarTable",
+          originalComboPrice: amounts.originalPrice,
+          discountPercentages: amounts.discountPercentages,
+          finalPaymentAmount: amounts.finalPaymentAmount,
+          bookingDate,
+          startTime,
+          endTime,
+          mongoDetailId: detailDoc._id.toString(),
+        });
+      } else {
+        // Không có combo: chỉ đặt bàn với cọc
+        console.log("[DEBUG] Using createBookedSchedule (no combo, deposit only)");
+        const depositAmount = 100000;
+        createdBooking = await bookedScheduleModel.createBookedSchedule({
+          bookerId: bookerEntityId,
+          receiverId: receiverEntityId,
+          type: "BarTable",
+          totalAmount: depositAmount,
+          paymentStatus: "Pending",
+          scheduleStatus: "Pending",
+          bookingDate,
+          startTime,
+          endTime,
+          mongoDetailId: detailDoc._id.toString(),
+          depositAmount: depositAmount
+        });
+      }
 
+      console.log("[DEBUG] ✓ Booking created successfully");
+      console.log("[DEBUG] Booking ID:", createdBooking?.BookedScheduleId || createdBooking?.bookedScheduleId);
+      
       return {
         success: true,
         message: "Đặt bàn thành công",
@@ -112,10 +215,21 @@ class BookingTableService {
         },
       };
     } catch (error) {
-      console.error("createBarTableBookingWithCombo error:", error);
+      console.error("[DEBUG] ❌ createBarTableBookingWithCombo error:", error);
+      console.error("[DEBUG] Error stack:", error.stack);
+      console.error("[DEBUG] Error details:", {
+        message: error.message,
+        name: error.name,
+        code: error.code
+      });
       return {
         success: false,
         message: error.message || "Lỗi khi tạo booking bàn",
+        debug: {
+          errorName: error.name,
+          errorCode: error.code,
+          errorMessage: error.message
+        }
       };
     }
   }

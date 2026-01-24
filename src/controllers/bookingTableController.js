@@ -19,7 +19,25 @@ class BookingTableController {
   async createWithVoucher(req, res) {
     try {
       const accountId = req.user?.id;
+
+      // DEBUG: Log toàn bộ request
+      console.log("=== [DEBUG] createWithVoucher - Request Info ===");
+      console.log("[DEBUG] accountId (from token):", accountId);
+      console.log("[DEBUG] req.body:", JSON.stringify(req.body, null, 2));
+      console.log("[DEBUG] req.body keys:", Object.keys(req.body || {}));
+      console.log("[DEBUG] req.body values:", {
+        receiverId: req.body?.receiverId,
+        tableId: req.body?.tableId,
+        voucherId: req.body?.voucherId,
+        salePrice: req.body?.salePrice,
+        bookingDate: req.body?.bookingDate,
+        startTime: req.body?.startTime,
+        endTime: req.body?.endTime,
+        note: req.body?.note
+      });
+
       if (!accountId) {
+        console.error("[DEBUG] ❌ Missing accountId from token");
         return res.status(401).json({ success: false, message: "Unauthorized" });
       }
 
@@ -34,20 +52,50 @@ class BookingTableController {
         note
       } = req.body;
 
+      // DEBUG: Log extracted values
+      console.log("[DEBUG] Extracted values:", {
+        receiverId: receiverId ? `${receiverId} (type: ${typeof receiverId})` : "MISSING",
+        tableId: tableId ? `${tableId} (type: ${typeof tableId})` : "MISSING",
+        voucherId: voucherId ? `${voucherId} (type: ${typeof voucherId})` : "null/undefined (OK)",
+        salePrice: salePrice !== null && salePrice !== undefined ? `${salePrice} (type: ${typeof salePrice})` : "null/undefined",
+        bookingDate: bookingDate || "MISSING",
+        startTime: startTime || "MISSING",
+        endTime: endTime || "MISSING",
+        note: note || "empty"
+      });
+
       if (!receiverId || !tableId) {
+        console.error("[DEBUG] ❌ Validation failed:");
+        console.error("[DEBUG]   - receiverId:", receiverId ? "✓" : "✗ MISSING");
+        console.error("[DEBUG]   - tableId:", tableId ? "✓" : "✗ MISSING");
         return res.status(400).json({
           success: false,
-          message: "receiverId và tableId là bắt buộc"
+          message: "receiverId và tableId là bắt buộc",
+          debug: {
+            received: {
+              receiverId: receiverId || null,
+              tableId: tableId || null,
+              voucherId: voucherId || null,
+              salePrice: salePrice || null
+            }
+          }
         });
       }
 
       // Nếu có voucher thì phải có salePrice
       if (voucherId && !salePrice) {
+        console.error("[DEBUG] ❌ Validation failed: voucherId provided but salePrice missing");
         return res.status(400).json({
           success: false,
-          message: "salePrice là bắt buộc khi có voucherId"
+          message: "salePrice là bắt buộc khi có voucherId",
+          debug: {
+            voucherId,
+            salePrice: salePrice || null
+          }
         });
       }
+
+      console.log("[DEBUG] ✓ Validation passed, calling service...");
 
       const result = await bookingTableService.createBookingWithVoucher({
         bookerAccountId: accountId,
@@ -61,9 +109,16 @@ class BookingTableController {
         note
       });
 
+      console.log("[DEBUG] Service result:", {
+        success: result.success,
+        message: result.message,
+        hasData: !!result.data
+      });
+
       return res.status(result.success ? 201 : 400).json(result);
     } catch (error) {
-      console.error("createWithVoucher booking error:", error);
+      console.error("[DEBUG] ❌ createWithVoucher booking error:", error);
+      console.error("[DEBUG] Error stack:", error.stack);
       return res.status(500).json({
         success: false,
         message: "Error creating booking with voucher",
@@ -72,18 +127,35 @@ class BookingTableController {
     }
   }
 
-  // POST /api/booking-tables - Tạo booking với combo bắt buộc (API mới)
+  // POST /api/booking-tables - Tạo booking (comboId không còn bắt buộc)
   async createWithCombo(req, res) {
     try {
       const accountId = req.user?.id; // AccountId trong token
 
+      // DEBUG: Log toàn bộ request
+      console.log("=== [DEBUG] createWithCombo - Request Info ===");
+      console.log("[DEBUG] accountId (from token):", accountId);
+      console.log("[DEBUG] req.body:", JSON.stringify(req.body, null, 2));
+      console.log("[DEBUG] req.body keys:", Object.keys(req.body || {}));
+      console.log("[DEBUG] req.body values:", {
+        receiverId: req.body?.receiverId,
+        comboId: req.body?.comboId,
+        voucherCode: req.body?.voucherCode,
+        tableId: req.body?.tableId,
+        bookingDate: req.body?.bookingDate,
+        startTime: req.body?.startTime,
+        endTime: req.body?.endTime,
+        note: req.body?.note
+      });
+
       if (!accountId) {
+        console.error("[DEBUG] ❌ Missing accountId from token");
         return res.status(401).json({ success: false, message: "Unauthorized" });
       }
 
       const {
         receiverId,    // EntityAccountId của bar
-        comboId,       // ID combo bắt buộc
+        comboId,       // ID combo (optional - không còn bắt buộc)
         voucherCode,   // Voucher code (optional)
         tableId,       // ID bàn được chọn
         bookingDate,
@@ -92,19 +164,44 @@ class BookingTableController {
         note
       } = req.body;
 
-      // Validate required fields
-      if (!comboId || !tableId) {
+      // DEBUG: Log extracted values
+      console.log("[DEBUG] Extracted values:", {
+        receiverId: receiverId ? `${receiverId} (type: ${typeof receiverId})` : "MISSING",
+        comboId: comboId ? `${comboId} (type: ${typeof comboId})` : "null/undefined (OK)",
+        voucherCode: voucherCode ? `${voucherCode} (type: ${typeof voucherCode})` : "null/undefined (OK)",
+        tableId: tableId ? `${tableId} (type: ${typeof tableId})` : "MISSING",
+        bookingDate: bookingDate || "MISSING",
+        startTime: startTime || "MISSING",
+        endTime: endTime || "MISSING",
+        note: note || "empty"
+      });
+
+      // Validate required fields - chỉ cần receiverId và tableId
+      if (!receiverId || !tableId) {
+        console.error("[DEBUG] ❌ Validation failed:");
+        console.error("[DEBUG]   - receiverId:", receiverId ? "✓" : "✗ MISSING");
+        console.error("[DEBUG]   - tableId:", tableId ? "✓" : "✗ MISSING");
         return res.status(400).json({
           success: false,
-          message: "comboId và tableId là bắt buộc"
+          message: "receiverId và tableId là bắt buộc",
+          debug: {
+            received: {
+              receiverId: receiverId || null,
+              tableId: tableId || null,
+              comboId: comboId || null,
+              voucherCode: voucherCode || null
+            }
+          }
         });
       }
+
+      console.log("[DEBUG] ✓ Validation passed, calling service...");
 
       const result = await bookingTableService.createBarTableBookingWithCombo({
         bookerAccountId: accountId,
         receiverEntityId: receiverId,
-        comboId,
-        voucherCode,
+        comboId,      // Có thể null/undefined
+        voucherCode,  // Có thể null/undefined
         tableId,
         bookingDate,
         startTime,
@@ -112,12 +209,19 @@ class BookingTableController {
         note
       });
 
+      console.log("[DEBUG] Service result:", {
+        success: result.success,
+        message: result.message,
+        hasData: !!result.data
+      });
+
       return res.status(result.success ? 201 : 400).json(result);
     } catch (error) {
-      console.error("createWithCombo booking table error:", error);
+      console.error("[DEBUG] ❌ createWithCombo booking table error:", error);
+      console.error("[DEBUG] Error stack:", error.stack);
       return res.status(500).json({
         success: false,
-        message: "Error creating booking table with combo",
+        message: "Error creating booking table",
         error: error.message,
       });
     }
