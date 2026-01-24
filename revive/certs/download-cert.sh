@@ -25,3 +25,16 @@ echo "Location: $(dirname "$0")/azure-mysql-ca-cert.pem"
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
