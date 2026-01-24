@@ -192,6 +192,8 @@ async function updateProfile(req, res) {
       avatar: avatarUrl || current.Avatar,
       background: backgroundUrl || current.Background,
     };
+    
+    console.log("[USER] updateData:", updateData);
 
     console.log("[USER] updateData:", updateData);
 
