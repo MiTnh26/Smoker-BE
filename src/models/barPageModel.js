@@ -37,6 +37,23 @@ async function getBarPageByAccountId(accountId) {
 }
 
 /**
+ * Lấy BarPageId từ EntityAccountId
+ */
+async function getBarPageIdByEntityAccountId(entityAccountId) {
+  const pool = await getPool();
+  const result = await pool
+    .request()
+    .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+    .query(`
+      SELECT ea.EntityId as BarPageId, b.BarName
+      FROM EntityAccounts ea
+      JOIN BarPages b ON b.BarPageId = ea.EntityId
+      WHERE ea.EntityAccountId = @EntityAccountId AND ea.EntityType = 'BarPage'
+    `);
+  return result.recordset[0] || null;
+}
+
+/**
  * Lấy BarPage theo ManagerId
  * JOIN với EntityAccounts để lấy EntityAccountId
  * Tìm BarPageId từ AdPurchases (có ManagerId) hoặc từ BarPages nếu có cột ManagerId
@@ -226,9 +243,10 @@ async function deleteBarPage(barPageId) {
 }
 
 module.exports = {
-  getBarPageById, 
+  getBarPageById,
   getBarPageByAccountId,
   getBarPageByManagerId,
+  getBarPageIdByEntityAccountId,
   createBarPage,
   updateBarPage,
   deleteBarPage,

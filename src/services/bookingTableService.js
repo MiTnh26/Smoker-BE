@@ -452,24 +452,46 @@ class BookingTableService {
   }
 
   /**
-   * Lấy vouchers available cho user
+   * Lấy vouchers available cho user theo barPageId
+   * Chỉ hiển thị voucher mà quán bar đó tạo và đã được admin duyệt
    */
-  async getAvailableVouchers() {
+  async getAvailableVouchersByBarPageId(barPageId, minComboValue = 0) {
     try {
-      // Lấy tất cả voucher (không phụ thuộc Status ở DB vì có thể đang NULL)
-      const vouchers = await voucherModel.getAllVouchers({});
+      console.log('[getAvailableVouchersByBarPageId] barPageId:', barPageId, 'minComboValue:', minComboValue);
 
-      // Filter chỉ theo status và usage
-      const availableVouchers = (vouchers || []).filter(v => {
+      // Lấy voucher của quán bar cụ thể
+      const vouchers = await voucherModel.getVouchersByBarPageId(barPageId);
+      console.log('[getAvailableVouchersByBarPageId] Raw vouchers from DB:', vouchers);
+
+      if (!vouchers || vouchers.length === 0) {
+        console.log('[getAvailableVouchersByBarPageId] No vouchers found for barPageId:', barPageId);
+        return { success: true, data: [] };
+      }
+
+      // Filter theo status, usage và VoucherStatus = 'approved'
+      const availableVouchers = vouchers.filter(v => {
         const status = (v.Status || "").toUpperCase();
         const isActiveLike = status === "" || status === "ACTIVE";
-        const hasUsage = Number(v.UsedCount) < Number(v.MaxUsage);
+        const hasUsage = Number(v.UsedCount || 0) < Number(v.MaxUsage || 0);
+        const isApproved = v.VoucherStatus === 'approved';
+        const meetsMinValue = minComboValue === 0 || Number(v.OriginalValue || 0) >= minComboValue;
 
-        return isActiveLike && hasUsage;
+        console.log(`[getAvailableVouchersByBarPageId] Voucher ${v.VoucherId}:`);
+        console.log(`  - VoucherName: ${v.VoucherName}`);
+        console.log(`  - Status: "${v.Status}" -> isActiveLike: ${isActiveLike}`);
+        console.log(`  - UsedCount: ${v.UsedCount}, MaxUsage: ${v.MaxUsage} -> hasUsage: ${hasUsage}`);
+        console.log(`  - VoucherStatus: "${v.VoucherStatus}" -> isApproved: ${isApproved}`);
+        console.log(`  - OriginalValue: ${v.OriginalValue} -> meetsMinValue: ${meetsMinValue}`);
+
+        return isActiveLike && hasUsage && isApproved && meetsMinValue;
       });
+
+      console.log('[getAvailableVouchersByBarPageId] Filtered available vouchers:', availableVouchers.length);
+      console.log('[getAvailableVouchersByBarPageId] Final result:', availableVouchers);
 
       return { success: true, data: availableVouchers };
     } catch (error) {
+      console.error('[getAvailableVouchersByBarPageId] Error:', error);
       return { success: false, message: "Lỗi khi lấy danh sách voucher", error: error.message };
     }
   }
