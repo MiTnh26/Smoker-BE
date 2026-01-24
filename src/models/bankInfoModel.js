@@ -1,43 +1,81 @@
 const { getPool, sql } = require("../db/sqlserver");
 const { normalizeToEntityAccountId } = require("./entityAccountModel");
 
-// ➕ Tạo BankInfo mới (nhận entityAccountId)
-async function createBankInfo({ bankName, accountNumber, accountHolderName, entityAccountId }) {
+// ➕ Tạo BankInfo mới (hỗ trợ cả schema cũ và mới)
+async function createBankInfo({ bankName, accountNumber, accountHolderName, entityAccountId, accountId, barPageId }) {
   const pool = await getPool();
   
-  // Validate: phải có entityAccountId
-  if (!entityAccountId) {
-    throw new Error("Phải có entityAccountId");
-  }
-
-  const result = await pool.request()
-    .input("BankName", sql.NVarChar(100), bankName)
-    .input("AccountNumber", sql.NVarChar(50), accountNumber)
-    .input("AccountHolderName", sql.NVarChar(150), accountHolderName)
-    .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+  // Kiểm tra schema của bảng BankInfo
+  const schemaCheck = await pool.request()
     .query(`
-      INSERT INTO BankInfo (BankInfoId, BankName, AccountNumber, AccountHolderName, EntityAccountId)
-      OUTPUT INSERTED.*
-      VALUES (NEWID(), @BankName, @AccountNumber, @AccountHolderName, @EntityAccountId)
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'BankInfo'
     `);
   
-  return result.recordset[0] || null;
+  const columns = schemaCheck.recordset.map(r => r.COLUMN_NAME);
+  const hasEntityAccountId = columns.includes('EntityAccountId');
+  const hasAccountHolderName = columns.includes('AccountHolderName');
+  const hasAccountId = columns.includes('AccountId');
+  const hasBarPageId = columns.includes('BarPageId');
+  
+  // Xác định cách insert dựa trên schema
+  if (hasEntityAccountId && hasAccountHolderName) {
+    // Schema mới: EntityAccountId + AccountHolderName
+    if (!entityAccountId) {
+      throw new Error("Phải có entityAccountId");
+    }
+    
+    const result = await pool.request()
+      .input("BankName", sql.NVarChar(100), bankName)
+      .input("AccountNumber", sql.NVarChar(50), accountNumber)
+      .input("AccountHolderName", sql.NVarChar(150), accountHolderName)
+      .input("EntityAccountId", sql.UniqueIdentifier, entityAccountId)
+      .query(`
+        INSERT INTO BankInfo (BankInfoId, BankName, AccountNumber, AccountHolderName, EntityAccountId)
+        OUTPUT INSERTED.*
+        VALUES (NEWID(), @BankName, @AccountNumber, @AccountHolderName, @EntityAccountId)
+      `);
+    
+    return result.recordset[0] || null;
+  } else if (hasAccountId || hasBarPageId) {
+    // Schema cũ: AccountId hoặc BarPageId (không có AccountHolderName)
+    if (!accountId && !barPageId) {
+      throw new Error("Phải có accountId hoặc barPageId cho schema cũ");
+    }
+    
+    const result = await pool.request()
+      .input("BankName", sql.NVarChar(100), bankName)
+      .input("AccountNumber", sql.NVarChar(50), accountNumber)
+      .input("AccountId", sql.UniqueIdentifier, accountId || null)
+      .input("BarPageId", sql.UniqueIdentifier, barPageId || null)
+      .query(`
+        INSERT INTO BankInfo (BankInfoId, BankName, AccountNumber, AccountId, BarPageId)
+        OUTPUT INSERTED.*
+        VALUES (NEWID(), @BankName, @AccountNumber, @AccountId, @BarPageId)
+      `);
+    
+    return result.recordset[0] || null;
+  } else {
+    throw new Error("Không xác định được schema của bảng BankInfo");
+  }
 }
 
-// 📖 Lấy BankInfo theo BankInfoId
+// 📖 Lấy BankInfo theo BankInfoId (hỗ trợ cả schema cũ và mới)
 async function getBankInfoById(bankInfoId) {
   const pool = await getPool();
+  // Dùng SELECT * để tự động lấy tất cả cột có sẵn
   const result = await pool.request()
     .input("BankInfoId", sql.UniqueIdentifier, bankInfoId)
     .query(`
-      SELECT BankInfoId, BankName, AccountNumber, AccountHolderName, EntityAccountId
+      SELECT *
       FROM BankInfo
       WHERE BankInfoId = @BankInfoId
     `);
   return result.recordset[0] || null;
 }
 
-// 📖 Lấy BankInfo theo EntityAccountId
+// 📖 Lấy BankInfo theo EntityAccountId (chỉ schema mới)
 async function getBankInfoByEntityAccountId(entityAccountId) {
   const pool = await getPool();
   if (!entityAccountId) {
@@ -54,10 +92,23 @@ async function getBankInfoByEntityAccountId(entityAccountId) {
   
   console.log("🔍 getBankInfoByEntityAccountId - Querying for EntityAccountId:", entityAccountIdStr);
   
+  // Kiểm tra xem cột EntityAccountId có tồn tại không
+  const schemaCheck = await pool.request()
+    .query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'BankInfo' AND COLUMN_NAME = 'EntityAccountId'
+    `);
+  
+  if (schemaCheck.recordset.length === 0) {
+    console.log("⚠️ getBankInfoByEntityAccountId: Column EntityAccountId does not exist (old schema)");
+    return null;
+  }
+  
   const result = await pool.request()
     .input("EntityAccountId", sql.UniqueIdentifier, entityAccountIdStr)
     .query(`
-      SELECT BankInfoId, BankName, AccountNumber, AccountHolderName, EntityAccountId
+      SELECT *
       FROM BankInfo
       WHERE EntityAccountId = @EntityAccountId
     `);
@@ -110,9 +161,20 @@ async function getBankInfoByAccountId(accountId) {
 
 
 
-// ✏️ Cập nhật BankInfo
+// ✏️ Cập nhật BankInfo (hỗ trợ cả schema cũ và mới)
 async function updateBankInfo(bankInfoId, { bankName, accountNumber, accountHolderName }) {
   const pool = await getPool();
+  
+  // Kiểm tra schema
+  const schemaCheck = await pool.request()
+    .query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'BankInfo'
+    `);
+  
+  const columns = schemaCheck.recordset.map(r => r.COLUMN_NAME);
+  const hasAccountHolderName = columns.includes('AccountHolderName');
   
   const updates = [];
   const request = pool.request()
@@ -128,7 +190,7 @@ async function updateBankInfo(bankInfoId, { bankName, accountNumber, accountHold
     request.input("AccountNumber", sql.NVarChar, accountNumber);
   }
 
-  if (accountHolderName !== undefined) {
+  if (accountHolderName !== undefined && hasAccountHolderName) {
     updates.push("AccountHolderName = @AccountHolderName");
     request.input("AccountHolderName", sql.NVarChar, accountHolderName);
   }

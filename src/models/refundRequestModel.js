@@ -44,15 +44,43 @@ async function findById(refundRequestId) {
         bs.TotalAmount,
         a.UserName,
         a.Email AS UserEmail,
-        processor.UserName AS ProcessorName,
-        processor.Email AS ProcessorEmail
+        processor.Email AS ProcessorEmail,
+        processor.Role AS ProcessorRole
       FROM RefundRequests rr
       INNER JOIN BookedSchedules bs ON rr.BookedScheduleId = bs.BookedScheduleId
       LEFT JOIN Accounts a ON rr.UserId = a.AccountId
       LEFT JOIN Accounts processor ON rr.ProcessedBy = processor.AccountId
       WHERE rr.RefundRequestId = @RefundRequestId
     `);
-  return result.recordset[0] || null;
+  
+  // Parse ManagerId từ TransferNote nếu có
+  const record = result.recordset[0];
+  if (record && record.TransferNote) {
+    const managerIdMatch = record.TransferNote.match(/^MANAGER_ID:([a-f0-9-]{36})/i);
+    if (managerIdMatch) {
+      const managerId = managerIdMatch[1];
+      // Lấy thông tin Manager
+      const managerResult = await pool.request()
+        .input("ManagerId", sql.UniqueIdentifier, managerId)
+        .query(`
+          SELECT ManagerId, Email, Role
+          FROM Managers
+          WHERE ManagerId = @ManagerId
+        `);
+      
+      if (managerResult.recordset.length > 0) {
+        const manager = managerResult.recordset[0];
+        record.ProcessorEmail = manager.Email;
+        record.ProcessorRole = manager.Role;
+        record.ProcessedByManagerId = manager.ManagerId;
+      }
+      
+      // Loại bỏ prefix MANAGER_ID: khỏi TransferNote khi trả về
+      record.TransferNote = record.TransferNote.replace(/^MANAGER_ID:[a-f0-9-]{36}\|?/i, '');
+    }
+  }
+  
+  return record || null;
 }
 
 /**
@@ -124,20 +152,27 @@ async function getAllRefundRequests({
 
 /**
  * Kế toán xử lý hoàn tiền
+ * @param {string} refundRequestId - RefundRequestId
+ * @param {string} managerId - ManagerId từ bảng Managers
+ * Note: ProcessedBy có FOREIGN KEY đến Accounts, nên set NULL và lưu ManagerId vào TransferNote
  */
-async function processRefund(refundRequestId, accountantId, { 
+async function processRefund(refundRequestId, managerId, { 
   transferProofImage, 
   transferNote 
 } = {}) {
   const pool = await getPool();
+  
+  // Lưu ManagerId vào TransferNote vì ProcessedBy có FOREIGN KEY đến Accounts
+  // Format: "MANAGER_ID:{managerId}|{originalNote}"
+  const managerNote = `MANAGER_ID:${managerId}${transferNote ? '|' + transferNote : ''}`;
+  
   await pool.request()
     .input("RefundRequestId", sql.UniqueIdentifier, refundRequestId)
-    .input("AccountantId", sql.UniqueIdentifier, accountantId)
     .input("TransferProofImage", sql.NVarChar(500), transferProofImage || null)
-    .input("TransferNote", sql.NVarChar(sql.MAX), transferNote || null)
+    .input("TransferNote", sql.NVarChar(sql.MAX), managerNote)
     .query(`
       UPDATE RefundRequests
-      SET ProcessedBy = @AccountantId,
+      SET ProcessedBy = NULL,
           ProcessedAt = GETDATE(),
           TransferProofImage = @TransferProofImage,
           TransferNote = @TransferNote,
