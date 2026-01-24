@@ -10,12 +10,12 @@ ini_set('display_errors', 1);
 
 echo "<h1>Azure MySQL Connection Test</h1>";
 
-$host = 'mysql-smoker.mysql.database.azure.com';
+$host = 'smoker1.mysql.database.azure.com';
 $port = 3306;
-$username = 'smoker';
-$password = 'Minhtran26';
-$database = 'revive_adserver';
-$certPath = '/var/www/html/revive/certs/azure-mysql-ca-cert.pem';
+$username = 'minhdbd4';
+$password = 'Minhtran26@';
+$database = 'smoker';
+$certPath = '/var/www/html/revive/certs/azure-mysql-ssl-cert.pem';
 
 echo "<h2>Connection Details:</h2>";
 echo "<pre>";
@@ -238,6 +238,19 @@ echo "<li>Nếu <strong>Test 3</strong> thành công → Revive config đúng, v
 echo "<li>Nếu <strong>Test 3</strong> failed → Certificate path hoặc file có vấn đề</li>";
 echo "<li>Nếu <strong>Certificate file NOT FOUND</strong> → Certificate chưa được download trong Dockerfile</li>";
 echo "</ul>";
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
