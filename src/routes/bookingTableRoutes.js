@@ -28,6 +28,9 @@ router.get("/bar/:barId/available-combos", verifyToken, bookingTableController.g
 // Lấy vouchers available
 router.get("/available-vouchers", verifyToken, bookingTableController.getAvailableVouchers);
 
+// Debug endpoint (tạm thời)
+router.get("/debug-entity-mapping", bookingTableController.debugEntityMapping);
+
 // === QR CODE APIs ===
 
 // Lấy QR code của booking (cho người dùng xem)

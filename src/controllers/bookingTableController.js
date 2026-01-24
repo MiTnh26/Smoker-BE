@@ -798,20 +798,86 @@ class BookingTableController {
     }
   }
 
-  // GET /api/booking-tables/available-vouchers - Lấy vouchers available
+  // GET /api/booking-tables/available-vouchers - Lấy vouchers available theo bar
   async getAvailableVouchers(req, res) {
     try {
-      const { minComboValue } = req.query;
+      const { minComboValue, barPageId } = req.query;
+      console.log('[getAvailableVouchers Controller] barPageId:', barPageId, 'minComboValue:', minComboValue);
+
+      if (!barPageId) {
+        return res.status(400).json({
+          success: false,
+          message: "barPageId là bắt buộc"
+        });
+      }
+
+      // DEBUG: Kiểm tra voucher cụ thể
+      console.log('[DEBUG] Checking voucher for barPageId:', barPageId);
+      const voucherModel = require("../models/voucherModel");
+      const allVouchers = await voucherModel.getVouchersByBarPageId(barPageId);
+      console.log('[DEBUG] All vouchers for this bar:', allVouchers);
+
+      // Check specific voucher
+      const specificVoucher = allVouchers.find(v => v.VoucherId === '90D35A9F-5D71-4194-84AE-71936CA2A2BB');
+      if (specificVoucher) {
+        console.log('[DEBUG] Found specific voucher:', specificVoucher);
+      } else {
+        console.log('[DEBUG] Specific voucher not found for this barPageId');
+      }
+
       // Nếu minComboValue = 0, sẽ lấy tất cả voucher
-      const result = await bookingTableService.getAvailableVouchers(
+      const result = await bookingTableService.getAvailableVouchersByBarPageId(
+        barPageId,
         minComboValue !== undefined ? parseInt(minComboValue) : 0
       );
+      console.log('[getAvailableVouchers Controller] Result:', result);
       return res.status(result.success ? 200 : 400).json(result);
     } catch (error) {
       console.error("getAvailableVouchers error:", error);
       return res.status(500).json({
         success: false,
         message: "Error fetching available vouchers",
+        error: error.message
+      });
+    }
+  }
+
+  // Debug endpoint: GET /api/booking-tables/debug-entity-mapping?entityAccountId=...
+  async debugEntityMapping(req, res) {
+    try {
+      const { entityAccountId } = req.query;
+      console.log('[debugEntityMapping] Testing entityAccountId:', entityAccountId);
+
+      const { getBarPageIdByEntityAccountId } = require("../models/barPageModel");
+      const barPageInfo = await getBarPageIdByEntityAccountId(entityAccountId);
+
+      console.log('[debugEntityMapping] BarPageInfo result:', barPageInfo);
+
+      if (!barPageInfo) {
+        return res.json({
+          success: false,
+          message: 'No BarPage found for this EntityAccountId',
+          entityAccountId
+        });
+      }
+
+      // Test lấy vouchers
+      const voucherModel = require("../models/voucherModel");
+      const vouchers = await voucherModel.getVouchersByBarPageId(barPageInfo.BarPageId);
+      console.log('[debugEntityMapping] Vouchers found:', vouchers.length);
+
+      return res.json({
+        success: true,
+        entityAccountId,
+        barPageId: barPageInfo.BarPageId,
+        barName: barPageInfo.BarName,
+        vouchersCount: vouchers.length,
+        vouchers: vouchers
+      });
+    } catch (error) {
+      console.error('[debugEntityMapping] Error:', error);
+      return res.status(500).json({
+        success: false,
         error: error.message
       });
     }
