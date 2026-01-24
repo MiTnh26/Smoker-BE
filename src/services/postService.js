@@ -20,6 +20,55 @@ const countCollectionItems = (value) => {
   return 0;
 };
 
+/**
+ * Tính tổng số comments bao gồm cả replies (Flatten Count)
+ * Công thức: Total = Σ (1 + comment.replies.length)
+ * 
+ * @param {Map|Object|Array} comments - Comments có thể là Map, Object hoặc Array
+ * @returns {number} Tổng số comments (bao gồm replies)
+ */
+const countTotalComments = (comments) => {
+  if (!comments) return 0;
+  
+  let total = 0;
+  let commentsArray = [];
+  
+  // Convert comments sang Array để xử lý thống nhất
+  if (Array.isArray(comments)) {
+    commentsArray = comments;
+  } else if (comments instanceof Map) {
+    commentsArray = Array.from(comments.values());
+  } else if (typeof comments === 'object') {
+    commentsArray = Object.values(comments);
+  } else {
+    return 0;
+  }
+  
+  // Duyệt qua mỗi comment: 1 comment + số replies của nó
+  commentsArray.forEach(comment => {
+    if (!comment || typeof comment !== 'object') return;
+    
+    // Đếm comment chính (+1)
+    total += 1;
+    
+    // Đếm replies của comment này
+    const replies = comment.replies;
+    if (replies) {
+      if (Array.isArray(replies)) {
+        total += replies.length;
+      } else if (replies instanceof Map) {
+        total += replies.size;
+      } else if (typeof replies === 'object') {
+        total += Object.keys(replies).length;
+      } else if (typeof replies === 'number') {
+        total += replies;
+      }
+    }
+  });
+  
+  return total;
+};
+
 // Detect media type from url/file extension (fallback image)
 const inferMediaType = (url, fallback = "image") => {
   if (!url || typeof url !== "string") return fallback;
@@ -360,11 +409,8 @@ class PostService {
                       typeof likes === 'object' ? Object.keys(likes).length :
                       typeof likes === 'number' ? likes : 0;
 
-    const comments = post.comments || {};
-    const commentsCount = comments instanceof Map ? comments.size :
-                         Array.isArray(comments) ? comments.length :
-                         typeof comments === 'object' ? Object.keys(comments).length :
-                         typeof comments === 'number' ? comments : 0;
+    // ⚠️ TỐI ƯU: Tính tổng comments bao gồm cả replies (Flatten Count)
+    const commentsCount = countTotalComments(post.comments);
 
     // Normalize viewer IDs before checking like status
     const normalizedViewerAccountId = viewer.accountId ? String(viewer.accountId).trim() : null;
@@ -978,8 +1024,7 @@ class PostService {
       // Enrich comments and replies with author information
       await this.enrichCommentsWithAuthorInfo([postData]);
       
-      // Apply viewer context (likedByViewer, canManage)
-      this.applyViewerContextToComments([postData], viewerAccountId, viewerEntityAccountId);
+      // ⚠️ ĐÃ XÓA: Không còn applyViewerContextToComments - Frontend tự check likesObject
 
       // Import getTopComments helper
       const getTopComments = (comments, limit = 2) => {
@@ -1027,83 +1072,100 @@ class PostService {
         isChild: false
       });
 
-      // For detail view, build minimal comments array (only essential fields)
+      // ⚠️ TỐI ƯU: Chuyển comments từ Object/Map sang Array (giống Medias)
+      // Frontend tự check likesObject[myEntityAccountId] để hiển thị tim đỏ
       if (postData.comments && typeof postData.comments === 'object' && !Array.isArray(postData.comments)) {
-        const commentsArray = [];
-        for (const [key, comment] of Object.entries(postData.comments)) {
+        // Convert comments từ Map/Object sang Array
+        const commentsEntries = postData.comments instanceof Map
+          ? Array.from(postData.comments.entries())
+          : Object.entries(postData.comments);
+        
+        const commentsArray = commentsEntries.map(([key, comment]) => {
           const commentObj = comment.toObject ? comment.toObject({ flattenMaps: true }) : comment;
           
-          // Count likes (minimal calculation)
-          const commentLikes = commentObj.likes || {};
-          const commentLikeCount = commentLikes instanceof Map ? commentLikes.size :
-                                  Array.isArray(commentLikes) ? commentLikes.length :
-                                  typeof commentLikes === 'object' ? Object.keys(commentLikes).length :
-                                  typeof commentLikes === 'number' ? commentLikes : 0;
+          // Count likes từ likesObject (key = entityAccountId)
+          const likesObject = commentObj.likesObject || {};
+          const likeCount = typeof likesObject === 'object' ? Object.keys(likesObject).length : 0;
 
-          // Build minimal comment author (only what CommentSection needs, keep original ID format)
+          // Build comment author (đã được enrich từ enrichCommentsWithAuthorInfo)
           const commentAuthor = {
             entityAccountId: commentObj.entityAccountId ? String(commentObj.entityAccountId).trim() : (commentObj.authorEntityAccountId ? String(commentObj.authorEntityAccountId).trim() : null),
             entityId: commentObj.entityId || commentObj.authorEntityId || null,
             entityType: commentObj.entityType || commentObj.authorEntityType || null,
-            name: commentObj.authorName || commentObj.userName || 'Người dùng',
+            name: commentObj.authorName || commentObj.userName || null,
             avatar: commentObj.authorAvatar || commentObj.avatar || null
           };
 
-          // Build minimal replies array
+          // Convert replies từ Map/Object sang Array
           const repliesArray = [];
           if (commentObj.replies && typeof commentObj.replies === 'object') {
-            const repliesEntries = commentObj.replies instanceof Map ?
-                                 Array.from(commentObj.replies.entries()) :
-                                 Object.entries(commentObj.replies);
+            const repliesEntries = commentObj.replies instanceof Map
+              ? Array.from(commentObj.replies.entries())
+              : Object.entries(commentObj.replies);
             
-            for (const [replyKey, reply] of repliesEntries) {
+            repliesArray.push(...repliesEntries.map(([replyKey, reply]) => {
               const replyObj = reply.toObject ? reply.toObject({ flattenMaps: true }) : reply;
               
-              const replyLikes = replyObj.likes || {};
-              const replyLikeCount = replyLikes instanceof Map ? replyLikes.size :
-                                   Array.isArray(replyLikes) ? replyLikes.length :
-                                   typeof replyLikes === 'object' ? Object.keys(replyLikes).length :
-                                   typeof replyLikes === 'number' ? replyLikes : 0;
+              // Count likes từ likesObject (key = entityAccountId)
+              const replyLikesObject = replyObj.likesObject || {};
+              const replyLikeCount = typeof replyLikesObject === 'object' ? Object.keys(replyLikesObject).length : 0;
 
               const replyAuthor = {
                 entityAccountId: replyObj.entityAccountId ? String(replyObj.entityAccountId).trim() : (replyObj.authorEntityAccountId ? String(replyObj.authorEntityAccountId).trim() : null),
                 entityId: replyObj.entityId || replyObj.authorEntityId || null,
                 entityType: replyObj.entityType || replyObj.authorEntityType || null,
-                name: replyObj.authorName || replyObj.userName || 'Người dùng',
+                name: replyObj.authorName || replyObj.userName || null,
                 avatar: replyObj.authorAvatar || replyObj.avatar || null
               };
 
-              // Minimal reply object (only essential fields)
-              repliesArray.push({
+              return {
                 id: String(replyObj._id || replyObj.id || replyKey),
                 content: replyObj.content || replyObj.text || '',
                 author: replyAuthor,
+                // ⚠️ QUAN TRỌNG: Chỉ trả về likesObject - Frontend tự check likesObject[myEntityAccountId]
+                likesObject: replyLikesObject,
                 stats: {
-                  likeCount: replyLikeCount,
-                  isLikedByMe: replyObj.likedByViewer || false
+                  likeCount: replyLikeCount
+                  // ⚠️ ĐÃ XÓA: Không còn isLikedByMe - Frontend tự check
                 },
-                createdAt: replyObj.createdAt || null
-              });
-            }
+                createdAt: replyObj.createdAt || null,
+                // ⚠️ QUAN TRỌNG: Trả về replyToId và thông tin replyTo (người được reply)
+                replyToId: replyObj.replyToId ? String(replyObj.replyToId) : null,
+                replyToAuthorName: replyObj.replyToAuthorName || null,
+                replyToAuthorAvatar: replyObj.replyToAuthorAvatar || null,
+                replyToAuthorEntityAccountId: replyObj.replyToAuthorEntityAccountId || null,
+                // Preserve các field authorName và authorAvatar để frontend dùng trực tiếp
+                authorName: replyObj.authorName || replyObj.userName || null,
+                authorAvatar: replyObj.authorAvatar || replyObj.avatar || null,
+                authorEntityAccountId: replyObj.authorEntityAccountId || replyObj.entityAccountId || null
+              };
+            }));
           }
 
-          // Minimal comment object (only essential fields for CommentSection)
-          commentsArray.push({
+          return {
             id: String(commentObj._id || commentObj.id || key),
             content: commentObj.content || commentObj.text || '',
             author: commentAuthor,
+            // ⚠️ QUAN TRỌNG: Chỉ trả về likesObject - Frontend tự check likesObject[myEntityAccountId]
+            likesObject: likesObject,
             stats: {
-              likeCount: commentLikeCount,
-              replyCount: repliesArray.length,
-              isLikedByMe: commentObj.likedByViewer || false
+              likeCount: likeCount,
+              replyCount: repliesArray.length
+              // ⚠️ ĐÃ XÓA: Không còn isLikedByMe - Frontend tự check
             },
             replies: repliesArray,
             createdAt: commentObj.createdAt || null
+          };
           });
-        }
         
-        // Add minimal comments array to DTO
+        // Add comments array to DTO
         postDTO.comments = commentsArray;
+        
+        // ⚠️ TỐI ƯU: Tính totalComments bao gồm cả replies (Flatten Count)
+        const totalCommentsCount = countTotalComments(commentsArray);
+        if (postDTO.stats) {
+          postDTO.stats.commentCount = totalCommentsCount;
+        }
       }
 
       return {
@@ -1682,82 +1744,54 @@ class PostService {
         };
       }
 
-      // Tìm like hiện tại (nếu có) - ưu tiên entityAccountId, fallback accountId
-      let existingLikeKey = null;
-      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim() : null;
-      
-      for (const [likeId, like] of reply.likes.entries()) {
-        const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
-        
-        if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
-          if (String(likeObj.entityAccountId).trim() === normalizedUserEntityAccountId) {
-            existingLikeKey = likeId;
-            break;
-          }
-        } else if (likeObj.accountId && String(likeObj.accountId) === String(userId)) {
-          existingLikeKey = likeId;
-          break;
-        }
+      // ⚠️ TỐI ƯU: Dùng entityAccountId làm key trực tiếp (O(1) lookup)
+      const normalizedKey = userEntityAccountId ? String(userEntityAccountId).trim() : null;
+      if (!normalizedKey) {
+        return { success: false, message: "EntityAccountId is required" };
       }
 
-      if (existingLikeKey) {
-        // Đã like rồi → unlike (toggle off)
-        reply.likes.delete(existingLikeKey);
+      // O(1) check: Key đã tồn tại chưa?
+      const alreadyLiked = reply.likes.has(normalizedKey);
+
+      if (alreadyLiked) {
+        // Unlike: Xóa key trực tiếp
+        reply.likes.delete(normalizedKey);
         post.markModified('comments');
         await post.save();
-
-        // Cập nhật trending score sau khi unlike reply
         await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+        return { success: true, data: post, message: "Reply unliked successfully" };
+      }
 
-        return {
-          success: true,
-          data: post,
-          message: "Reply unliked successfully"
-        };
-      } else {
-        // Chưa like → like (toggle on)
-        // Lấy entityId và entityType từ SQL Server nếu chưa có
-        let userEntityId = null;
-        let userEntityType = null;
-        
-        if (userEntityAccountId) {
+      // Like: Lấy entity info và set key = entityAccountId
+      const [userEntityId, userEntityType] = userEntityAccountId ? await (async () => {
           try {
             const pool = await getPool();
             const result = await pool.request()
               .input("EntityAccountId", sql.UniqueIdentifier, userEntityAccountId)
               .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
-            if (result.recordset.length > 0) {
-              userEntityType = result.recordset[0].EntityType;
-              userEntityId = String(result.recordset[0].EntityId);
-            }
+          return result.recordset[0] 
+            ? [String(result.recordset[0].EntityId), result.recordset[0].EntityType]
+            : [null, null];
           } catch (err) {
-            console.warn("[PostService] Could not get entity info for like reply:", err);
-          }
+          console.warn("[PostService] Could not get entity info:", err);
+          return [null, null];
         }
-        
-        const likeId = new mongoose.Types.ObjectId();
-        const like = {
-          accountId: userId, // Backward compatibility
-          // Giữ nguyên format gốc khi lưu vào DB (không lowercase)
-          entityAccountId: userEntityAccountId ? String(userEntityAccountId).trim() : null,
+      })() : [null, null];
+
+      // Set key = entityAccountId (O(1))
+      reply.likes.set(normalizedKey, {
+        accountId: userId,
+        entityAccountId: normalizedKey,
           entityId: userEntityId,
           entityType: userEntityType,
           TypeRole: typeRole || userEntityType || "Account"
-        };
+      });
 
-        reply.likes.set(likeId.toString(), like);
         post.markModified('comments');
         await post.save();
-
-        // Cập nhật trending score sau khi like reply
         await FeedAlgorithm.updatePostTrendingScore(postId.toString());
 
-        return {
-          success: true,
-          data: post,
-          message: "Reply liked successfully"
-        };
-      }
+      return { success: true, data: post, message: "Reply liked successfully" };
     } catch (error) {
       return {
         success: false,
@@ -1794,25 +1828,13 @@ class PostService {
         };
       }
 
-      // Tìm và xóa like - ưu tiên entityAccountId, fallback accountId
-      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim() : null;
-      
-      for (const [likeId, like] of reply.likes.entries()) {
-        const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
-        
-        if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
-          if (String(likeObj.entityAccountId).trim() === normalizedUserEntityAccountId) {
-            reply.likes.delete(likeId);
-            break;
-          }
-        } else if (likeObj.accountId && String(likeObj.accountId) === String(userId)) {
-          reply.likes.delete(likeId);
-          break;
-        }
-      }
-
+      // ⚠️ TỐI ƯU: Xóa bằng key trực tiếp (O(1))
+      const normalizedKey = userEntityAccountId ? String(userEntityAccountId).trim() : null;
+      if (normalizedKey && reply.likes.has(normalizedKey)) {
+        reply.likes.delete(normalizedKey);
       post.markModified('comments');
       await post.save();
+      }
 
       return {
         success: true,
@@ -2138,82 +2160,54 @@ class PostService {
         };
       }
 
-      // Tìm like hiện tại (nếu có) - ưu tiên entityAccountId, fallback accountId
-      let existingLikeKey = null;
-      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim() : null;
-      
-      for (const [likeId, like] of comment.likes.entries()) {
-        const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
-        
-        if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
-          if (String(likeObj.entityAccountId).trim() === normalizedUserEntityAccountId) {
-            existingLikeKey = likeId;
-            break;
-          }
-        } else if (likeObj.accountId && String(likeObj.accountId) === String(userId)) {
-          existingLikeKey = likeId;
-          break;
-        }
+      // ⚠️ TỐI ƯU: Dùng entityAccountId làm key trực tiếp (O(1) lookup)
+      const normalizedKey = userEntityAccountId ? String(userEntityAccountId).trim() : null;
+      if (!normalizedKey) {
+        return { success: false, message: "EntityAccountId is required" };
       }
 
-      if (existingLikeKey) {
-        // Đã like rồi → unlike (toggle off)
-        comment.likes.delete(existingLikeKey);
+      // O(1) check: Key đã tồn tại chưa?
+      const alreadyLiked = comment.likes.has(normalizedKey);
+
+      if (alreadyLiked) {
+        // Unlike: Xóa key trực tiếp
+        comment.likes.delete(normalizedKey);
         post.markModified('comments');
         await post.save();
-
-        // Cập nhật trending score sau khi unlike comment
         await FeedAlgorithm.updatePostTrendingScore(postId.toString());
+        return { success: true, data: post, message: "Comment unliked successfully" };
+      }
 
-        return {
-          success: true,
-          data: post,
-          message: "Comment unliked successfully"
-        };
-      } else {
-        // Chưa like → like (toggle on)
-        // Lấy entityId và entityType từ SQL Server nếu chưa có
-        let userEntityId = null;
-        let userEntityType = null;
-        
-        if (userEntityAccountId) {
+      // Like: Lấy entity info và set key = entityAccountId
+      const [userEntityId, userEntityType] = userEntityAccountId ? await (async () => {
           try {
             const pool = await getPool();
             const result = await pool.request()
               .input("EntityAccountId", sql.UniqueIdentifier, userEntityAccountId)
               .query(`SELECT TOP 1 EntityType, EntityId FROM EntityAccounts WHERE EntityAccountId = @EntityAccountId`);
-            if (result.recordset.length > 0) {
-              userEntityType = result.recordset[0].EntityType;
-              userEntityId = String(result.recordset[0].EntityId);
-            }
+          return result.recordset[0] 
+            ? [String(result.recordset[0].EntityId), result.recordset[0].EntityType]
+            : [null, null];
           } catch (err) {
-            console.warn("[PostService] Could not get entity info for like comment:", err);
+          console.warn("[PostService] Could not get entity info:", err);
+          return [null, null];
           }
-        }
-        
-        const likeId = new mongoose.Types.ObjectId();
-        const like = {
-          accountId: userId, // Backward compatibility
-          // Giữ nguyên format gốc khi lưu vào DB (không lowercase)
-          entityAccountId: userEntityAccountId ? String(userEntityAccountId).trim() : null,
+      })() : [null, null];
+
+      // Set key = entityAccountId (O(1))
+      comment.likes.set(normalizedKey, {
+        accountId: userId,
+        entityAccountId: normalizedKey,
           entityId: userEntityId,
           entityType: userEntityType,
           TypeRole: typeRole || userEntityType || "Account"
-        };
+      });
 
-        comment.likes.set(likeId.toString(), like);
         post.markModified('comments');
         await post.save();
-
-        // Cập nhật trending score sau khi like comment
         await FeedAlgorithm.updatePostTrendingScore(postId.toString());
 
-        return {
-          success: true,
-          data: post,
-          message: "Comment liked successfully"
-        };
-      }
+      return { success: true, data: post, message: "Comment liked successfully" };
     } catch (error) {
       return {
         success: false,
@@ -2242,25 +2236,13 @@ class PostService {
         };
       }
 
-      // Tìm và xóa like - ưu tiên entityAccountId, fallback accountId
-      const normalizedUserEntityAccountId = userEntityAccountId ? String(userEntityAccountId).trim() : null;
-      
-      for (const [likeId, like] of comment.likes.entries()) {
-        const likeObj = like.toObject ? like.toObject({ flattenMaps: true }) : like;
-        
-        if (normalizedUserEntityAccountId && likeObj.entityAccountId) {
-          if (String(likeObj.entityAccountId).trim() === normalizedUserEntityAccountId) {
-            comment.likes.delete(likeId);
-            break;
-          }
-        } else if (likeObj.accountId && String(likeObj.accountId) === String(userId)) {
-          comment.likes.delete(likeId);
-          break;
-        }
-      }
-
+      // ⚠️ TỐI ƯU: Xóa bằng key trực tiếp (O(1))
+      const normalizedKey = userEntityAccountId ? String(userEntityAccountId).trim() : null;
+      if (normalizedKey && comment.likes.has(normalizedKey)) {
+        comment.likes.delete(normalizedKey);
       post.markModified('comments');
       await post.save();
+      }
 
       // Cập nhật trending score sau khi unlike comment
       await FeedAlgorithm.updatePostTrendingScore(postId.toString());
@@ -3312,12 +3294,38 @@ class PostService {
   async enrichCommentsWithAuthorInfo(posts) {
     if (!Array.isArray(posts) || posts.length === 0) return;
 
+    // Helper function để normalize likes từ format { ObjectId: { entityAccountId: "..." } } 
+    // sang format { entityAccountId: { ... } } (giống Medias)
+    const normalizeLikesToEntityAccountIdMap = (likes) => {
+      if (!likes || typeof likes !== 'object') return {};
+      if (likes instanceof Map) {
+        const normalized = {};
+        for (const [key, value] of likes.entries()) {
+          const entityAccountId = value?.entityAccountId || value?.EntityAccountId;
+          if (entityAccountId) {
+            normalized[String(entityAccountId).trim()] = value;
+          }
+        }
+        return normalized;
+      }
+      // Object với key ngẫu nhiên (ObjectId) hoặc đã là entityAccountId
+      return Object.fromEntries(
+        Object.values(likes).map(like => {
+          if (!like || typeof like !== 'object') return null;
+          const entityAccountId = like?.entityAccountId || like?.EntityAccountId;
+          return entityAccountId ? [String(entityAccountId).trim(), like] : null;
+        }).filter(Boolean)
+      );
+    };
+
     try {
       const pool = await getPool();
       
       // Collect all accountIds and entityAccountIds from comments and replies (giữ nguyên format gốc)
       const accountIds = new Set();
       const entityAccountIds = new Set(); // Giữ format gốc, không normalize
+      // Map để lưu replyToId -> reply object để sau này enrich thông tin replyTo
+      const replyToMap = new Map(); // Map<replyId, replyObject>
       
       for (const post of posts) {
         if (!post.comments || typeof post.comments !== 'object') continue;
@@ -3343,15 +3351,41 @@ class PostService {
               ? Array.from(comment.replies.entries())
               : Object.entries(comment.replies);
             
-            for (const [, reply] of repliesEntries) {
+            for (const [replyKey, reply] of repliesEntries) {
               if (!reply || typeof reply !== 'object') continue;
               
+              // Collect entityAccountId của reply author
               if (reply.entityAccountId) {
                 entityAccountIds.add(String(reply.entityAccountId).trim());
               } else if (reply.accountId) {
                 accountIds.add(String(reply.accountId).trim());
               }
+              
+              // Lưu reply vào map để sau này tìm replyTo
+              const replyId = String(reply._id || reply.id || replyKey);
+              replyToMap.set(replyId, reply);
             }
+          }
+        }
+      }
+      
+      // Collect entityAccountIds của các replyTo (người được reply)
+      // Duyệt lại tất cả replies để tìm replyToId và collect entityAccountId của replyTo
+      for (const [, reply] of replyToMap.entries()) {
+        if (reply.replyToId) {
+          const replyToId = String(reply.replyToId);
+          const replyTo = replyToMap.get(replyToId);
+          
+          if (replyTo) {
+            // Nếu replyTo là một reply khác, collect entityAccountId của replyTo
+            if (replyTo.entityAccountId) {
+              entityAccountIds.add(String(replyTo.entityAccountId).trim());
+            } else if (replyTo.accountId) {
+              accountIds.add(String(replyTo.accountId).trim());
+            }
+          } else {
+            // Nếu replyToId không tìm thấy trong replies, có thể là commentId
+            // Không cần collect vì comment đã được collect ở trên
           }
         }
       }
@@ -3416,18 +3450,39 @@ class PostService {
       const entityMap = new Map();
       if (entityQuery && entityQuery.recordset) {
         entityQuery.recordset.forEach(row => {
-          // Normalize entityAccountId for consistent matching
-          const entityAccountIdStr = String(row.EntityAccountId).trim();
-          entityMap.set(entityAccountIdStr, {
-            userName: row.UserName || 'Người dùng',
+          // Normalize entityAccountId for consistent matching (trim + uppercase để match chính xác)
+          const entityAccountIdStr = String(row.EntityAccountId).trim().toUpperCase();
+          const originalKey = String(row.EntityAccountId).trim();
+          
+          // Store với cả 2 keys để đảm bảo match được
+          const entityInfo = {
+            userName: row.UserName || null, // Không set 'Người dùng' ở đây, để frontend xử lý
             avatar: row.Avatar || null,
             entityType: row.EntityType,
             entityId: row.EntityId
-          });
+          };
+          
+          entityMap.set(entityAccountIdStr, entityInfo);
+          // Nếu format khác, set thêm key gốc
+          if (originalKey !== entityAccountIdStr) {
+            entityMap.set(originalKey, entityInfo);
+          }
         });
       }
       
-      console.log(`[PostService] EnrichComments: Queried ${entityAccountIdsArray.length} entityAccountIds, found ${entityMap.size} matches`);
+      // Log kết quả query với thống kê tên và avatar
+      const entitiesWithName = Array.from(entityMap.values()).filter(e => e.userName).length;
+      const entitiesWithAvatar = Array.from(entityMap.values()).filter(e => e.avatar).length;
+      console.log(`[PostService] EnrichComments: Queried ${entityAccountIdsArray.length} entityAccountIds, found ${entityMap.size} matches (${entitiesWithName} with name, ${entitiesWithAvatar} with avatar)`);
+      
+      if (entityMap.size < entityAccountIdsArray.length) {
+        const missingIds = entityAccountIdsArray.filter(id => {
+          const normalized = String(id).trim().toUpperCase();
+          const original = String(id).trim();
+          return !entityMap.has(normalized) && !entityMap.has(original);
+        });
+        console.warn(`[PostService] EnrichComments: Missing ${missingIds.length} entityAccountIds:`, missingIds);
+      }
 
       // Enrich comments and replies with author info
       for (const post of posts) {
@@ -3451,33 +3506,46 @@ class PostService {
           }
           
           if (commentEntityAccountId) {
-            // Normalize entityAccountId for consistent matching
-            const entityAccountIdStr = String(commentEntityAccountId).trim();
-            const entityInfo = entityMap.get(entityAccountIdStr);
+            // Normalize entityAccountId for consistent matching (thử cả uppercase và original)
+            const normalizedKey = String(commentEntityAccountId).trim().toUpperCase();
+            const originalKey = String(commentEntityAccountId).trim();
+            
+            // Thử match với cả 2 format
+            const entityInfo = entityMap.get(normalizedKey) || entityMap.get(originalKey);
             
             if (entityInfo) {
-              comment.authorName = entityInfo.userName;
-              comment.authorAvatar = entityInfo.avatar;
-              comment.authorEntityAccountId = String(commentEntityAccountId).trim(); // Keep original format for reference
+              // ✅ Tìm thấy entityInfo → set cả tên và avatar
+              comment.authorName = entityInfo.userName || null; // Set null nếu không có userName
+              comment.authorAvatar = entityInfo.avatar || null; // Set null nếu không có avatar
+              comment.authorEntityAccountId = originalKey; // Keep original format for reference
               comment.authorEntityType = entityInfo.entityType;
               comment.authorEntityId = entityInfo.entityId;
             } else {
-              // Fallback: set default if not found
+              // ❌ Không tìm thấy entityInfo → để null để frontend xử lý
               if (!comment.authorName) {
-                comment.authorName = 'Người dùng';
+                comment.authorName = null; // Không set 'Người dùng', để frontend fallback
               }
               if (comment.authorAvatar === undefined) {
                 comment.authorAvatar = null;
               }
+              // Log để debug
+              console.warn(`[PostService] Comment ${commentKey}: entityAccountId ${commentEntityAccountId} not found in entityMap`);
             }
           } else {
-            // Fallback: set default if no entityAccountId
+            // Fallback: set null nếu không có entityAccountId
             if (!comment.authorName) {
-              comment.authorName = 'Người dùng';
+              comment.authorName = null; // Không set 'Người dùng', để frontend fallback
             }
             if (comment.authorAvatar === undefined) {
               comment.authorAvatar = null;
             }
+          }
+          
+          // ⚠️ TỐI ƯU: Chuẩn hóa likes structure - key = entityAccountId (giống Medias)
+          if (comment.likes && typeof comment.likes === 'object') {
+            comment.likesObject = normalizeLikesToEntityAccountIdMap(comment.likes);
+          } else {
+            comment.likesObject = {};
           }
           
           // Process replies
@@ -3500,33 +3568,87 @@ class PostService {
               }
               
               if (replyEntityAccountId) {
-                // Normalize entityAccountId for consistent matching
-                const entityAccountIdStr = String(replyEntityAccountId).trim();
-                const entityInfo = entityMap.get(entityAccountIdStr);
+                // Normalize entityAccountId for consistent matching (thử cả uppercase và original)
+                const normalizedKey = String(replyEntityAccountId).trim().toUpperCase();
+                const originalKey = String(replyEntityAccountId).trim();
+                
+                // Thử match với cả 2 format
+                const entityInfo = entityMap.get(normalizedKey) || entityMap.get(originalKey);
                 
                 if (entityInfo) {
-                  reply.authorName = entityInfo.userName;
-                  reply.authorAvatar = entityInfo.avatar;
-                  reply.authorEntityAccountId = String(replyEntityAccountId).trim(); // Keep original format for reference
+                  // ✅ Tìm thấy entityInfo → set cả tên và avatar
+                  reply.authorName = entityInfo.userName || null; // Set null nếu không có userName
+                  reply.authorAvatar = entityInfo.avatar || null; // Set null nếu không có avatar
+                  reply.authorEntityAccountId = originalKey; // Keep original format for reference
                   reply.authorEntityType = entityInfo.entityType;
                   reply.authorEntityId = entityInfo.entityId;
                 } else {
-                  // Fallback: set default if not found
+                  // ❌ Không tìm thấy entityInfo → để null để frontend xử lý
                   if (!reply.authorName) {
-                    reply.authorName = 'Người dùng';
+                    reply.authorName = null; // Không set 'Người dùng', để frontend fallback
                   }
                   if (reply.authorAvatar === undefined) {
                     reply.authorAvatar = null;
                   }
+                  // Log để debug
+                  console.warn(`[PostService] Reply ${replyKey}: entityAccountId ${replyEntityAccountId} not found in entityMap`);
                 }
               } else {
-                // Fallback: set default if no entityAccountId
+                // Fallback: set null nếu không có entityAccountId
                 if (!reply.authorName) {
-                  reply.authorName = 'Người dùng';
+                  reply.authorName = null; // Không set 'Người dùng', để frontend fallback
                 }
                 if (reply.authorAvatar === undefined) {
                   reply.authorAvatar = null;
                 }
+              }
+              
+              // ⚠️ TỐI ƯU: Chuẩn hóa likes structure - key = entityAccountId (giống Medias)
+              if (reply.likes && typeof reply.likes === 'object') {
+                reply.likesObject = normalizeLikesToEntityAccountIdMap(reply.likes);
+              } else {
+                reply.likesObject = {};
+              }
+              
+              // Enrich thông tin replyTo (người được reply) nếu có replyToId
+              if (reply.replyToId) {
+                const replyToId = String(reply.replyToId);
+                // Tìm replyTo trong cùng comment (từ replyToMap)
+                const replyTo = replyToMap.get(replyToId);
+                
+                if (replyTo) {
+                  // Nếu replyTo là một reply khác, lấy thông tin author của replyTo
+                  if (replyTo.authorName) {
+                    // ReplyTo đã được enrich ở trên
+                    reply.replyToAuthorName = replyTo.authorName;
+                    reply.replyToAuthorAvatar = replyTo.authorAvatar || null;
+                    reply.replyToAuthorEntityAccountId = replyTo.authorEntityAccountId || replyTo.entityAccountId || null;
+                  } else {
+                    // Nếu replyTo chưa được enrich, thử tìm trong entityMap
+                    let replyToEntityAccountId = replyTo.entityAccountId;
+                    if (!replyToEntityAccountId && replyTo.accountId) {
+                      try {
+                        replyToEntityAccountId = await getEntityAccountIdByAccountId(replyTo.accountId);
+                      } catch (err) {
+                        // Ignore error
+                      }
+                    }
+                    
+                    if (replyToEntityAccountId) {
+                      const normalizedKey = String(replyToEntityAccountId).trim().toUpperCase();
+                      const originalKey = String(replyToEntityAccountId).trim();
+                      const replyToEntityInfo = entityMap.get(normalizedKey) || entityMap.get(originalKey);
+                      
+                      if (replyToEntityInfo) {
+                        reply.replyToAuthorName = replyToEntityInfo.userName || null;
+                        reply.replyToAuthorAvatar = replyToEntityInfo.avatar || null;
+                        reply.replyToAuthorEntityAccountId = originalKey;
+                      }
+                    }
+                  }
+                }
+                // Nếu replyToId không tìm thấy trong replies, có thể là commentId
+                // Không cần enrich vì comment đã có authorName
               }
             }
           }
@@ -3589,7 +3711,14 @@ class PostService {
         if (!comment || typeof comment !== "object") return;
 
         comment.likesCount = countCollectionItems(comment.likes);
-        comment.likedByViewer = isCollectionLikedByViewer(
+        // ⚠️ TỐI ƯU: Ưu tiên check likesObject (key = entityAccountId) nếu có, sau đó mới check likes (format cũ)
+        comment.likedByViewer = comment.likesObject && typeof comment.likesObject === 'object'
+          ? isCollectionLikedByViewer(
+              comment.likesObject,
+              normalizedAccountId,
+              normalizedEntityAccountId
+            )
+          : isCollectionLikedByViewer(
           comment.likes,
           normalizedAccountId,
           normalizedEntityAccountId
@@ -3608,7 +3737,14 @@ class PostService {
           repliesEntries.forEach(([replyKey, reply]) => {
             if (!reply || typeof reply !== "object") return;
             reply.likesCount = countCollectionItems(reply.likes);
-            reply.likedByViewer = isCollectionLikedByViewer(
+            // ⚠️ TỐI ƯU: Ưu tiên check likesObject (key = entityAccountId) nếu có, sau đó mới check likes (format cũ)
+            reply.likedByViewer = reply.likesObject && typeof reply.likesObject === 'object'
+              ? isCollectionLikedByViewer(
+                  reply.likesObject,
+                  normalizedAccountId,
+                  normalizedEntityAccountId
+                )
+              : isCollectionLikedByViewer(
               reply.likes,
               normalizedAccountId,
               normalizedEntityAccountId
