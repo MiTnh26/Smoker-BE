@@ -4,6 +4,55 @@ const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel"
 const { getPool, sql } = require("../db/sqlserver");
 const notificationService = require("../services/notificationService");
 
+/**
+ * Tính tổng số comments bao gồm cả replies (Flatten Count)
+ * Công thức: Total = Σ (1 + comment.replies.length)
+ * 
+ * @param {Map|Object|Array} comments - Comments có thể là Map, Object hoặc Array
+ * @returns {number} Tổng số comments (bao gồm replies)
+ */
+const countTotalComments = (comments) => {
+  if (!comments) return 0;
+  
+  let total = 0;
+  let commentsArray = [];
+  
+  // Convert comments sang Array để xử lý thống nhất
+  if (Array.isArray(comments)) {
+    commentsArray = comments;
+  } else if (comments instanceof Map) {
+    commentsArray = Array.from(comments.values());
+  } else if (typeof comments === 'object') {
+    commentsArray = Object.values(comments);
+  } else {
+    return 0;
+  }
+  
+  // Duyệt qua mỗi comment: 1 comment + số replies của nó
+  commentsArray.forEach(comment => {
+    if (!comment || typeof comment !== 'object') return;
+    
+    // Đếm comment chính (+1)
+    total += 1;
+    
+    // Đếm replies của comment này
+    const replies = comment.replies;
+    if (replies) {
+      if (Array.isArray(replies)) {
+        total += replies.length;
+      } else if (replies instanceof Map) {
+        total += replies.size;
+      } else if (typeof replies === 'object') {
+        total += Object.keys(replies).length;
+      } else if (typeof replies === 'number') {
+        total += replies;
+      }
+    }
+  });
+  
+  return total;
+};
+
 // Helper function to enrich comments with author info from SQL Server
 async function enrichCommentsWithAuthorInfo(comments) {
   if (!comments || typeof comments !== 'object') return;
@@ -215,6 +264,15 @@ class MediaController {
         await enrichCommentsWithAuthorInfo(mediaData.comments);
       }
 
+      // ⚠️ TỐI ƯU: Tính tổng comments bao gồm cả replies (Flatten Count)
+      const totalCommentsCount = countTotalComments(mediaData.comments);
+      
+      // Thêm stats vào response nếu chưa có
+      if (!mediaData.stats) {
+        mediaData.stats = {};
+      }
+      mediaData.stats.commentCount = totalCommentsCount;
+
       return res.json({
         success: true,
         data: mediaData
@@ -324,6 +382,15 @@ class MediaController {
         // Enrich comments with author info from SQL Server
         await enrichCommentsWithAuthorInfo(mediaData.comments);
       }
+
+      // ⚠️ TỐI ƯU: Tính tổng comments bao gồm cả replies (Flatten Count)
+      const totalCommentsCount = countTotalComments(mediaData.comments);
+      
+      // Thêm stats vào response nếu chưa có
+      if (!mediaData.stats) {
+        mediaData.stats = {};
+      }
+      mediaData.stats.commentCount = totalCommentsCount;
 
       return res.json({
         success: true,
