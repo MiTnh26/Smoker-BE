@@ -28,18 +28,18 @@ loaderDelay=250
 
 [database]
 type=mysqli
-host=mysql-smoker.mysql.database.azure.com
+host=smoker1.mysql.database.azure.com
 socket=
 port=3306
-username=smoker
-password=Minhtran26
-name=revive_adserver
+username=minhdbd4@smoker1
+password=Minhtran26@
+name=smoker
 persistent=
 protocol=tcp
 compress=
 ssl=1
-capath="/var/www/html/revive/certs"
-ca="/var/www/html/revive/certs/azure-mysql-ssl-cert.pem"
+capath="/var/www/html/revive/certs/"
+ca="azure-mysql-ssl-cert.pem"
 
 [databaseCharset]
 checkComplete=1
@@ -256,13 +256,13 @@ adminDomain=
 
 [debug]
 logfile=
-production=1
+production=0
 sendErrorEmails=
 emailSubject="Error from Revive Adserver"
 email="email@example.com"
 emailAdminThreshold=3
 errorOverride=1
-showBacktrace=
+showBacktrace=1
 disableSendEmails=
 
 [var]
