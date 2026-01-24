@@ -3,6 +3,55 @@ const mongoose = require("mongoose");
 const { getPool, sql } = require("../db/sqlserver");
 const { getEntityAccountIdByAccountId } = require("../models/entityAccountModel");
 
+/**
+ * Tính tổng số comments bao gồm cả replies (Flatten Count)
+ * Công thức: Total = Σ (1 + comment.replies.length)
+ * 
+ * @param {Map|Object|Array} comments - Comments có thể là Map, Object hoặc Array
+ * @returns {number} Tổng số comments (bao gồm replies)
+ */
+const countTotalComments = (comments) => {
+  if (!comments) return 0;
+  
+  let total = 0;
+  let commentsArray = [];
+  
+  // Convert comments sang Array để xử lý thống nhất
+  if (Array.isArray(comments)) {
+    commentsArray = comments;
+  } else if (comments instanceof Map) {
+    commentsArray = Array.from(comments.values());
+  } else if (typeof comments === 'object') {
+    commentsArray = Object.values(comments);
+  } else {
+    return 0;
+  }
+  
+  // Duyệt qua mỗi comment: 1 comment + số replies của nó
+  commentsArray.forEach(comment => {
+    if (!comment || typeof comment !== 'object') return;
+    
+    // Đếm comment chính (+1)
+    total += 1;
+    
+    // Đếm replies của comment này
+    const replies = comment.replies;
+    if (replies) {
+      if (Array.isArray(replies)) {
+        total += replies.length;
+      } else if (replies instanceof Map) {
+        total += replies.size;
+      } else if (typeof replies === 'object') {
+        total += Object.keys(replies).length;
+      } else if (typeof replies === 'number') {
+        total += replies;
+      }
+    }
+  });
+  
+  return total;
+};
+
 class MediaDetailService {
   async fetchAuthorInfo(entityAccountId) {
     if (!entityAccountId) return null;
@@ -227,6 +276,15 @@ class MediaDetailService {
 
       // Enrich media author info
       await this.enrichAuthor(mediaData);
+      
+      // ⚠️ TỐI ƯU: Tính tổng comments bao gồm cả replies (Flatten Count)
+      const totalCommentsCount = countTotalComments(mediaData.comments);
+      
+      // Thêm stats vào response nếu chưa có
+      if (!mediaData.stats) {
+        mediaData.stats = {};
+      }
+      mediaData.stats.commentCount = totalCommentsCount;
 
       return {
         success: true,
