@@ -22,31 +22,9 @@ exports.createBankInfo = async (req, res) => {
   try {
     const { bankName, accountNumber, accountHolderName, entityAccountId, accountId, barPageId } = req.body;
 
-    // Validation
-    if (!bankName || !accountNumber || !accountHolderName) {
-      return res.status(400).json(error("Thiếu thông tin bắt buộc: BankName, AccountNumber và AccountHolderName"));
-    }
-
-    // Nếu có entityAccountId thì dùng trực tiếp, nếu không thì convert từ accountId/barPageId
-    let finalEntityAccountId = entityAccountId;
-    
-    if (!finalEntityAccountId) {
-      // Backward compatibility: convert AccountId/BarPageId → EntityAccountId
-      if (!accountId && !barPageId) {
-        return res.status(400).json(error("Phải có entityAccountId hoặc (accountId hoặc barPageId)"));
-      }
-
-      if (accountId && barPageId) {
-        return res.status(400).json(error("Chỉ được có accountId hoặc barPageId, không được có cả hai"));
-      }
-
-      // Convert AccountId hoặc BarPageId → EntityAccountId
-      const idToConvert = accountId || barPageId;
-      finalEntityAccountId = await normalizeToEntityAccountId(idToConvert);
-      
-      if (!finalEntityAccountId) {
-        return res.status(400).json(error("Không tìm thấy EntityAccount tương ứng"));
-      }
+    // Validation cơ bản
+    if (!bankName || !accountNumber) {
+      return res.status(400).json(error("Thiếu thông tin bắt buộc: BankName và AccountNumber"));
     }
 
     // Validate accountNumber: chỉ chứa số
@@ -54,36 +32,126 @@ exports.createBankInfo = async (req, res) => {
       return res.status(400).json(error("Số tài khoản chỉ được chứa số"));
     }
 
-    // Validate UUID format cho entityAccountId
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const entityAccountIdStr = finalEntityAccountId.toString().trim();
-    if (!uuidRegex.test(entityAccountIdStr)) {
-      return res.status(400).json(error("EntityAccountId không hợp lệ"));
-    }
+    // Xác định schema và xử lý tương ứng
+    const { getPool, sql } = require("../db/sqlserver");
+    const pool = await getPool();
+    
+    // Kiểm tra schema của bảng BankInfo
+    const schemaCheck = await pool.request()
+      .query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'BankInfo'
+      `);
+    
+    const columns = schemaCheck.recordset.map(r => r.COLUMN_NAME);
+    const hasEntityAccountId = columns.includes('EntityAccountId');
+    const hasAccountHolderName = columns.includes('AccountHolderName');
+    const hasAccountId = columns.includes('AccountId');
+    const hasBarPageId = columns.includes('BarPageId');
+    
+    console.log("🔍 BankInfo schema check:", { hasEntityAccountId, hasAccountHolderName, hasAccountId, hasBarPageId });
+    
+    let finalEntityAccountId = entityAccountId;
+    let finalAccountId = accountId;
+    let finalBarPageId = barPageId;
+    
+    if (hasEntityAccountId && hasAccountHolderName) {
+      // Schema mới: yêu cầu EntityAccountId và AccountHolderName
+      if (!accountHolderName) {
+        return res.status(400).json(error("Thiếu thông tin bắt buộc: AccountHolderName"));
+      }
+      
+      // Nếu có entityAccountId thì dùng trực tiếp, nếu không thì convert từ accountId/barPageId
+      if (!finalEntityAccountId) {
+        // Backward compatibility: convert AccountId/BarPageId → EntityAccountId
+        if (!accountId && !barPageId) {
+          return res.status(400).json(error("Phải có entityAccountId hoặc (accountId hoặc barPageId)"));
+        }
 
-    // Check existing BankInfo cho EntityAccountId (UNIQUE constraint)
-    const existing = await bankInfoModel.getBankInfoByEntityAccountId(finalEntityAccountId);
-    if (existing) {
-      return res.status(400).json({
-        status: "error",
-        message: "Tài khoản này đã có thông tin ngân hàng. Vui lòng sử dụng chức năng cập nhật.",
-        error: "Tài khoản này đã có thông tin ngân hàng",
-        existingBankInfo: existing
+        if (accountId && barPageId) {
+          return res.status(400).json(error("Chỉ được có accountId hoặc barPageId, không được có cả hai"));
+        }
+
+        // Convert AccountId hoặc BarPageId → EntityAccountId
+        const idToConvert = accountId || barPageId;
+        finalEntityAccountId = await normalizeToEntityAccountId(idToConvert);
+        
+        if (!finalEntityAccountId) {
+          return res.status(400).json(error("Không tìm thấy EntityAccount tương ứng"));
+        }
+      }
+
+      // Validate UUID format cho entityAccountId
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const entityAccountIdStr = finalEntityAccountId.toString().trim();
+      if (!uuidRegex.test(entityAccountIdStr)) {
+        return res.status(400).json(error("EntityAccountId không hợp lệ"));
+      }
+
+      // Check existing BankInfo cho EntityAccountId (UNIQUE constraint)
+      const existing = await bankInfoModel.getBankInfoByEntityAccountId(finalEntityAccountId);
+      if (existing) {
+        return res.status(400).json({
+          status: "error",
+          message: "Tài khoản này đã có thông tin ngân hàng. Vui lòng sử dụng chức năng cập nhật.",
+          error: "Tài khoản này đã có thông tin ngân hàng",
+          existingBankInfo: existing
+        });
+      }
+      
+      console.log("💾 Creating bank info (new schema) with:", {
+        entityAccountId: finalEntityAccountId,
+        bankName,
+        accountNumber: accountNumber.substring(0, 4) + "***"
       });
+      
+      var bankInfo = await bankInfoModel.createBankInfo({
+        bankName,
+        accountNumber,
+        accountHolderName,
+        entityAccountId: finalEntityAccountId,
+      });
+    } else if (hasAccountId || hasBarPageId) {
+      // Schema cũ: yêu cầu AccountId hoặc BarPageId (không có AccountHolderName)
+      if (!accountId && !barPageId) {
+        return res.status(400).json(error("Phải có accountId hoặc barPageId"));
+      }
+
+      if (accountId && barPageId) {
+        return res.status(400).json(error("Chỉ được có accountId hoặc barPageId, không được có cả hai"));
+      }
+      
+      // Check existing BankInfo cho AccountId hoặc BarPageId
+      const existing = accountId 
+        ? await bankInfoModel.getBankInfoByAccountId(accountId)
+        : null;
+      
+      if (existing) {
+        return res.status(400).json({
+          status: "error",
+          message: "Tài khoản này đã có thông tin ngân hàng. Vui lòng sử dụng chức năng cập nhật.",
+          error: "Tài khoản này đã có thông tin ngân hàng",
+          existingBankInfo: existing
+        });
+      }
+      
+      console.log("💾 Creating bank info (old schema) with:", {
+        accountId: finalAccountId,
+        barPageId: finalBarPageId,
+        bankName,
+        accountNumber: accountNumber.substring(0, 4) + "***"
+      });
+      
+      var bankInfo = await bankInfoModel.createBankInfo({
+        bankName,
+        accountNumber,
+        accountId: finalAccountId,
+        barPageId: finalBarPageId,
+      });
+    } else {
+      return res.status(500).json(error("Không xác định được schema của bảng BankInfo"));
     }
-    
-    console.log("💾 Creating bank info with:", {
-      entityAccountId: finalEntityAccountId,
-      bankName,
-      accountNumber: accountNumber.substring(0, 4) + "***" // Chỉ log một phần để bảo mật
-    });
-    
-    const bankInfo = await bankInfoModel.createBankInfo({
-      bankName,
-      accountNumber,
-      accountHolderName,
-      entityAccountId: finalEntityAccountId,
-    });
     
     console.log("✅ Bank info created successfully:", {
       BankInfoId: bankInfo?.BankInfoId,

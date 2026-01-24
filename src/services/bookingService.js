@@ -173,6 +173,92 @@ class BookingService {
         { scheduleStatus: "Rejected" }
       );
 
+      // Tạo refund request nếu booking đã thanh toán (tương tự như bar reject booking)
+      try {
+        const refundRequestModel = require("../models/refundRequestModel");
+        const { getPool, sql } = require("../db/sqlserver");
+        const pool = await getPool();
+        const entityAccountModel = require("../models/entityAccountModel");
+        const notificationService = require("../services/notificationService");
+
+        // Kiểm tra đã có refund request chưa
+        const existingRefundRequest = await refundRequestModel.findByBookedScheduleId(bookedScheduleId);
+        if (!existingRefundRequest) {
+          // Hàm này chỉ được gọi từ DJ/Dancer reject booking
+          // Mặc định hoàn 50.000 VNĐ (không cần kiểm tra DB)
+          let refundAmount = 50000; // DJ/Dancer: cọc cố định 50.000 VNĐ
+          
+          if (schedule.VoucherDistributionId) {
+            const voucherDistributionModel = require("../models/voucherDistributionModel");
+            const distribution = await voucherDistributionModel.findByBookedScheduleId(bookedScheduleId);
+            if (distribution) {
+              refundAmount += parseFloat(distribution.SalePrice || 0);
+            }
+          }
+
+          // Convert EntityAccountId (schedule.BookerId) -> AccountId để lưu vào RefundRequests.UserId
+          const bookerEntityInfo = await entityAccountModel.verifyEntityAccountId(schedule.BookerId);
+          const bookerAccountId = bookerEntityInfo?.AccountId;
+          
+          if (bookerAccountId) {
+            await refundRequestModel.createRefundRequest({
+              bookedScheduleId: bookedScheduleId,
+              userId: bookerAccountId,
+              amount: refundAmount,
+              reason: "DJ/Dancer từ chối yêu cầu booking"
+            });
+
+            // Gửi notification cho người dùng và kế toán
+            try {
+              const userEntityAccountId = schedule.BookerId;
+              const receiverEntityAccountId = schedule.ReceiverId;
+              
+              // Thông báo người dùng
+              if (userEntityAccountId && receiverEntityAccountId) {
+                await notificationService.createNotification({
+                  type: "Info",
+                  sender: receiverEntityAccountId,
+                  receiver: userEntityAccountId,
+                  content: `Yêu cầu booking của bạn đã bị từ chối. Yêu cầu hoàn tiền đã được gửi.`,
+                  link: `/booking/my`
+                });
+              }
+              
+              // Thông báo kế toán
+              const accountantResult = await pool.request().query(`
+                SELECT TOP 1 ManagerId FROM Managers WHERE Role = 'Accountant' ORDER BY CreatedAt ASC
+              `);
+              if (accountantResult.recordset.length > 0) {
+                const accountantManagerId = accountantResult.recordset[0].ManagerId;
+                // Manager không có EntityAccountId, nên có thể bỏ qua sender
+                // Hoặc có thể tìm AccountId của Manager nếu có mapping
+                const accountantAccountResult = await pool.request().query(`
+                  SELECT TOP 1 AccountId FROM Accounts WHERE Role = 'Accountant' ORDER BY CreatedAt ASC
+                `);
+                if (accountantAccountResult.recordset.length > 0) {
+                  const accountantAccountId = accountantAccountResult.recordset[0].AccountId;
+                  const accountantEntityAccountId = await entityAccountModel.getEntityAccountIdByAccountId(accountantAccountId, "Account");
+                  if (accountantEntityAccountId && receiverEntityAccountId) {
+                    await notificationService.createNotification({
+                      type: "Info",
+                      sender: receiverEntityAccountId,
+                      receiver: accountantEntityAccountId,
+                      content: `Yêu cầu hoàn tiền ${refundAmount.toLocaleString('vi-VN')} đ cho booking #${bookedScheduleId.substring(0, 8)} (DJ/Dancer từ chối)`,
+                      link: `/accountant/refund-requests`
+                    });
+                  }
+                }
+              }
+            } catch (notifError) {
+              console.warn("[BookingService] Failed to send notification:", notifError);
+            }
+          }
+        }
+      } catch (refundError) {
+        console.error("[BookingService] Error creating refund request:", refundError);
+        // Không throw error, chỉ log vì reject booking đã thành công
+      }
+
       return {
         success: true,
         data: updatedSchedule,
